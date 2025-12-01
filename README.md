@@ -64,12 +64,15 @@ Euclid>
 
 Type `:help` in the REPL for a list of available commands:
 
-*   `:point A x y z` / `:point A x y`: Define a 3D or 2D point `A` with coordinates `(x, y, z)` or `(x, y, 0)`.
-*   `:assume (= xA 0)`: Manually assume a formula. Formulas are given in S-expression prefix notation.
-*   `:load file.euclid`: Load and execute commands from a `.euclid` script file.
-*   `:list`: List all currently assumed formulas in the theory.
-*   `:clear`: Clear the current theory (remove all assumptions).
-*   `exit` / `quit`: Exit the REPL.
+*   `:point A x y z` / `:point A x y`: Define a 3D or 2D point `A` with coordinates `(x, y, z)` or `(x, y, 0)`. This command adds equality assumptions for the point's coordinates to the current theory.
+*   `:assume formula`: Manually add a formula to the current theory. Formulas are given in S-expression prefix notation (e.g., `:assume (= (dist2 A B) (dist2 C D))`).
+*   `:project expr var`: Performs Cylindrical Algebraic Decomposition (CAD) projection. Given an expression (polynomial) and a variable, it computes the discriminant of the polynomial with respect to that variable, effectively finding its "shadow" in a lower dimension. Useful for inequality proving.
+*   `:load file.euclid`: Load and execute a sequence of commands from a `.euclid` script file. This allows for running predefined theorem proving sessions.
+*   `:list`: Display all currently assumed formulas (the "theory") in the REPL.
+*   `:clean` / `:cls`: Clear the terminal screen for better readability.
+*   `:reset`: Clear the current theory, effectively resetting the REPL's state to its initial configuration, but preserving command history.
+*   `:history`: Show a list of all commands previously entered in the current REPL session.
+*   `:q` / `:quit` / `exit`: Exit the REPL.
 
 ### Example
 
