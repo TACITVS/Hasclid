@@ -1,0 +1,18 @@
+-- [stress_2d_cad.euclid]
+-- Stress Test for 2D Cylindrical Algebraic Decomposition
+-- The goal is to find valid (x, y) regions for inequalities.
+
+-- TEST 1: Interior of a Unit Circle
+-- Inequality: 1 - x^2 - y^2 > 0
+-- Expected: Valid for x in (-1, 1), and for those x, y is small.
+:solve (> (- 1 (+ (^ x 2) (^ y 2))) 0) x y
+
+-- TEST 2: Interior of a Parabola
+-- Inequality: y - x^2 > 0  (i.e. y > x^2)
+-- Expected: Valid for ALL x, provided y is large enough.
+:solve (> (- y (^ x 2)) 0) x y
+
+-- TEST 3: The Empty Set (Impossible)
+-- Inequality: x^2 + y^2 < -1
+-- Expected: No solutions.
+:solve (> (- -1 (+ (^ x 2) (^ y 2))) 0) x y

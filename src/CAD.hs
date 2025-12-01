@@ -1,4 +1,4 @@
-module CAD where
+module CAD (discriminant, toRecursive) where
 
 import Expr
 import Data.List (dropWhileEnd)
