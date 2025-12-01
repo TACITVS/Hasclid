@@ -1,0 +1,9 @@
+-- 3D Box Diagonal Proof
+-- One corner at Origin
+:point O 0 0 0
+
+-- Opposite corner at (L, W, H)
+:point P L W H
+
+-- Verify distance squared is L^2 + W^2 + H^2
+(= (dist2 O P) (+ (^ L 2) (+ (^ W 2) (^ H 2))))

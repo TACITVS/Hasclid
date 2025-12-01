@@ -1,0 +1,10 @@
+-- Generic Proof of Apollonius Theorem
+-- We do NOT use numbers for A. We use variables u and v.
+
+:point M 0 0         -- Midpoint at origin
+:point B -c 0        -- B is at -c (variable c)
+:point C c 0         -- C is at c
+:point A u v         -- A is at (u, v) - ANYWHERE
+
+-- Verify: AB^2 + AC^2 = 2 * (AM^2 + BM^2)
+(= (+ (dist2 A B) (dist2 A C)) (* 2 (+ (dist2 A M) (dist2 B M))))

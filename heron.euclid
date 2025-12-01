@@ -1,0 +1,44 @@
+-- [heron.euclid]
+-- Stress Test: Proving Heron's Formula
+-- Identity: 16*Area^2 = 2a^2b^2 + 2a^2c^2 + 2b^2c^2 - (a^4 + b^4 + c^4)
+
+-- 1. Setup Geometry (Standard Position)
+--    Place A at origin (0,0,0)
+--    Place B on x-axis at (c,0,0) -> Side c has length 'c'
+--    Place C at generic (u,v,0)   -> Height is 'v'
+:point A 0 0 0
+:point B c 0 0
+:point C u v 0
+
+-- 2. Define the Target Area (LHS)
+--    Area = 1/2 * base * height = 1/2 * c * v
+--    16 * Area^2 = 16 * (1/4 * c^2 * v^2) = 4 * c^2 * v^2
+:assume (= TargetArea (* 4 (* (^ c 2) (^ v 2))))
+
+-- 3. Define the Terms of Heron's Expansion (RHS)
+--    We use 'dist2' to represent squared lengths (a^2, b^2, c^2)
+--    a^2 = dist2(B,C)
+--    b^2 = dist2(A,C)
+--    c^2 = dist2(A,B)
+
+-- Term 1: 2 * a^2 * b^2
+:assume (= T1 (* 2 (* (dist2 B C) (dist2 A C))))
+
+-- Term 2: 2 * a^2 * c^2
+:assume (= T2 (* 2 (* (dist2 B C) (dist2 A B))))
+
+-- Term 3: 2 * b^2 * c^2
+:assume (= T3 (* 2 (* (dist2 A C) (dist2 A B))))
+
+-- Quad 1: a^4 = (a^2)^2
+:assume (= Q1 (^ (dist2 B C) 2))
+
+-- Quad 2: b^4 = (b^2)^2
+:assume (= Q2 (^ (dist2 A C) 2))
+
+-- Quad 3: c^4 = (c^2)^2
+:assume (= Q3 (^ (dist2 A B) 2))
+
+-- 4. The Final Proof
+--    Verify that TargetArea == (T1 + T2 + T3) - (Q1 + Q2 + Q3)
+(= TargetArea (- (+ T1 (+ T2 T3)) (+ Q1 (+ Q2 Q3))))

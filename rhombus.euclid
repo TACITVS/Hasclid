@@ -1,0 +1,9 @@
+-- rhombus.euclid
+-- Define the vertices of a rhombus centered at origin
+:point A 0 4
+:point B 3 0
+:point C 0 -4
+:point D -3 0
+
+-- Verify diagonals are perpendicular (dot product is 0)
+(= (dot A C B D) 0)

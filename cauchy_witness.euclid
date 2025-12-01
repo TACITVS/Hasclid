@@ -1,0 +1,21 @@
+-- Cauchy-Schwarz with a Witness
+-- We want to prove: MagU * MagV - DotUV >= 0
+-- We suspect the difference is exactly (a*y - b*x)^2
+
+-- 1. Setup
+:point U a b
+:point V x y
+
+-- 2. Define terms
+:assume (= LHS (* (+ (^ a 2) (^ b 2)) (+ (^ x 2) (^ y 2))))
+:assume (= RHS (^ (+ (* a x) (* b y)) 2))
+
+-- 3. Define the "Witness" (The Lagrange Identity term)
+--    Witness = (ay - bx)^2
+:assume (= Witness (^ (- (* a y) (* b x)) 2))
+
+-- 4. PROOF STEP:
+--    Prove that LHS - RHS = Witness
+--    (If this equality holds, and Witness is obviously a square, 
+--    then LHS >= RHS is proven by implication).
+(= (- LHS RHS) Witness)

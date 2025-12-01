@@ -1,0 +1,19 @@
+-- thales.euclid
+-- Prove: Angle inscribed in a semi-circle is 90 degrees.
+
+-- 1. Setup Center O at origin
+:point O 0 0
+
+-- 2. Diameter points A and C are at (-r, 0) and (r, 0)
+:point A -r 0
+:point C r 0
+
+-- 3. Point B is generic (u, v)
+:point B u v
+
+-- 4. Constraint: B is on the circle with center O and radius r
+--    This means (circle B O r) must be 0.
+:assume (= (circle B O r) 0)
+
+-- 5. Prove: Vectors BA and BC are perpendicular (Dot Product is 0)
+(= (dot B A B C) 0)

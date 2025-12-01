@@ -1,0 +1,18 @@
+-- [intersection.euclid]
+-- Stress Test for Groebner Basis
+-- Problem: Point P(x,y) is at the intersection of two circles.
+-- Prove that P must lie on the y-axis (i.e., x = 0).
+
+:point P x y
+
+-- 1. Circle Left: Center (-1, 0), Radius sqrt(2)
+--    Equation: (x+1)^2 + y^2 = 2
+:assume (= (+ (^ (+ x 1) 2) (^ y 2)) 2)
+
+-- 2. Circle Right: Center (1, 0), Radius sqrt(2)
+--    Equation: (x-1)^2 + y^2 = 2
+:assume (= (+ (^ (- x 1) 2) (^ y 2)) 2)
+
+-- 3. The Theorem:
+--    The algebra forces x to be 0.
+(= x 0)

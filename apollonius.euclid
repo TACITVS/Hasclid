@@ -1,0 +1,19 @@
+-- apollonius.euclid
+-- Proof of the Apollonius Theorem (Midpoint Theorem)
+
+-- 1. Setup the Geometry
+-- Place Midpoint M at origin (0,0)
+:point M 0 0
+
+-- Place B at (-c, 0) and C at (c, 0) so M is clearly the midpoint
+:point B -5 0
+:point C 5 0
+
+-- Place A at an arbitrary point (x, y)
+-- Note: We use 0.5 and 0.2 just to pick 'random' non-symmetrical values
+-- to ensure it works for a general triangle, not just an isosceles one.
+:point A 3 7
+
+-- 2. The Theorem Statement
+-- AB^2 + AC^2 = 2 * (AM^2 + BM^2)
+(= (+ (dist2 A B) (dist2 A C)) (* 2 (+ (dist2 A M) (dist2 B M))))

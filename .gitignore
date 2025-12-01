@@ -1,0 +1,13 @@
+# Compiled executables
+Euclid.exe
+
+# Haskell build artifacts
+*.hi
+*.o
+
+# Editor/OS temporary files
+*~
+.#*
+.DS_Store
+*.swp
+*.swo

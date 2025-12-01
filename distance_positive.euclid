@@ -1,0 +1,4 @@
+-- Verify that the squared distance between any two points is non-negative
+:point A 0 0
+:point B x y
+(>= (dist2 A B) 0)

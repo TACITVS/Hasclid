@@ -1,0 +1,3 @@
+-- Test simple inequality
+-- Verify x^2 + y^4 >= 0
+(>= (+ (^ x 2) (^ y 4)) 0)

@@ -1,0 +1,6 @@
+-- Verify that x^4 - 3x^2 + 10 > 0
+-- This has NO REAL ROOTS.
+-- A toy engine would fail (coefficients are negative).
+-- Sturm's Theorem will prove it.
+
+(> (- (+ (^ x 4) 10) (* 3 (^ x 2))) 0)

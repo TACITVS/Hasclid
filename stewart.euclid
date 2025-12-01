@@ -1,0 +1,14 @@
+-- stewart.euclid
+-- Proof of Stewart's Theorem
+-- Geometry: D is at origin (0,0). B is left (-m), C is right (n). A is (u,v).
+
+:point D 0 0        -- D is the origin
+:point B -m 0       -- B is at -m
+:point C n 0        -- C is at n
+:point A u v        -- A is generic (u, v)
+
+-- Note: In the formula, 'a' is the total length (m+n).
+-- So we replace 'a' with (m+n) in the equation.
+
+-- Target: AB^2 * n + AC^2 * m = (m+n) * (AD^2 + m*n)
+(= (+ (* (dist2 A B) n) (* (dist2 A C) m))  (* (+ m n) (+ (dist2 A D) (* m n))))

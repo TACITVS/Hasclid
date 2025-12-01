@@ -1,0 +1,17 @@
+-- Stress Test: Cauchy-Schwarz Inequality
+-- Prove that (a^2 + b^2)(x^2 + y^2) >= (ax + by)^2
+
+-- 1. Define vectors u=(a,b) and v=(x,y)
+--    We don't strictly need points, just numbers, but let's be consistent.
+:point U a b
+:point V x y
+
+-- 2. Define Magnitude Squared (|u|^2 and |v|^2)
+:assume (= MagU (+ (^ a 2) (^ b 2)))
+:assume (= MagV (+ (^ x 2) (^ y 2)))
+
+-- 3. Define Dot Product Squared (u . v)^2
+:assume (= DotUV (^ (+ (* a x) (* b y)) 2))
+
+-- 4. The Inequality: |u|^2 * |v|^2 >= (u . v)^2
+(>= (* MagU MagV) DotUV)

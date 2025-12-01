@@ -1,0 +1,10 @@
+-- 3D Sphere Constraint Test
+:point O 0 0 0
+:point P x y z
+
+-- Assume P is on a sphere of radius R centered at O
+-- (In 3D, 'circle' logic becomes 'sphere' logic automatically)
+:assume (= (circle P O R) 0)
+
+-- Verify that x^2 + y^2 + z^2 = R^2
+(= (+ (^ x 2) (+ (^ y 2) (^ z 2))) (^ R 2))
