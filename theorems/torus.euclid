@@ -1,0 +1,9 @@
+-- [torus.euclid]
+-- Project a Torus onto the XY plane.
+-- Torus Equation: (x^2 + y^2 + z^2 + R^2 - r^2)^2 = 4R^2(x^2 + y^2)
+-- Rearranged: (x^2 + y^2 + z^2 + R^2 - r^2)^2 - 4R^2(x^2 + y^2) = 0
+
+-- We construct the equation manually to project out 'z'.
+-- This is a degree-4 polynomial in z. Computing its discriminant is heavy!
+
+:project (- (^ (+ (+ (+ (+ (^ x 2) (^ y 2)) (^ z 2)) (^ R 2)) (* -1 (^ r 2))) 2) (* (* 4 (^ R 2)) (+ (^ x 2) (^ y 2)))) z
