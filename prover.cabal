@@ -1,0 +1,35 @@
+cabal-version:      3.0
+name:               prover
+version:            0.1.0.0
+synopsis:           A Haskell-based theorem prover for Euclidean geometry.
+description:
+    This project implements a theorem prover for Euclidean geometry
+    and inequalities using algebraic methods, including Groebner bases
+    and Sturm's theorem.
+
+homepage:           https://github.com/TACITVS/Hasclid
+bug-reports:        https://github.com/TACITVS/Hasclid/issues
+license:            MIT
+license-file:       LICENSE
+author:             Your Name
+maintainer:         your-email@example.com
+category:           Math, Logic
+build-type:         Simple
+extra-source-files: CHANGELOG.md
+
+common warnings
+    ghc-options: -Wall
+
+executable prover
+    main-is:          Main.hs
+    hs-source-dirs:   src
+    other-modules:
+        Expr
+        Parser
+        Prover
+        Sturm
+    build-depends:
+        base ==4.21.0.0,
+        containers ^>=0.6.7
+    default-language: GHC2021
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N

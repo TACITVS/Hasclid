@@ -11,3 +11,8 @@ Euclid.exe
 .DS_Store
 *.swp
 *.swo
+
+# Cabal build artifacts
+dist-newstyle/
+.cabal-project/
+cabal.project.local
