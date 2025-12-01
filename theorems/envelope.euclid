@@ -1,0 +1,6 @@
+-- [envelope.euclid]
+-- Discover the shape formed by the family of lines: y = mx - m^2
+-- Equation rearranged: m^2 - x*m + y = 0
+-- We project out 'm' to find the boundary of the region covered by lines.
+
+:project (+ (+ (^ m 2) (* (- 0 x) m)) y) m
