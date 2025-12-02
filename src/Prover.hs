@@ -2,16 +2,19 @@
 
 module Prover
   ( proveTheory
+  , proveTheoryWithCache
   , buildSubMap
   , toPolySub
   , evaluatePoly
   , ProofTrace(..)
   , ProofStep(..)
   , formatProofTrace
+  , buchberger
   ) where
 
 import Expr
 import Sturm (countRealRoots, isAlwaysPositive)
+import Cache (GroebnerCache, lookupBasis, insertBasis)
 import qualified Data.Map.Strict as M
 import Data.List (nub)
 
@@ -79,13 +82,13 @@ buildSubMap theory = M.fromList [ (v, toPoly e) | Eq (Var v) e <- theory ]
 
 evaluatePoly :: M.Map String Poly -> Poly -> Poly
 evaluatePoly subM (Poly m) =
-  let 
+  let
       evalMono :: Monomial -> Rational -> Poly
-      evalMono (Monomial vars) coeff = 
-        let 
-          termExpanded = M.foldlWithKey (\accPoly varname power -> 
+      evalMono (Monomial vars) coeff =
+        let
+          termExpanded = M.foldlWithKey (\accPoly varname power ->
               let basePoly = case M.lookup varname subM of
-                               Just p  -> evaluatePoly subM p 
+                               Just p  -> evaluatePoly subM p
                                Nothing -> polyFromVar varname
               in polyMul accPoly (polyPow basePoly power)
             ) (polyFromConst 1) vars
@@ -108,10 +111,10 @@ reduce :: Poly -> [Poly] -> Poly
 reduce p fs
   | p == polyZero = polyZero
   | otherwise = case findDivisor p fs of
-      Just (f, mQuot, cQuot) -> 
+      Just (f, mQuot, cQuot) ->
           let subTerm = polyMul (polyMul f (Poly (M.singleton mQuot 1))) (polyFromConst cQuot)
           in reduce (subPoly p subTerm) fs
-      Nothing -> 
+      Nothing ->
           let Just (ltM, ltC) = getLeadingTerm p
               rest = polySub p (Poly (M.singleton ltM ltC))
               reducedRest = reduce rest fs
@@ -119,14 +122,14 @@ reduce p fs
 
   where
     findDivisor :: Poly -> [Poly] -> Maybe (Poly, Monomial, Rational)
-    findDivisor poly divisors = 
+    findDivisor poly divisors =
       case getLeadingTerm poly of
         Nothing -> Nothing
-        Just (ltP, cP) -> 
-            let candidates = [ (f, mDiv, cP / cF) 
+        Just (ltP, cP) ->
+            let candidates = [ (f, mDiv, cP / cF)
                              | f <- divisors
                              , let Just (ltF, cF) = getLeadingTerm f
-                             , Just mDiv <- [monomialDiv ltP ltF] 
+                             , Just mDiv <- [monomialDiv ltP ltF]
                              ]
             in case candidates of
                  (c:_) -> Just c
@@ -140,10 +143,10 @@ sPoly f g =
       let lcmM = monomialLCM ltF ltG
           Just mF = monomialDiv lcmM ltF
           Just mG = monomialDiv lcmM ltG
-          
+
           factF = polyMul (Poly (M.singleton mF 1)) (polyFromConst (1/cF))
           factG = polyMul (Poly (M.singleton mG 1)) (polyFromConst (1/cG))
-          
+
           term1 = polyMul factF f
           term2 = polyMul factG g
       in subPoly term1 term2
@@ -167,15 +170,17 @@ buchberger polys = go (filter (/= polyZero) polys)
 
 partitionTheory :: Theory -> (Theory, Theory)
 partitionTheory [] = ([], [])
-partitionTheory (f:fs) = 
+partitionTheory (f:fs) =
   let (subs, constrs) = partitionTheory fs
   in case f of
        Eq (Var _) _ -> (f:subs, constrs)
        Eq _ _       -> (subs, f:constrs)
        _            -> (subs, constrs)
 
-proveTheory :: Theory -> Formula -> (Bool, String, ProofTrace)
-proveTheory theory formula =
+-- | Prove a formula with optional cache support
+-- Returns: (isProved, reason, trace, updatedCache)
+proveTheoryWithCache :: Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+proveTheoryWithCache maybeCache theory formula =
   let
       (substAssumptions, constraintAssumptions) = partitionTheory theory
       subM = buildSubMap substAssumptions
@@ -189,7 +194,21 @@ proveTheory theory formula =
       idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
                         | Eq l r <- constraintAssumptions ]
 
-      basis = if null idealGenerators then [] else buchberger idealGenerators
+      -- Compute basis with cache
+      (basis, updatedCache) =
+        if null idealGenerators
+        then ([], maybeCache)
+        else case maybeCache of
+               Nothing -> (buchberger idealGenerators, Nothing)
+               Just cache ->
+                 let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
+                 in case maybeCached of
+                      Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
+                      Nothing ->
+                        let computed = buchberger idealGenerators
+                            cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
+                        in (computed, Just cacheAfterInsert)
+
       basisStep = if null idealGenerators
                   then []
                   else [ComputedGroebnerBasis (length basis)]
@@ -214,26 +233,32 @@ proveTheory theory formula =
                    then "Equality Holds (Groebner Normal Form is 0)"
                    else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
              trace = ProofTrace allSteps theory (length basis)
-         in (result, msg, trace)
+         in (result, msg, trace, updatedCache)
 
        Ge _ _ ->
          let (result, msg) = checkPositivity normalForm True
              positivityStep = [CheckedPositivity msg]
              trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-         in (result, msg, trace)
+         in (result, msg, trace, updatedCache)
 
        Gt _ _ ->
          let (result, msg) = checkPositivity normalForm False
              positivityStep = [CheckedPositivity msg]
              trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-         in (result, msg, trace)
+         in (result, msg, trace, updatedCache)
+
+-- | Original proveTheory function (no caching)
+proveTheory :: Theory -> Formula -> (Bool, String, ProofTrace)
+proveTheory theory formula =
+  let (isProved, reason, trace, _) = proveTheoryWithCache Nothing theory formula
+  in (isProved, reason, trace)
 
 -- | Advanced Positivity Checker (Uses Sturm!)
 checkPositivity :: Poly -> Bool -> (Bool, String)
 checkPositivity p allowZero =
   case toUnivariate p of
     -- Case 1: Univariate Polynomial -> Use STURM!
-    Just (var, coeffs) -> 
+    Just (var, coeffs) ->
         let nRoots = countRealRoots coeffs
             lcVal  = if null coeffs then 0 else last coeffs
         in if nRoots == 0 && lcVal > 0
@@ -241,16 +266,16 @@ checkPositivity p allowZero =
            else (False, "Sturm Analysis Failed: Found " ++ show nRoots ++ " real roots.")
 
     -- Case 2: Constant
-    Nothing | isConstant p -> 
+    Nothing | isConstant p ->
         let c = getConst p
-        in if c > 0 || (allowZero && c==0) 
+        in if c > 0 || (allowZero && c==0)
            then (True, "Constant Value check")
            else (False, "Constant is negative")
 
     -- Case 3: Multivariate -> Fallback to Sum of Squares
-    Nothing -> 
-        if isTrivialSOS p 
-        then (True, "Sum of Squares (Heuristic)") 
+    Nothing ->
+        if isTrivialSOS p
+        then (True, "Sum of Squares (Heuristic)")
         else (False, "Multivariate polynomial (Sturm requires univariate).")
 
 isConstant :: Poly -> Bool

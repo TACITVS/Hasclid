@@ -4,11 +4,12 @@ module Main where
 
 import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
 import Parser (parseFormulaPrefix, parseFormulaWithRest)
-import Prover (proveTheory, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace)
+import Prover (proveTheory, proveTheoryWithCache, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace)
 import CAD (discriminant, toRecursive)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
+import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
 
 import System.IO (hFlush, stdout)
 import Control.Monad (foldM)
@@ -42,10 +43,11 @@ data REPLState = REPLState
   , lemmas :: Theory
   , verbose :: Bool
   , autoSimplify :: Bool
+  , groebnerCache :: GroebnerCache
   }
 
 initialState :: REPLState
-initialState = REPLState [] [] [] False True  -- verbose off, autoSimplify on by default
+initialState = REPLState [] [] [] False True emptyCache  -- verbose off, autoSimplify on, empty cache
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -139,7 +141,7 @@ processLine state rawInput = do
         let formatted = unlines $ zipWith (\i s -> show i ++ ". " ++ s) [1..] h
         return (state, "Session History:\n" ++ formatted)
 
-    (":reset":_) -> return (stateWithHist { theory = [] }, "Active Theory reset (Lemmas preserved).")
+    (":reset":_) -> return (stateWithHist { theory = [], groebnerCache = clearCache (groebnerCache state) }, "Active Theory reset (Lemmas preserved, Cache cleared).")
     (":clear":_) -> return (initialState { history = newHist }, "Full System Reset.")
 
     (":verbose":_) -> do
@@ -164,6 +166,14 @@ processLine state rawInput = do
     (":validate":_) -> do
         let warnings = validateTheory (theory state)
         return (stateWithHist, formatWarnings warnings)
+
+    (":cache-stats":_) -> do
+        let stats = getCacheStats (groebnerCache state)
+        return (stateWithHist, formatCacheStats stats)
+
+    (":cache-clear":_) -> do
+        let newCache = clearCache (groebnerCache state)
+        return (stateWithHist { groebnerCache = newCache }, "Cache cleared.")
     
     (":help":_)  -> return (stateWithHist, unlines [
         "--- Euclid Geometric Prover Commands ---",
@@ -198,6 +208,10 @@ processLine state rawInput = do
         "  :project expr var       Compute CAD Shadow (Discriminant)",
         "  :solve (> p 0) x        Solve inequality (1D)",
         "  :solve (> p 0) x y      Solve inequality (2D Lifting)",
+        "",
+        "Caching & Performance:",
+        "  :cache-stats            Show cache statistics",
+        "  :cache-clear            Clear Gröbner basis cache",
         "",
         "Utilities:",
         "  :load file.euclid       Run script",
@@ -264,12 +278,14 @@ processLine state rawInput = do
              Left err -> return (stateWithHist, formatError err)
              Right formula -> do
                let fullContext = theory state ++ lemmas state
-               let (isProved, reason, trace) = proveTheory fullContext formula
+               let (isProved, reason, trace, newCache) = proveTheoryWithCache (Just (groebnerCache state)) fullContext formula
                if isProved
                  then do
                    let msg = "LEMMA ESTABLISHED: " ++ reason ++ "\n(Saved)" ++
                              (if verbose state then "\n\n" ++ formatProofTrace trace else "")
-                   return (stateWithHist { lemmas = formula : lemmas state }, msg)
+                   let updatedState = stateWithHist { lemmas = formula : lemmas state,
+                                                       groebnerCache = maybe (groebnerCache state) id newCache }
+                   return (updatedState, msg)
                  else return (stateWithHist, "LEMMA FAILED: " ++ reason)
 
     (":save-lemmas":filename:_) -> do
@@ -378,7 +394,7 @@ processLine state rawInput = do
           Left err -> return (stateWithHist, formatError err)
           Right formula -> do
             let fullContext = theory state ++ lemmas state
-            let (isProved, reason, trace) = proveTheory fullContext formula
+            let (isProved, reason, trace, newCache) = proveTheoryWithCache (Just (groebnerCache state)) fullContext formula
             let subM = buildSubMap fullContext
             let (l, r) = case formula of
                            Eq a b -> (a,b)
@@ -396,14 +412,17 @@ processLine state rawInput = do
             let pR = prettyFunc (toPolySub subM r')
             let pDiff = prettyFunc (toPolySub subM diff)
 
+            -- Update state with new cache
+            let stateWithCache = stateWithHist { groebnerCache = maybe (groebnerCache state) id newCache }
+
             if isProved
                then do
                  let basicMsg = "RESULT: PROVED (" ++ reason ++ ")\nDiff Normal Form: " ++ pDiff
                  let fullMsg = if verbose state
                                then basicMsg ++ "\n\n" ++ formatProofTrace trace
                                else basicMsg
-                 return (stateWithHist, fullMsg)
-               else return (stateWithHist, "RESULT: FALSE (" ++ reason ++ ")\nLHS: " ++ pL ++ "\nRHS: " ++ pR)
+                 return (stateWithCache, fullMsg)
+               else return (stateWithCache, "RESULT: FALSE (" ++ reason ++ ")\nLHS: " ++ pL ++ "\nRHS: " ++ pR)
 
 -- =============================================
 -- 5. REPL Loop

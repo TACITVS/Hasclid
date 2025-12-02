@@ -1,0 +1,41 @@
+-- Tier 1, Item 3: Caching & Memoization - Test Script
+-- This demonstrates the Gröbner basis cache in action
+
+-- Test 1: Check initial cache stats
+:cache-stats
+
+-- Test 2: Define a geometry configuration
+:point A 0 0
+:point B 3 4
+:point C 5 0
+
+-- Test 3: Prove a theorem (cache MISS - first time)
+(= (dist2 A B) 25)
+
+-- Test 4: Check cache stats after first proof
+:cache-stats
+
+-- Test 5: Prove the same theorem again (cache HIT - should be faster)
+(= (dist2 A B) 25)
+
+-- Test 6: Check cache stats after second proof (should show 1 hit)
+:cache-stats
+
+-- Test 7: Prove a different theorem with same assumptions (cache HIT)
+(= (+ (dist2 A B) (dist2 A C)) (* 2 (+ (^ 3 2) (^ 4 2))))
+
+-- Test 8: Check cache stats
+:cache-stats
+
+-- Test 9: Add a new assumption (cache should be cleared on :reset)
+:reset
+:cache-stats
+
+-- Test 10: Clear cache manually
+:point X 1 1
+(= (dist2 X X) 0)
+:cache-stats
+:cache-clear
+:cache-stats
+
+-- End of caching tests

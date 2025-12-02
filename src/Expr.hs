@@ -59,7 +59,7 @@ prettyRational r
 -- =============================================
 
 newtype Monomial = Monomial (M.Map String Natural) deriving (Eq, Ord, Show)
-newtype Poly = Poly (M.Map Monomial Rational) deriving (Eq, Show)
+newtype Poly = Poly (M.Map Monomial Rational) deriving (Eq, Ord, Show)
 
 monomialOne :: Monomial
 monomialOne = Monomial M.empty
