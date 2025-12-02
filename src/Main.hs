@@ -6,6 +6,7 @@ import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, prettyPolyNi
 import Parser (parseFormulaPrefix, parseFormulaWithRest)
 import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger)
 import BuchbergerOpt (SelectionStrategy(..), buchbergerOptimized, buchbergerWithStrategy)
+import CounterExample (findCounterExample, formatCounterExample)
 import CAD (discriminant, toRecursive)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Error (ProverError(..), formatError)
@@ -29,8 +30,8 @@ main :: IO ()
 main = do
   putStr "\ESC[2J\ESC[H"
   putStrLn "=================================================="
-  putStrLn "   Euclid Geometric Prover v7.4"
-  putStrLn "   Now with Optimized Buchberger!"
+  putStrLn "   Euclid Geometric Prover v7.5"
+  putStrLn "   Now with Counter-example Finding!"
   putStrLn "   Type :help for commands."
   putStrLn "=================================================="
   repl initialState
@@ -243,6 +244,7 @@ processLine state rawInput = do
         "Logic & Proving:",
         "  (= expr1 expr2)         Prove equality",
         "  :lemma (= a b)          Prove and store theorem",
+        "  :find-counterexample (= a b)  Find counter-example for failed proof",
         "  :verbose                Toggle detailed proof explanations",
         "  :auto-simplify          Toggle automatic expression simplification",
         "  :simplify (expr)        Manually simplify an expression",
@@ -352,6 +354,16 @@ processLine state rawInput = do
                                                        groebnerCache = maybe (groebnerCache state) id newCache }
                    return (updatedState, msg)
                  else return (stateWithHist, "LEMMA FAILED: " ++ reason)
+
+    (":find-counterexample":_) ->
+        let str = drop 20 input
+        in case parseFormulaPrefix str of
+             Left err -> return (stateWithHist, formatError err)
+             Right formula -> do
+               let fullContext = theory state ++ lemmas state
+               case findCounterExample fullContext formula of
+                 Just ce -> return (stateWithHist, formatCounterExample ce)
+                 Nothing -> return (stateWithHist, "No counter-example found with simple value sampling.\nThis does NOT mean the formula is true - try a proof instead.")
 
     (":save-lemmas":filename:_) -> do
         if null (lemmas state)
@@ -490,7 +502,12 @@ processLine state rawInput = do
                                then basicMsg ++ "\n\n" ++ formatProofTrace trace
                                else basicMsg
                  return (stateWithCache, fullMsg)
-               else return (stateWithCache, "RESULT: FALSE (" ++ reason ++ ")\nLHS: " ++ pL ++ "\nRHS: " ++ pR)
+               else do
+                 -- Try to find counter-example when proof fails
+                 let counterExampleMsg = case findCounterExample fullContext formula of
+                       Just ce -> "\n\n" ++ formatCounterExample ce
+                       Nothing -> "\n\nNo counter-example found with simple sampling.\nUse :find-counterexample to try more values."
+                 return (stateWithCache, "RESULT: FALSE (" ++ reason ++ ")\nLHS: " ++ pL ++ "\nRHS: " ++ pR ++ counterExampleMsg)
 
 -- =============================================
 -- 5. REPL Loop

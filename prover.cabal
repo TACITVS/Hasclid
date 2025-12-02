@@ -27,6 +27,7 @@ executable prover
         BuchbergerOpt
         CAD
         Cache
+        CounterExample
         Error
         Expr
         Parser
