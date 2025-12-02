@@ -1,10 +1,13 @@
 {-# LANGUAGE DeriveGeneric #-}
 
-module Prover where
+module Prover 
+  ( proveTheory
+  , buildSubMap
+  , toPolySub
+  , evaluatePoly
+  ) where
 
 import Expr
--- FIXED: Removed invalid 'as _' syntax. 
--- We only need countRealRoots and isAlwaysPositive from Sturm.
 import Sturm (countRealRoots, isAlwaysPositive) 
 import qualified Data.Map.Strict as M
 import Data.List (nub)
@@ -42,6 +45,7 @@ subPoly p1 p2 = polyAdd p1 (polyNeg p2)
 -- GROEBNER BASIS ENGINE (Buchberger's Algorithm)
 -- =============================================
 
+-- 1. Multivariate Polynomial Reduction (Division)
 reduce :: Poly -> [Poly] -> Poly
 reduce p fs
   | p == polyZero = polyZero
@@ -70,6 +74,7 @@ reduce p fs
                  (c:_) -> Just c
                  []    -> Nothing
 
+-- 2. S-Polynomial
 sPoly :: Poly -> Poly -> Poly
 sPoly f g =
   case (getLeadingTerm f, getLeadingTerm g) of
@@ -77,13 +82,16 @@ sPoly f g =
       let lcmM = monomialLCM ltF ltG
           Just mF = monomialDiv lcmM ltF
           Just mG = monomialDiv lcmM ltG
+          
           factF = polyMul (Poly (M.singleton mF 1)) (polyFromConst (1/cF))
           factG = polyMul (Poly (M.singleton mG 1)) (polyFromConst (1/cG))
+          
           term1 = polyMul factF f
           term2 = polyMul factG g
       in subPoly term1 term2
     _ -> polyZero
 
+-- 3. Buchberger's Algorithm
 buchberger :: [Poly] -> [Poly]
 buchberger polys = go (filter (/= polyZero) polys)
   where
@@ -91,7 +99,9 @@ buchberger polys = go (filter (/= polyZero) polys)
       let pairs = [ (f, g) | f <- basis, g <- basis, f /= g ]
           remainders = [ reduce (sPoly f g) basis | (f, g) <- pairs ]
           nonZeroRemainders = filter (/= polyZero) remainders
-      in if null nonZeroRemainders then basis else go (nub (basis ++ nonZeroRemainders))
+      in if null nonZeroRemainders
+         then basis
+         else go (nub (basis ++ nonZeroRemainders))
 
 -- =============================================
 -- Logic & Proof Engine
@@ -111,8 +121,10 @@ proveTheory theory formula =
   let 
       (substAssumptions, constraintAssumptions) = partitionTheory theory
       subM = buildSubMap substAssumptions
+      
       idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r) 
                         | Eq l r <- constraintAssumptions ]
+      
       basis = if null idealGenerators then [] else buchberger idealGenerators
       
       (pL, pR) = case formula of
@@ -140,8 +152,6 @@ checkPositivity p allowZero =
     Just (var, coeffs) -> 
         let nRoots = countRealRoots coeffs
             lcVal  = if null coeffs then 0 else last coeffs
-            -- Positive if leading coeff is positive AND no roots (meaning it never crosses zero)
-            -- Note: If roots > 0, it crosses zero, so it can't be always positive.
         in if nRoots == 0 && lcVal > 0
            then (True, "Proven by Sturm's Theorem (0 real roots, LC > 0)")
            else (False, "Sturm Analysis Failed: Found " ++ show nRoots ++ " real roots.")
@@ -168,6 +178,3 @@ getConst (Poly m) = sum (M.elems m)
 isTrivialSOS :: Poly -> Bool
 isTrivialSOS (Poly m) = all checkTerm (M.toList m)
   where checkTerm (Monomial vars, coeff) = coeff > 0 && all even (M.elems vars)
-
-validateAssumption :: Theory -> Formula -> Bool
-validateAssumption _ _ = True

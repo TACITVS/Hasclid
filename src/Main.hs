@@ -2,15 +2,18 @@
 
 module Main where
 
--- FIXED IMPORT: Changed Expr(...) to Expr(..) to import Sub, Add, etc.
-import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, Theory)
-import Parser (parseFormulaPrefix)
-import Prover (proveTheory, buildSubMap, toPolySub)
+import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, Theory, polyZero, toUnivariate, polyFromConst)
+import Parser (parseFormulaPrefix, parseFormulaWithRest)
+import Prover (proveTheory, buildSubMap, toPolySub, evaluatePoly)
+import CAD (discriminant, toRecursive)
+import Sturm (isolateRoots, samplePoints, evalPoly)
+
 import System.IO (hFlush, stdout)
 import Control.Monad (foldM)
 import Data.List (isPrefixOf)
 import Data.Ratio ((%))
 import Data.Char (isDigit)
+import qualified Data.Map.Strict as M
 import qualified Control.Exception as CE
 
 -- =============================================
@@ -19,20 +22,25 @@ import qualified Control.Exception as CE
 
 main :: IO ()
 main = do
-  putStrLn "=========================================="
-  putStrLn "   Euclid Geometric Prover v4.1 (Final)"
+  putStr "\ESC[2J\ESC[H"
+  putStrLn "=================================================="
+  putStrLn "   Euclid Geometric Prover v7.2 (Final)"
   putStrLn "   Type :help for commands."
-  putStrLn "=========================================="
+  putStrLn "=================================================="
   repl initialState
 
 -- =============================================
 -- 2. REPL State
 -- =============================================
 
-data REPLState = REPLState { theory :: Theory }
+data REPLState = REPLState 
+  { theory :: Theory 
+  , history :: [String]
+  , lemmas :: Theory
+  }
 
 initialState :: REPLState
-initialState = REPLState []
+initialState = REPLState [] [] []
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -72,20 +80,138 @@ tryIO action = (Right <$> action) `CE.catch` (\e -> return (Left e))
 processLine :: REPLState -> String -> IO (REPLState, String)
 processLine state rawInput = do
   let input = stripComment rawInput
-  
+  let newHist = if null input || ":history" `isPrefixOf` input 
+                then history state 
+                else input : history state
+  let stateWithHist = state { history = newHist }
+
   if null (filter (/= ' ') input) then return (state, "")
   else case words input of
   
-    (":clear":_) -> return (initialState, "Theory cleared.")
-    (":list":_)  -> return (state, prettyTheory (theory state))
-    (":help":_)  -> return (state, unlines [
-        "Commands:",
-        "  :point A x y z     -> Define 3D point",
-        "  :point A x y       -> Define 2D point",
-        "  :assume (= xA 0)   -> Manually assume",
-        "  :load file.euclid  -> Load script",
-        "  :list, :clear      -> Utilities"
+    (":clean":_) -> do
+        putStr "\ESC[2J\ESC[H"
+        hFlush stdout
+        return (stateWithHist, "")
+        
+    (":cls":_) -> do 
+        putStr "\ESC[2J\ESC[H"
+        hFlush stdout
+        return (stateWithHist, "")
+
+    (":history":_) -> do
+        let h = reverse (history state)
+        let formatted = unlines $ zipWith (\i s -> show i ++ ". " ++ s) [1..] h
+        return (state, "Session History:\n" ++ formatted)
+
+    (":reset":_) -> return (stateWithHist { theory = [] }, "Active Theory reset (Lemmas preserved).")
+    (":clear":_) -> return (initialState { history = newHist }, "Full System Reset.")
+    
+    (":list":_)  -> do
+        let tStr = if null (theory state) then "  (None)" else prettyTheory (theory state)
+        let lStr = if null (lemmas state) then "  (None)" else prettyTheory (lemmas state)
+        return (stateWithHist, "Active Assumptions:\n" ++ tStr ++ "\nProven Lemmas:\n" ++ lStr)
+    
+    (":help":_)  -> return (stateWithHist, unlines [
+        "--- Euclid Commands ---",
+        "Geometry:",
+        "  :point A x y z     Define 3D point",
+        "  :assume (= xA 0)   Add assumption",
+        "",
+        "Logic & CAD:",
+        "  :lemma (= a b)     Prove and store theorem",
+        "  :project expr var  Compute CAD Shadow (Discriminant)",
+        "  :solve (> p 0) x   Solve inequality (1D)",
+        "  :solve (> p 0) x y Solve inequality (2D Lifting)",
+        "",
+        "Utilities:",
+        "  :load file.euclid  Run script",
+        "  :list, :history, :clean, :reset, :q"
         ])
+
+    -- COMMAND: :solve <Formula> <Var1> [Var2]
+    (":solve":rest) -> do
+       let inputStr = unwords rest
+       
+       case parseFormulaWithRest inputStr of
+         Left err -> return (stateWithHist, "Parse Error: " ++ err)
+         Right (formula, vars) -> do
+           
+           if null vars then return (stateWithHist, "Usage: :solve (formula) x [y]")
+           else do
+             -- Extract polynomial
+             let (poly, isGt) = case formula of
+                                  Gt l r -> (toPolySub (buildSubMap (theory state)) (Sub l r), True)
+                                  Ge l r -> (toPolySub (buildSubMap (theory state)) (Sub l r), True)
+                                  Eq l r -> (toPolySub (buildSubMap (theory state)) (Sub l r), False)
+                                  -- FIXED: Removed redundant pattern match
+
+             case vars of
+                 -- 1D CASE
+                 [v] -> do
+                     let recPoly = toRecursive poly v
+                     let coeffs = map (\p -> case toUnivariate p of Just (_, [c]) -> c; Just (_, []) -> 0; _ -> 0) recPoly
+                     let samples = samplePoints coeffs
+                     let solutions = filter (\x -> let val = evalPoly coeffs x in if isGt then val > 0 else val == 0) samples
+                     return (stateWithHist, "1D Solutions (" ++ v ++ "):\n" ++ show solutions)
+
+                 -- 2D CASE (Lifting)
+                 [vx, vy] -> do
+                     -- 1. Project x onto y (Discriminant)
+                     let shadow = discriminant poly vx
+                     
+                     -- 2. Solve for y samples (Base Phase)
+                     let Just (_, shadowCoeffs) = toUnivariate shadow
+                     let ySamples = samplePoints shadowCoeffs
+                     
+                     -- 3. Lift: Check x for each y sample
+                     let results = flip map ySamples $ \yVal -> do
+                             let yPoly = polyFromConst yVal
+                             let subMap = M.singleton vy yPoly
+                             let xPoly = evaluatePoly subMap poly
+                             
+                             let Just (_, xCoeffs) = toUnivariate xPoly
+                             let xSamples = samplePoints xCoeffs
+                             
+                             let validX = filter (\x -> let val = evalPoly xCoeffs x in if isGt then val > 0 else val == 0) xSamples
+                             
+                             if null validX then Nothing else Just (yVal, validX)
+                             
+                     let validRegions = filter (\x -> case x of Nothing -> False; _ -> True) results
+                     
+                     return (stateWithHist, "2D CAD Solution Regions (y, [valid x samples]):\n" ++ show validRegions)
+
+                 _ -> return (stateWithHist, "Only 1D and 2D solving supported currently.")
+
+    (":lemma":_) -> 
+        let str = drop 7 input
+        in case parseFormulaPrefix str of
+             Left err -> return (stateWithHist, "Parse Error: " ++ err)
+             Right formula -> do
+               let fullContext = theory state ++ lemmas state
+               let (isProved, reason) = proveTheory fullContext formula
+               if isProved 
+                 then return (stateWithHist { lemmas = formula : lemmas state }, 
+                              "LEMMA ESTABLISHED: " ++ reason ++ "\n(Saved)")
+                 else return (stateWithHist, "LEMMA FAILED: " ++ reason)
+
+    (":project":args) -> do
+         if null args 
+           then return (stateWithHist, "Usage: :project (expression) var")
+           else do
+             let varStr = last args
+             let exprParts = init args
+             if null exprParts
+               then return (stateWithHist, "Usage: :project (expression) var")
+               else do
+                 let exprStr = unwords exprParts
+                 let parseInput = "(= " ++ exprStr ++ " 0)" 
+                 case parseFormulaPrefix parseInput of 
+                   Right (Eq e _) -> do
+                       let poly = toPolySub (buildSubMap (theory state ++ lemmas state)) e
+                       let shadow = discriminant poly varStr
+                       return (stateWithHist, "Projection (Discriminant w.r.t " ++ varStr ++ "):\n" ++ prettyPoly shadow)
+                   Left err -> return (stateWithHist, "Projection Failed: " ++ err)
+                   _ -> return (stateWithHist, "Projection Failed: Unknown logic error.")
 
     (":point":name:xStr:yStr:zStr:_) -> do
          let exprX = parseCoord xStr
@@ -94,7 +220,7 @@ processLine state rawInput = do
          let asmX = Eq (Var ("x" ++ name)) exprX
          let asmY = Eq (Var ("y" ++ name)) exprY
          let asmZ = Eq (Var ("z" ++ name)) exprZ
-         return (state { theory = asmX : asmY : asmZ : theory state }, 
+         return (stateWithHist { theory = asmX : asmY : asmZ : theory state }, 
                  "Defined 3D Point " ++ name ++ " at (" ++ xStr ++ ", " ++ yStr ++ ", " ++ zStr ++ ")")
     
     (":point":name:xStr:yStr:_) -> do
@@ -104,16 +230,16 @@ processLine state rawInput = do
          let asmX = Eq (Var ("x" ++ name)) exprX
          let asmY = Eq (Var ("y" ++ name)) exprY
          let asmZ = Eq (Var ("z" ++ name)) exprZ
-         return (state { theory = asmX : asmY : asmZ : theory state }, 
+         return (stateWithHist { theory = asmX : asmY : asmZ : theory state }, 
                  "Defined 2D Point " ++ name ++ " at (" ++ xStr ++ ", " ++ yStr ++ ")")
     
-    (":point":_) -> return (state, "Usage: :point A x y z  OR  :point A x y")
+    (":point":_) -> return (stateWithHist, "Usage: :point A x y z  OR  :point A x y")
 
     (":assume":_) -> 
         let str = drop 8 input
         in case parseFormulaPrefix str of
-             Right f -> return (state { theory = f : theory state }, "Assumed: " ++ show f)
-             Left err -> return (state, "Parse Error: " ++ err)
+             Right f -> return (stateWithHist { theory = f : theory state }, "Assumed: " ++ show f)
+             Left err -> return (stateWithHist, "Parse Error: " ++ err)
 
     (":load":filename:_) -> do
         content <- readFile filename
@@ -122,15 +248,16 @@ processLine state rawInput = do
                                      (newSt, msg) <- processLine st line
                                      if null msg then return () else putStrLn ("[" ++ filename ++ "] " ++ msg)
                                      return (newSt, "")
-                                 ) (state, "") linesOfFile
+                                 ) (stateWithHist, "") linesOfFile
         return (finalState, "File loaded: " ++ filename)
 
     _ -> 
         case parseFormulaPrefix input of
-          Left err -> return (state, "Parse Error: " ++ err)
+          Left err -> return (stateWithHist, "Parse Error: " ++ err)
           Right formula -> do
-            let (isProved, reason) = proveTheory (theory state) formula
-            let subM = buildSubMap (theory state)
+            let fullContext = theory state ++ lemmas state
+            let (isProved, reason) = proveTheory fullContext formula
+            let subM = buildSubMap fullContext
             let (l, r) = case formula of
                            Eq a b -> (a,b)
                            Ge a b -> (a,b)
@@ -139,8 +266,8 @@ processLine state rawInput = do
             let pR = prettyPoly (toPolySub subM r)
             
             if isProved 
-               then return (state, "RESULT: PROVED (" ++ reason ++ ")\nDiff Normal Form: " ++ prettyPoly (toPolySub subM (Sub l r)))
-               else return (state, "RESULT: FALSE (" ++ reason ++ ")\nLHS: " ++ pL ++ "\nRHS: " ++ pR)
+               then return (stateWithHist, "RESULT: PROVED (" ++ reason ++ ")\nDiff Normal Form: " ++ prettyPoly (toPolySub subM (Sub l r)))
+               else return (stateWithHist, "RESULT: FALSE (" ++ reason ++ ")\nLHS: " ++ pL ++ "\nRHS: " ++ pR)
 
 -- =============================================
 -- 5. REPL Loop
@@ -151,7 +278,7 @@ repl state = do
   putStr "Euclid> "
   hFlush stdout
   input <- getLine
-  if input `elem` ["exit", "quit"] then putStrLn "Goodbye."
+  if input `elem` ["exit", "quit", ":q"] then putStrLn "Goodbye."
   else do
     result <- tryIO (processLine state input)
     case result of

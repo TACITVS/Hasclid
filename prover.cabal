@@ -11,8 +11,8 @@ homepage:           https://github.com/TACITVS/Hasclid
 bug-reports:        https://github.com/TACITVS/Hasclid/issues
 license:            MIT
 license-file:       LICENSE
-author:             Your Name
-maintainer:         your-email@example.com
+author:             TACITVS
+maintainer:         TACITVS
 category:           Math, Logic
 build-type:         Simple
 extra-source-files: CHANGELOG.md
@@ -24,12 +24,13 @@ executable prover
     main-is:          Main.hs
     hs-source-dirs:   src
     other-modules:
+        CAD
         Expr
         Parser
         Prover
         Sturm
     build-depends:
-        base ==4.21.0.0,
+        base >= 4.16 && < 5,
         containers ^>=0.6.7
     default-language: GHC2021
     ghc-options: -threaded -rtsopts -with-rtsopts=-N

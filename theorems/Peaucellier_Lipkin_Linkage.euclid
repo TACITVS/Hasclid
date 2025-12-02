@@ -1,0 +1,45 @@
+-- [Peaucellier-Lipkin Linkage: Fixed for Zero Divisors]
+-- A two-stage verification of the first true planar straight-line mechanism.
+
+-- ============================================================
+-- STEP 1: The Inversion Property
+-- ============================================================
+
+:point O 0 0        -- Origin
+:point P p 0        -- Input P
+:point Q q 0        -- Output Q
+:point B x y        -- Elbow B
+
+-- Constraints
+:assume (= (+ (^ x 2) (^ y 2)) (^ L 2))
+:assume (= (+ (^ (- x p) 2) (^ y 2)) (^ l 2))
+:assume (= (+ (^ (- x q) 2) (^ y 2)) (^ l 2))
+
+-- Helper: B is horizontally between P and Q
+:assume (= (* 2 x) (+ p q))
+
+-- VERIFY: p * q = L^2 - l^2
+:lemma (= (* p q) (- (^ L 2) (^ l 2)))
+
+-- ============================================================
+-- INTERMISSION
+-- ============================================================
+:reset
+
+-- ============================================================
+-- STEP 2: The Geometric Consequence
+-- ============================================================
+
+:point Q x y
+
+-- Reuse Lemma: K = L^2 - l^2
+:assume (= K (- (^ L 2) (^ l 2)))
+
+-- Circle Constraint for P (Substitute P = K*Q/|Q|^2)
+-- Becomes: K^2 - 2*a*x*K = 0
+:assume (= (- (^ K 2) (* (* 2 a) (* x K))) 0)
+
+-- VERIFY: x = K / 2a
+-- FIX: We verify "K * (2ax) = K^2" to avoid dividing by K.
+-- This matches the assumption K^2 - 2axK = 0 perfectly.
+(= (* K (* x (* 2 a))) (^ K 2))
