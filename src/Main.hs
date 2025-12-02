@@ -8,6 +8,7 @@ import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildS
 import BuchbergerOpt (SelectionStrategy(..), buchbergerOptimized, buchbergerWithStrategy)
 import CounterExample (findCounterExample, formatCounterExample)
 import CAD (discriminant, toRecursive)
+import CADLift (cadDecompose, CADCell(..), formatCADCells, evaluateInequalityCAD)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
@@ -30,8 +31,8 @@ main :: IO ()
 main = do
   putStr "\ESC[2J\ESC[H"
   putStrLn "=================================================="
-  putStrLn "   Euclid Geometric Prover v7.6"
-  putStrLn "   Now with Enhanced Positivity Checking!"
+  putStrLn "   Euclid Geometric Prover v8.0"
+  putStrLn "   Now with Complete CAD Lifting!"
   putStrLn "   Type :help for commands."
   putStrLn "=================================================="
   repl initialState
@@ -256,6 +257,7 @@ processLine state rawInput = do
         "",
         "Advanced (CAD for Inequalities):",
         "  :project expr var       Compute CAD Shadow (Discriminant)",
+        "  :cad x [y [z]]          Cylindrical Algebraic Decomposition",
         "  :solve (> p 0) x        Solve inequality (1D)",
         "  :solve (> p 0) x y      Solve inequality (2D Lifting)",
         "",
@@ -410,7 +412,7 @@ processLine state rawInput = do
                _ -> return (stateWithHist, "Parse Error: Could not parse expression")
 
     (":project":args) -> do
-         if null args 
+         if null args
            then return (stateWithHist, "Usage: :project (expression) var")
            else do
              let varStr = last args
@@ -427,6 +429,18 @@ processLine state rawInput = do
                        return (stateWithHist, "Projection (Discriminant w.r.t " ++ varStr ++ "):\n" ++ prettyPoly shadow)
                    Left err -> return (stateWithHist, formatError err)
                    _ -> return (stateWithHist, "Projection Failed: Unknown logic error.")
+
+    (":cad":vars) -> do
+         if null vars
+           then return (stateWithHist, "Usage: :cad x [y [z]] - Decompose space using CAD")
+           else do
+             let fullContext = theory state ++ lemmas state
+             let subM = buildSubMap fullContext
+             let constraintPolys = [ toPolySub subM (Sub l r) | Eq l r <- fullContext ]
+             let cells = cadDecompose constraintPolys vars
+             let output = "CAD Decomposition (" ++ show (length cells) ++ " cells):\n\n" ++
+                          formatCADCells cells
+             return (stateWithHist, output)
 
     (":point":name:xStr:yStr:zStr:_) -> do
          let exprX = parseCoord xStr
