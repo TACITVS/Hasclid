@@ -1,104 +1,77 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Hasclid: Geometric Theorem Prover</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.1.0/css/xterm.css" />
-    <script src="https://cdn.jsdelivr.net/npm/xterm@5.1.0/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
-    <script src="https://unpkg.com/@bjorn3/browser_wasi_shim@0.2.19/dist/browser_wasi_shim.min.js"></script>
+    <title>Hasclid Debugger</title>
     <style>
-        body { margin: 0; background: #000; height: 100vh; display: flex; flex-direction: column; }
-        #terminal { flex: 1; padding: 10px; }
-        h1 { color: #ccc; font-family: sans-serif; font-size: 14px; text-align: center; margin: 5px; }
-        a { color: #88f; text-decoration: none; }
+        body { background: #111; color: #0f0; font-family: monospace; padding: 20px; }
+        #log { white-space: pre-wrap; }
+        .error { color: #f55; }
+        .success { color: #5f5; font-weight: bold; }
     </style>
+    <script src="https://unpkg.com/@bjorn3/browser_wasi_shim@0.2.19/dist/browser_wasi_shim.min.js"></script>
 </head>
 <body>
-    <h1>Hasclid v7.2 - Running on WebAssembly | <a href="https://github.com/TACITVS/Hasclid">Source Code</a></h1>
-    <div id="terminal"></div>
+    <h1>Hasclid System Diagnostics</h1>
+    <div id="log"></div>
 
     <script>
-        const term = new Terminal({ cursorBlink: true, fontSize: 16, fontFamily: 'monospace' });
-        const fitAddon = new FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
-        term.open(document.getElementById('terminal'));
-        fitAddon.fit();
-        window.addEventListener('resize', () => fitAddon.fit());
-
-        term.write('Loading Hasclid Engine...\r\n');
+        function log(msg, type = '') {
+            const el = document.getElementById('log');
+            el.innerHTML += `<span class="${type}">[${new Date().toLocaleTimeString()}] ${msg}</span>\n`;
+        }
 
         async function run() {
-            // 1. Setup WASI (WebAssembly System Interface)
-            // This connects Haskell's "Input/Output" to the Browser
-            const args = ["Euclid.wasm"];
-            const env = {};
-            const fds = [
-                new browser_wasi_shim.File([]), // stdin (0)
-                new browser_wasi_shim.File([]), // stdout (1)
-                new browser_wasi_shim.File([]), // stderr (2)
-            ];
-            
-            const wasi = new browser_wasi_shim.WASI(args, env, fds);
-
-            // 2. Connect Terminal -> Haskell (Stdin)
-            // We buffer input line-by-line because Haskell's getLine waits for \n
-            let inputBuffer = "";
-            term.onData(data => {
-                // Echo input to screen
-                if (data === '\r') { // Enter key
-                    term.write('\r\n');
-                    const encoder = new TextEncoder();
-                    const bytes = encoder.encode(inputBuffer + "\n");
-                    
-                    // Write to WASI stdin
-                    const stdin = fds[0];
-                    const newContent = new Uint8Array(stdin.data.length + bytes.length);
-                    newContent.set(stdin.data);
-                    newContent.set(bytes, stdin.data.length);
-                    stdin.data = newContent;
-                    stdin.seek(0); // Reset read pointer so Haskell sees new data
-                    
-                    inputBuffer = "";
-                } else if (data === '\u007F') { // Backspace
-                    if (inputBuffer.length > 0) {
-                        inputBuffer = inputBuffer.slice(0, -1);
-                        term.write('\b \b');
-                    }
-                } else {
-                    inputBuffer += data;
-                    term.write(data);
-                }
-            });
-
-            // 3. Connect Haskell -> Terminal (Stdout)
-            // We hijack the writeSync function to pipe output to xterm
-            const originalWriteSync = fds[1].writeSync.bind(fds[1]);
-            const decoder = new TextDecoder();
-            fds[1].writeSync = function(iovs) {
-                const written = originalWriteSync(iovs);
-                // Decode the buffer and print to terminal
-                // Note: Real implementation needs to handle partial UTF-8, simplified here
-                let text = "";
-                for (const iov of iovs) {
-                    text += decoder.decode(iov);
-                }
-                // Fix line endings for xterm
-                term.write(text.replace(/\n/g, '\r\n'));
-                return written;
-            };
-
-            // 4. Download and Compile the Wasm
             try {
-                const response = await fetch('Euclid.wasm');
-                const bytes = await response.arrayBuffer();
-                const { instance } = await WebAssembly.instantiate(bytes, {
-                    "wasi_snapshot_preview1": wasi.wasiImport
-                });
+                // 1. Check Shim
+                log("Checking WASI Shim...");
+                if (typeof browser_wasi_shim === 'undefined') {
+                    throw new Error("browser_wasi_shim failed to load from CDN.");
+                }
+                log("Shim Loaded OK.", "success");
 
-                term.write('\r\nStarting Engine...\r\n');
+                // 2. Fetch File
+                log("Fetching Euclid.wasm...");
+                const response = await fetch('Euclid.wasm');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status} ${response.statusText} (File not found?)`);
+                }
+                
+                const bytes = await response.arrayBuffer();
+                log(`Download Complete. Size: ${(bytes.byteLength / 1024 / 1024).toFixed(2)} MB`, "success");
+
+                // 3. Compile
+                log("Compiling WebAssembly...");
+                const { instance } = await WebAssembly.instantiate(bytes, {
+                    "wasi_snapshot_preview1": new browser_wasi_shim.WASI([], {}, []).wasiImport
+                });
+                log("Compilation Success.", "success");
+
+                // 4. Run
+                log("Starting Engine... (Check Console for Output)");
+                
+                // Minimal WASI setup
+                const fds = [
+                    new browser_wasi_shim.File([]), // stdin
+                    new browser_wasi_shim.File([]), // stdout
+                    new browser_wasi_shim.File([]), // stderr
+                ];
+                const wasi = new browser_wasi_shim.WASI(["Euclid.wasm"], {}, fds);
+                
+                // Capture output
+                const decoder = new TextDecoder();
+                fds[1].writeSync = function(iovs) {
+                    let text = "";
+                    for (const iov of iovs) text += decoder.decode(iov);
+                    log("STDOUT: " + text);
+                    return iovs.reduce((acc, iov) => acc + iov.byteLength, 0);
+                };
+
                 wasi.start(instance);
+                log("Process Finished.", "success");
+
             } catch (e) {
-                term.write(`\r\nError loading WASM: ${e.message}\r\n`);
+                log("CRITICAL FAILURE: " + e.message, "error");
                 console.error(e);
             }
         }
