@@ -45,15 +45,18 @@
 
             try {
                 // Fetch the Wasm binary
+                term.write('\x1b[33m[Debug] Fetching Euclid.wasm...\x1b[0m\r\n');
                 const response = await fetch('Euclid.wasm');
                 if (!response.ok) throw new Error(`Failed to load Euclid.wasm (${response.status})`);
-                
+
                 const bytes = await response.arrayBuffer();
+                term.write(`\x1b[33m[Debug] Loaded ${bytes.byteLength} bytes\x1b[0m\r\n`);
                 term.write('\x1b[32m[System] Starting...\x1b[0m\r\n\r\n');
 
                 // Setup Virtual Files for Stdin/Stdout
                 // We use a simple File object for stdin, which is the key for easy buffer manipulation
-                const stdinFile = new File([]); 
+                // IMPORTANT: Pre-populate stdin with a newline to prevent initial getLine from blocking
+                const stdinFile = new File([new Uint8Array([10])]); // 10 = '\n' 
                 
                 const fds = [
                     new OpenFile(stdinFile), // stdin (0)
@@ -73,23 +76,16 @@
                     // Enter key handler
                     if (data === '\r') {
                         term.write('\r\n');
-                        
-                        // Append the line to the stdin File object
+
+                        // Add input to stdin and RESET the file position
                         const inputBytes = encoder.encode(inputBuffer + "\n");
-                        const oldData = stdinFile.data;
-                        const newData = new Uint8Array(oldData.length + inputBytes.length);
-                        newData.set(oldData);
-                        newData.set(inputBytes, oldData.length);
-                        stdinFile.data = newData;
-                        
-                        // CRITICAL: Must reset the read position pointer of the file descriptor (FD)
-                        // This allows WASM to see the new data added to the beginning of the buffer.
-                        // The WASI shim starts reading from fd.file_pos, which is why this fails.
-                        
-                        // NOTE: If Haskell reads the entire buffer, the pointer moves. 
-                        // To keep it simple, we let the existing start position be 0 
-                        // and trust the WASI shim to read the full buffer on each `getLine`.
-                        
+
+                        // Replace stdin data completely (don't append)
+                        stdinFile.data = inputBytes;
+
+                        // CRITICAL: Reset the read position to 0 so WASM can read the new input
+                        fds[0].file_pos = 0;
+
                         inputBuffer = "";
                     } 
                     // Backspace
@@ -126,11 +122,14 @@
                 };
 
                 // Instantiate and Start
+                term.write('\x1b[33m[Debug] Instantiating WASM module...\x1b[0m\r\n');
                 const { instance } = await WebAssembly.instantiate(bytes, {
                     "wasi_snapshot_preview1": wasi.wasiImport
                 });
 
+                term.write('\x1b[33m[Debug] Starting WASM instance...\x1b[0m\r\n');
                 wasi.start(instance);
+                term.write('\x1b[32m[Debug] WASM started successfully!\x1b[0m\r\n');
 
             } catch (e) {
                 term.write(`\r\n\x1b[31m[Critical Error] ${e.message}\x1b[0m\r\n`);
