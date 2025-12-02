@@ -23,7 +23,7 @@
 
     <script type="module">
         // Import WASI shim for runtime support (using unpkg for better ESM support)
-        import { WASI } from 'https://unpkg.com/@bjorn3/browser_wasi_shim@0.3.0/dist/index.js';
+        import { WASI, File, OpenFile } from 'https://unpkg.com/@bjorn3/browser_wasi_shim@0.3.0/dist/index.js';
 
         // Reactor-mode WASM - no blocking I/O, just function calls!
         async function main() {
@@ -53,12 +53,22 @@
                 // Instantiate WASM in reactor mode (no main(), just exported functions)
                 term.write('\x1b[33m[Debug] Instantiating WASM module...\x1b[0m\r\n');
 
-                // Setup minimal WASI (needed for GHC runtime, but we won't call main)
-                const wasi = new WASI([], [], []);
+                // Setup WASI with proper file descriptors (needed for GHC runtime output)
+                const fds = [
+                    new OpenFile(new File([])), // stdin (fd 0)
+                    new OpenFile(new File([])), // stdout (fd 1)
+                    new OpenFile(new File([])), // stderr (fd 2)
+                ];
+
+                const wasi = new WASI([], [], fds);
 
                 const { instance } = await WebAssembly.instantiate(bytes, {
                     wasi_snapshot_preview1: wasi.wasiImport
                 });
+
+                // Link WASI to the instance (critical for fd_write to work)
+                wasi.inst = instance;
+
                 term.write('\x1b[32m[System] WASM module loaded successfully!\x1b[0m\r\n');
 
                 // Access exported functions
