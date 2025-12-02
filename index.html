@@ -1,89 +1,141 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Hasclid Debugger</title>
+    <title>Hasclid: Geometric Theorem Prover</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.2.1/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.2.1/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
+    
     <style>
-        body { background: #111; color: #0f0; font-family: monospace; padding: 20px; }
-        #log { white-space: pre-wrap; }
-        .error { color: #f55; }
-        .success { color: #5f5; font-weight: bold; }
-        .info { color: #88f; }
+        body { margin: 0; background: #000; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        #terminal { flex: 1; padding: 10px; }
+        /* A nice header overlay */
+        #header {
+            position: absolute; top: 10px; right: 20px; z-index: 10;
+            color: #444; font-family: monospace; font-size: 12px; pointer-events: none;
+        }
+        a { color: #666; text-decoration: none; pointer-events: auto; }
+        a:hover { color: #888; }
     </style>
 </head>
 <body>
-    <h1>Hasclid System Diagnostics</h1>
-    <div id="log"></div>
+    <div id="header">Hasclid v7.2 | <a href="https://github.com/TACITVS/Hasclid">Source</a></div>
+    <div id="terminal"></div>
 
     <script type="module">
-        // 1. Import the WASI Shim directly from a reliable CDN endpoint
+        // Import WASI from the robust CDN we just verified works
         import { WASI, File, OpenFile, ConsoleStdout } from 'https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.2.19/dist/index.min.js';
 
-        function log(msg, type = '') {
-            const el = document.getElementById('log');
-            el.innerHTML += `<span class="${type}">[${new Date().toLocaleTimeString()}] ${msg}</span>\n`;
-        }
+        async function main() {
+            // Setup Terminal UI
+            const term = new Terminal({ 
+                cursorBlink: true, 
+                fontSize: 16, 
+                fontFamily: 'Consolas, "Courier New", monospace',
+                theme: { background: '#000000', foreground: '#f0f0f0' }
+            });
+            
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(document.getElementById('terminal'));
+            fitAddon.fit();
+            window.addEventListener('resize', () => fitAddon.fit());
 
-        async function run() {
+            term.write('\x1b[32m[System] Loading Hasclid Engine...\x1b[0m\r\n');
+
             try {
-                log("WASI Shim imported successfully.", "success");
-
-                // 2. Fetch File
-                log("Fetching Euclid.wasm...");
+                // Fetch the Wasm binary
                 const response = await fetch('Euclid.wasm');
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP Error: ${response.status} ${response.statusText} (File not found?)`);
-                }
+                if (!response.ok) throw new Error(`Failed to load Euclid.wasm (${response.status})`);
                 
                 const bytes = await response.arrayBuffer();
-                log(`Download Complete. Size: ${(bytes.byteLength / 1024 / 1024).toFixed(2)} MB`, "success");
+                term.write('\x1b[32m[System] Starting...\x1b[0m\r\n\r\n');
 
-                // 3. Compile
-                log("Compiling WebAssembly...");
-                // Setup the WASI args/env
-                const args = ["Euclid.wasm"];
-                const env = [];
+                // Setup Virtual Files for Stdin/Stdout
+                // We use a shared buffer or direct hooking. 
                 const fds = [
                     new OpenFile(new File([])), // stdin
                     new OpenFile(new File([])), // stdout
                     new OpenFile(new File([])), // stderr
                 ];
+                const args = ["Euclid.wasm"];
+                const env = [];
                 
                 const wasi = new WASI(args, env, fds);
 
+                // --- IO HOOKING ---
+
+                // 1. INPUT: Terminal -> Haskell
+                // Haskell's `getLine` waits for a newline. We buffer characters until Enter.
+                let inputBuffer = "";
+                
+                term.onData(data => {
+                    // Handle Enter
+                    if (data === '\r') {
+                        term.write('\r\n'); // Echo newline to screen
+                        
+                        const encoder = new TextEncoder();
+                        // Add \n because Haskell needs it to trigger getLine
+                        const inputBytes = encoder.encode(inputBuffer + "\n");
+                        
+                        // Write to the stdin file
+                        const stdinFile = fds[0].file;
+                        const oldData = stdinFile.data;
+                        const newData = new Uint8Array(oldData.length + inputBytes.length);
+                        newData.set(oldData);
+                        newData.set(inputBytes, oldData.length);
+                        stdinFile.data = newData;
+                        
+                        inputBuffer = "";
+                    } 
+                    // Handle Backspace
+                    else if (data === '\u007F') {
+                        if (inputBuffer.length > 0) {
+                            inputBuffer = inputBuffer.slice(0, -1);
+                            term.write('\b \b');
+                        }
+                    } 
+                    // Handle Standard Char
+                    else {
+                        inputBuffer += data;
+                        term.write(data);
+                    }
+                });
+
+                // 2. OUTPUT: Haskell -> Terminal
+                // We override the `write` method of the stdout file descriptor
+                const originalWrite = fds[1].write;
+                const decoder = new TextDecoder();
+
+                // Hook stdout
+                fds[1].write = function(data) {
+                    const text = decoder.decode(data);
+                    // Convert Linux \n to Windows/Terminal \r\n for display
+                    term.write(text.replace(/\n/g, '\r\n'));
+                    return originalWrite.call(fds[1], data);
+                };
+                
+                // Hook stderr (print in red)
+                fds[2].write = function(data) {
+                    const text = decoder.decode(data);
+                    term.write('\x1b[31m' + text.replace(/\n/g, '\r\n') + '\x1b[0m');
+                    return originalWrite.call(fds[2], data);
+                };
+
+                // Instantiate and Start
                 const { instance } = await WebAssembly.instantiate(bytes, {
                     "wasi_snapshot_preview1": wasi.wasiImport
                 });
-                log("Compilation Success.", "success");
-
-                // 4. Run
-                log("Starting Engine... (Check Console for Output)");
-                
-                // Hijack the stdout to print to our HTML log
-                // The shim writes to the 'File' object we passed in fds[1]
-                // We can wrap the write to intercept it, or just read the buffer after.
-                // For a live stream, we can shim the fd directly:
-                
-                const originalWrite = fds[1].write; // Save original
-                const decoder = new TextDecoder();
-                
-                // Override write to capture output live
-                fds[1].write = function(data) {
-                    const text = decoder.decode(data);
-                    log("STDOUT: " + text, "info");
-                    return originalWrite.call(fds[1], data);
-                };
 
                 wasi.start(instance);
-                log("Process Finished.", "success");
 
             } catch (e) {
-                log("CRITICAL FAILURE: " + e.message, "error");
+                term.write(`\r\n\x1b[31m[Critical Error] ${e.message}\x1b[0m\r\n`);
                 console.error(e);
             }
         }
 
-        run();
+        main();
     </script>
 </body>
 </html>
