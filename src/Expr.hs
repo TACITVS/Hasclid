@@ -13,17 +13,22 @@ import Data.Maybe (mapMaybe)
 -- =============================================
 
 data Expr
-  = Var String              
-  | Const Rational          
+  = Var String
+  | Const Rational
   | Add Expr Expr
   | Sub Expr Expr
   | Mul Expr Expr
   | Div Expr Expr
   | Pow Expr Natural
-  | Dist2 String String             
-  | Collinear String String String  
-  | Dot String String String String 
-  | Circle String String Expr       
+  -- Geometric primitives
+  | Dist2 String String                    -- Squared distance between two points
+  | Collinear String String String         -- Three points are collinear
+  | Dot String String String String        -- Dot product of vectors AB and CD
+  | Circle String String Expr              -- Point on circle with center and radius
+  -- New geometry helpers
+  | Midpoint String String String          -- M is midpoint of AB: (xM = (xA+xB)/2, etc.)
+  | Perpendicular String String String String  -- AB ⊥ CD (dot product = 0)
+  | Parallel String String String String       -- AB ∥ CD (cross product = 0)
   deriving (Eq, Show)
 
 prettyExpr :: Expr -> String
@@ -38,6 +43,9 @@ prettyExpr (Dist2 p1 p2) = "(dist2 " ++ p1 ++ " " ++ p2 ++ ")"
 prettyExpr (Collinear p1 p2 p3) = "(collinear " ++ p1 ++ " " ++ p2 ++ " " ++ p3 ++ ")"
 prettyExpr (Dot a b c d) = "(dot " ++ a ++ " " ++ b ++ " " ++ c ++ " " ++ d ++ ")"
 prettyExpr (Circle p c r) = "(circle " ++ p ++ " " ++ c ++ " " ++ prettyExpr r ++ ")"
+prettyExpr (Midpoint a b m) = "(midpoint " ++ a ++ " " ++ b ++ " " ++ m ++ ")"
+prettyExpr (Perpendicular a b c d) = "(perpendicular " ++ a ++ " " ++ b ++ " " ++ c ++ " " ++ d ++ ")"
+prettyExpr (Parallel a b c d) = "(parallel " ++ a ++ " " ++ b ++ " " ++ c ++ " " ++ d ++ ")"
 
 prettyRational :: Rational -> String
 prettyRational r
@@ -196,6 +204,40 @@ toPoly (Circle p c r) =
   let distSq = toPoly (Dist2 p c)
       rad    = toPoly r
   in polySub distSq (polyPow rad 2)
+
+-- Midpoint: M is midpoint of AB means 2*xM = xA + xB, 2*yM = yA + yB, 2*zM = zA + zB
+-- We return the constraint for x-coordinate: 2*xM - xA - xB = 0
+-- User should add similar constraints for y and z coordinates
+toPoly (Midpoint a b m) =
+  let xA = polyFromVar ("x" ++ a); xB = polyFromVar ("x" ++ b); xM = polyFromVar ("x" ++ m)
+      yA = polyFromVar ("y" ++ a); yB = polyFromVar ("y" ++ b); yM = polyFromVar ("y" ++ m)
+      zA = polyFromVar ("z" ++ a); zB = polyFromVar ("z" ++ b); zM = polyFromVar ("z" ++ m)
+      -- Combined constraint: (2xM - xA - xB)² + (2yM - yA - yB)² + (2zM - zA - zB)² = 0
+      xConstraint = polySub (polySub (polyMul (polyFromConst 2) xM) xA) xB
+      yConstraint = polySub (polySub (polyMul (polyFromConst 2) yM) yA) yB
+      zConstraint = polySub (polySub (polyMul (polyFromConst 2) zM) zA) zB
+  in polyAdd (polyAdd (polyMul xConstraint xConstraint) (polyMul yConstraint yConstraint)) (polyMul zConstraint zConstraint)
+
+-- Perpendicular: AB ⊥ CD means AB · CD = 0
+toPoly (Perpendicular a b c d) = toPoly (Dot a b c d)
+
+-- Parallel: AB ∥ CD means AB × CD = 0 (cross product = 0)
+-- In 3D: (AB × CD)_x² + (AB × CD)_y² + (AB × CD)_z² = 0
+-- Cross product: u × v = (u_y*v_z - u_z*v_y, u_z*v_x - u_x*v_z, u_x*v_y - u_y*v_x)
+toPoly (Parallel a b c d) =
+  let xa = polyFromVar ("x" ++ a); ya = polyFromVar ("y" ++ a); za = polyFromVar ("z" ++ a)
+      xb = polyFromVar ("x" ++ b); yb = polyFromVar ("y" ++ b); zb = polyFromVar ("z" ++ b)
+      xc = polyFromVar ("x" ++ c); yc = polyFromVar ("y" ++ c); zc = polyFromVar ("z" ++ c)
+      xd = polyFromVar ("x" ++ d); yd = polyFromVar ("y" ++ d); zd = polyFromVar ("z" ++ d)
+      -- Vector AB
+      vABx = polySub xb xa; vABy = polySub yb ya; vABz = polySub zb za
+      -- Vector CD
+      vCDx = polySub xd xc; vCDy = polySub yd yc; vCDz = polySub zd zc
+      -- Cross product components
+      crossX = polySub (polyMul vABy vCDz) (polyMul vABz vCDy)
+      crossY = polySub (polyMul vABz vCDx) (polyMul vABx vCDz)
+      crossZ = polySub (polyMul vABx vCDy) (polyMul vABy vCDx)
+  in polyAdd (polyAdd (polyMul crossX crossX) (polyMul crossY crossY)) (polyMul crossZ crossZ)
 
 -- =============================================
 -- Logic

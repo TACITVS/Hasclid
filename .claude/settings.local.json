@@ -6,7 +6,10 @@
       "Bash(git merge:*)",
       "Bash(git pull:*)",
       "Bash(git reset:*)",
-      "Bash(cabal run:*)"
+      "Bash(cabal run:*)",
+      "Bash(chcp 65001)",
+      "Bash(export LANG=en_US.UTF-8)",
+      "Bash(cabal build:*)"
     ],
     "deny": [],
     "ask": []

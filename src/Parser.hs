@@ -60,6 +60,11 @@ exprFromSExpr (List (Atom op : args)) = case op of
   "collinear" -> case args of [Atom p1, Atom p2, Atom p3] -> Collinear p1 p2 p3; _ -> error "Usage: (collinear A B C)"
   "dot"       -> case args of [Atom a, Atom b, Atom c, Atom d] -> Dot a b c d; _ -> error "Usage: (dot A B C D)"
   "circle"    -> case args of [Atom p, Atom c, r] -> Circle p c (exprFromSExpr r); _ -> error "Usage: (circle P Center Radius)"
+
+  -- New geometry helpers
+  "midpoint"      -> case args of [Atom a, Atom b, Atom m] -> Midpoint a b m; _ -> error "Usage: (midpoint A B M) - M is midpoint of AB"
+  "perpendicular" -> case args of [Atom a, Atom b, Atom c, Atom d] -> Perpendicular a b c d; _ -> error "Usage: (perpendicular A B C D) - AB ⊥ CD"
+  "parallel"      -> case args of [Atom a, Atom b, Atom c, Atom d] -> Parallel a b c d; _ -> error "Usage: (parallel A B C D) - AB ∥ CD"
   
   "=" -> errFormula
   ">=" -> errFormula
