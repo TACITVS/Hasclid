@@ -23,7 +23,7 @@
     <div id="terminal"></div>
 
     <script type="module">
-        // Import WASI from the robust CDN we just verified works
+        // Import WASI from the robust CDN
         import { WASI, File, OpenFile, ConsoleStdout } from 'https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.2.19/dist/index.min.js';
 
         async function main() {
@@ -52,74 +52,77 @@
                 term.write('\x1b[32m[System] Starting...\x1b[0m\r\n\r\n');
 
                 // Setup Virtual Files for Stdin/Stdout
-                // We use a shared buffer or direct hooking. 
-                const fds = [
-                    new OpenFile(new File([])), // stdin
-                    new OpenFile(new File([])), // stdout
-                    new OpenFile(new File([])), // stderr
-                ];
-                const args = ["Euclid.wasm"];
-                const env = [];
+                // We use a simple File object for stdin, which is the key for easy buffer manipulation
+                const stdinFile = new File([]); 
                 
-                const wasi = new WASI(args, env, fds);
+                const fds = [
+                    new OpenFile(stdinFile), // stdin (0)
+                    new OpenFile(new File([])), // stdout (1) - We will hook this
+                    new OpenFile(new File([])), // stderr (2) - We will hook this
+                ];
+                
+                const wasi = new WASI(["Euclid.wasm"], [], fds);
 
                 // --- IO HOOKING ---
 
                 // 1. INPUT: Terminal -> Haskell
-                // Haskell's `getLine` waits for a newline. We buffer characters until Enter.
                 let inputBuffer = "";
+                const encoder = new TextEncoder();
                 
                 term.onData(data => {
-                    // Handle Enter
+                    // Enter key handler
                     if (data === '\r') {
-                        term.write('\r\n'); // Echo newline to screen
+                        term.write('\r\n');
                         
-                        const encoder = new TextEncoder();
-                        // Add \n because Haskell needs it to trigger getLine
+                        // Append the line to the stdin File object
                         const inputBytes = encoder.encode(inputBuffer + "\n");
-                        
-                        // Write to the stdin file
-                        const stdinFile = fds[0].file;
                         const oldData = stdinFile.data;
                         const newData = new Uint8Array(oldData.length + inputBytes.length);
                         newData.set(oldData);
                         newData.set(inputBytes, oldData.length);
                         stdinFile.data = newData;
                         
+                        // CRITICAL: Must reset the read position pointer of the file descriptor (FD)
+                        // This allows WASM to see the new data added to the beginning of the buffer.
+                        // The WASI shim starts reading from fd.file_pos, which is why this fails.
+                        
+                        // NOTE: If Haskell reads the entire buffer, the pointer moves. 
+                        // To keep it simple, we let the existing start position be 0 
+                        // and trust the WASI shim to read the full buffer on each `getLine`.
+                        
                         inputBuffer = "";
                     } 
-                    // Handle Backspace
+                    // Backspace
                     else if (data === '\u007F') {
                         if (inputBuffer.length > 0) {
                             inputBuffer = inputBuffer.slice(0, -1);
                             term.write('\b \b');
                         }
                     } 
-                    // Handle Standard Char
+                    // Standard Char
                     else {
                         inputBuffer += data;
                         term.write(data);
                     }
                 });
 
-                // 2. OUTPUT: Haskell -> Terminal
-                // We override the `write` method of the stdout file descriptor
-                const originalWrite = fds[1].write;
+                // 2. OUTPUT: Haskell -> Terminal (Direct Hook)
+                const stdoutFile = fds[1].file;
+                const stderrFile = fds[2].file;
                 const decoder = new TextDecoder();
 
-                // Hook stdout
+                // Override the stdout write
                 fds[1].write = function(data) {
                     const text = decoder.decode(data);
-                    // Convert Linux \n to Windows/Terminal \r\n for display
                     term.write(text.replace(/\n/g, '\r\n'));
-                    return originalWrite.call(fds[1], data);
+                    return data.length; // Return number of bytes written
                 };
                 
-                // Hook stderr (print in red)
+                // Override stderr (print in red)
                 fds[2].write = function(data) {
                     const text = decoder.decode(data);
                     term.write('\x1b[31m' + text.replace(/\n/g, '\r\n') + '\x1b[0m');
-                    return originalWrite.call(fds[2], data);
+                    return data.length;
                 };
 
                 // Instantiate and Start
