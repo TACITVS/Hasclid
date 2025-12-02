@@ -3,6 +3,7 @@
 module Prover
   ( proveTheory
   , proveTheoryWithCache
+  , proveTheoryWithOptions
   , buildSubMap
   , toPolySub
   , evaluatePoly
@@ -10,6 +11,9 @@ module Prover
   , ProofStep(..)
   , formatProofTrace
   , buchberger
+  , subPoly
+  , reduce
+  , sPoly
   ) where
 
 import Expr
@@ -206,6 +210,76 @@ proveTheoryWithCache maybeCache theory formula =
                       Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
                       Nothing ->
                         let computed = buchberger idealGenerators
+                            cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
+                        in (computed, Just cacheAfterInsert)
+
+      basisStep = if null idealGenerators
+                  then []
+                  else [ComputedGroebnerBasis (length basis)]
+
+      (pL, pR) = case formula of
+                   Eq l r -> (toPolySub subM l, toPolySub subM r)
+                   Ge l r -> (toPolySub subM l, toPolySub subM r)
+                   Gt l r -> (toPolySub subM l, toPolySub subM r)
+
+      difference = subPoly pL pR
+      normalForm = reduce difference basis
+
+      reductionStep = [ReducedToNormalForm difference normalForm]
+
+      -- Build trace
+      allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
+
+  in case formula of
+       Eq _ _ ->
+         let result = normalForm == polyZero
+             msg = if result
+                   then "Equality Holds (Groebner Normal Form is 0)"
+                   else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
+             trace = ProofTrace allSteps theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       Ge _ _ ->
+         let (result, msg) = checkPositivity normalForm True
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       Gt _ _ ->
+         let (result, msg) = checkPositivity normalForm False
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+-- | Prove a formula with custom Buchberger function and optional cache support
+-- Returns: (isProved, reason, trace, updatedCache)
+proveTheoryWithOptions :: ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+proveTheoryWithOptions customBuchberger maybeCache theory formula =
+  let
+      (substAssumptions, constraintAssumptions) = partitionTheory theory
+      subM = buildSubMap substAssumptions
+
+      -- Track substitutions used
+      substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
+
+      -- Track constraint assumptions
+      constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
+
+      idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
+                        | Eq l r <- constraintAssumptions ]
+
+      -- Compute basis with cache (using custom Buchberger)
+      (basis, updatedCache) =
+        if null idealGenerators
+        then ([], maybeCache)
+        else case maybeCache of
+               Nothing -> (customBuchberger idealGenerators, Nothing)
+               Just cache ->
+                 let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
+                 in case maybeCached of
+                      Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
+                      Nothing ->
+                        let computed = customBuchberger idealGenerators
                             cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
                         in (computed, Just cacheAfterInsert)
 
