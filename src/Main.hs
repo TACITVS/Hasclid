@@ -55,6 +55,37 @@ prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..
 -- 3. Helpers
 -- =============================================
 
+-- Lemma File I/O
+serializeLemma :: Formula -> String
+serializeLemma (Eq l r) = "(= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
+serializeLemma (Ge l r) = "(>= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
+serializeLemma (Gt l r) = "(> " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
+
+saveLemmasToFile :: FilePath -> Theory -> IO ()
+saveLemmasToFile filename lemmaList = do
+  let header = "-- Lemma Library\n-- Saved: " ++ show (length lemmaList) ++ " lemmas\n-- File: " ++ filename ++ "\n\n"
+  let content = unlines [ serializeLemma lemma | lemma <- reverse lemmaList ]
+  writeFile filename (header ++ content)
+
+loadLemmasFromFile :: FilePath -> IO (Either String Theory)
+loadLemmasFromFile filename = do
+  result <- tryIO (readFile filename)
+  case result of
+    Left err -> return $ Left $ "Could not read file: " ++ show err
+    Right content -> do
+      let linesOfFile = filter (not . null) $ filter (not . ("--" `isPrefixOf`)) $ map stripComment $ lines content
+      let parseResults = map parseFormulaPrefix linesOfFile
+      let (errors, formulas) = partitionEithers parseResults
+      if null errors
+        then return $ Right formulas
+        else return $ Left $ "Parse errors in lemma file:\n" ++ unlines errors
+  where
+    partitionEithers :: [Either a b] -> ([a], [b])
+    partitionEithers = foldr (either left right) ([], [])
+      where
+        left  a (l, r) = (a:l, r)
+        right b (l, r) = (l, b:r)
+
 parseCoord :: String -> Expr
 parseCoord s
   | all (\c -> isDigit c || c == '-' || c == '/') s && any isDigit s = 
@@ -141,6 +172,11 @@ processLine state rawInput = do
         "  :lemma (= a b)          Prove and store theorem",
         "  :verbose                Toggle detailed proof explanations",
         "",
+        "Lemma Libraries:",
+        "  :save-lemmas file.lemmas  Save proven lemmas to file",
+        "  :load-lemmas file.lemmas  Load lemmas from file",
+        "  :clear-lemmas             Clear all stored lemmas",
+        "",
         "Advanced (CAD for Inequalities):",
         "  :project expr var       Compute CAD Shadow (Discriminant)",
         "  :solve (> p 0) x        Solve inequality (1D)",
@@ -218,6 +254,33 @@ processLine state rawInput = do
                              (if verbose state then "\n\n" ++ formatProofTrace trace else "")
                    return (stateWithHist { lemmas = formula : lemmas state }, msg)
                  else return (stateWithHist, "LEMMA FAILED: " ++ reason)
+
+    (":save-lemmas":filename:_) -> do
+        if null (lemmas state)
+          then return (stateWithHist, "No lemmas to save.")
+          else do
+            saveLemmasToFile filename (lemmas state)
+            return (stateWithHist, "Saved " ++ show (length (lemmas state)) ++ " lemmas to " ++ filename)
+
+    (":save-lemmas":_) -> return (stateWithHist, "Usage: :save-lemmas filename.lemmas")
+
+    (":load-lemmas":filename:_) -> do
+        result <- loadLemmasFromFile filename
+        case result of
+          Left err -> return (stateWithHist, "Error loading lemmas: " ++ err)
+          Right newLemmas -> do
+            let combined = newLemmas ++ lemmas state
+            return (stateWithHist { lemmas = combined },
+                    "Loaded " ++ show (length newLemmas) ++ " lemmas from " ++ filename ++
+                    "\nTotal lemmas: " ++ show (length combined))
+
+    (":load-lemmas":_) -> return (stateWithHist, "Usage: :load-lemmas filename.lemmas")
+
+    (":clear-lemmas":_) -> do
+        let count = length (lemmas state)
+        if count == 0
+          then return (stateWithHist, "No lemmas to clear.")
+          else return (stateWithHist { lemmas = [] }, "Cleared " ++ show count ++ " lemmas.")
 
     (":project":args) -> do
          if null args 
