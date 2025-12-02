@@ -22,8 +22,8 @@
     <div id="terminal"></div>
 
     <script type="module">
-        // Import WASI shim for runtime support
-        import { WASI } from 'https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.2.19/dist/index.min.js';
+        // Import WASI shim for runtime support (using unpkg for better ESM support)
+        import { WASI } from 'https://unpkg.com/@bjorn3/browser_wasi_shim@0.3.0/dist/index.js';
 
         // Reactor-mode WASM - no blocking I/O, just function calls!
         async function main() {
