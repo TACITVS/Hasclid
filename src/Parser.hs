@@ -7,6 +7,10 @@ import Data.Char (isDigit, isAlpha, isSpace)
 import Data.Ratio ((%))
 import Data.List (foldl')
 
+-- =============================================
+-- S-Expressions
+-- =============================================
+
 data SExpr = Atom String | List [SExpr] deriving (Show)
 
 tokenizePrefix :: String -> [String]
@@ -57,21 +61,31 @@ exprFromSExpr (List (Atom op : args)) = case op of
   "dot"       -> case args of [Atom a, Atom b, Atom c, Atom d] -> Dot a b c d; _ -> error "Usage: (dot A B C D)"
   "circle"    -> case args of [Atom p, Atom c, r] -> Circle p c (exprFromSExpr r); _ -> error "Usage: (circle P Center Radius)"
   
-  -- Prevent formulas in expressions
   "=" -> errFormula
   ">=" -> errFormula
   ">" -> errFormula
   _ -> error $ "Unknown operator: " ++ op
   where errFormula = error "Formula logic (=, >=, >) found inside expression. Use at top level only."
 
+exprFromSExpr _ = error "Invalid S-Expression format"
+
+-- Parse strictly (End of input must be empty)
 parseFormulaPrefix :: String -> Either String Formula
 parseFormulaPrefix input = 
   let tokens = tokenizePrefix input
   in case parseSExpr tokens of
        (List [Atom "=", lhs, rhs], []) -> Right $ Eq (exprFromSExpr lhs) (exprFromSExpr rhs)
-       -- NEW: Inequality Parsing
        (List [Atom ">=", lhs, rhs], []) -> Right $ Ge (exprFromSExpr lhs) (exprFromSExpr rhs)
        (List [Atom ">", lhs, rhs], [])  -> Right $ Gt (exprFromSExpr lhs) (exprFromSExpr rhs)
-       
        (List [Atom op, _, _], rest) | op `elem` ["=", ">=", ">"] -> Left $ "Extra tokens after formula: " ++ show rest
        _ -> Left "Expected format: (= lhs rhs) OR (>= lhs rhs)"
+
+-- NEW: Parse formula and return remaining tokens (for :solve)
+parseFormulaWithRest :: String -> Either String (Formula, [String])
+parseFormulaWithRest input = 
+  let tokens = tokenizePrefix input
+  in case parseSExpr tokens of
+       (List [Atom "=", lhs, rhs], rest) -> Right (Eq (exprFromSExpr lhs) (exprFromSExpr rhs), rest)
+       (List [Atom ">=", lhs, rhs], rest) -> Right (Ge (exprFromSExpr lhs) (exprFromSExpr rhs), rest)
+       (List [Atom ">", lhs, rhs], rest)  -> Right (Gt (exprFromSExpr lhs) (exprFromSExpr rhs), rest)
+       _ -> Left "Expected format: (= lhs rhs) or (>= lhs rhs)"

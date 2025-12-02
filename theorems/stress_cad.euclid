@@ -1,0 +1,18 @@
+-- [stress_cad.euclid]
+-- Stress Test for Cylindrical Algebraic Decomposition (Base Phase)
+
+-- TEST 1: The Wavy Curve
+-- Solve: (x-1)(x-2)(x-3) > 0
+-- Expected: Positive in intervals (1, 2) and (3, infinity).
+-- We write the polynomial as a product:
+:solve (> (* (* (- x 1) (- x 2)) (- x 3)) 0) x
+
+-- TEST 2: The Golden Ratio
+-- Find the roots of x^2 - x - 1 = 0
+-- Expected: Roots near -0.618 and 1.618
+:solve (= (+ (- (^ x 2) x) -1) 0) x
+
+-- TEST 3: High Degree Polynomial (No Real Roots)
+-- x^6 + 5x^4 + 10 > 0
+-- Expected: 0 Roots, Sample Point 0 is Positive -> Always True.
+:solve (> (+ (+ (^ x 6) (* 5 (^ x 4))) 10) 0) x
