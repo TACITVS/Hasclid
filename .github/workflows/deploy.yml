@@ -25,20 +25,31 @@ jobs:
           # Add the ghc-wasm bin directory to the PATH for subsequent steps
           echo "$HOME/.ghc-wasm/bin" >> $GITHUB_PATH
 
+      - name: Install Binaryen (for wasm-opt asyncify)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binaryen
+
       - name: Compile Hasclid to WASM
         run: |
           # Use the environment (now automatically in PATH)
           # We might still need the env file for other variables, so let's source it just in case
           source $HOME/.ghc-wasm/env
-          
+
           # Debug: Show we have the source
           ls -R src/
-          
+
           # Compile
-          wasm32-wasi-ghc -package containers -isrc src/Main.hs -o Euclid.wasm -O2
-          
+          wasm32-wasi-ghc -package containers -isrc src/Main.hs -o Euclid_raw.wasm -O2
+
+          # Apply Asyncify transformation to make blocking calls pauseable
+          # This allows the WASM to yield control when waiting for I/O
+          wasm-opt --asyncify \
+            --pass-arg=asyncify-imports@env.invoke_* \
+            Euclid_raw.wasm -o Euclid.wasm
+
           # Debug: Verify the output exists
-          ls -lh Euclid.wasm
+          ls -lh Euclid.wasm Euclid_raw.wasm
 
       - name: Prepare Website
         run: |

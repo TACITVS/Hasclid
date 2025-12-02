@@ -127,9 +127,30 @@
                     "wasi_snapshot_preview1": wasi.wasiImport
                 });
 
+                // Keep stdin fed with newlines so the program keeps running
+                // This allows the Haskell program to "poll" for input
+                let wasmRunning = true;
+                const stdinFeeder = setInterval(() => {
+                    if (wasmRunning && inputBuffer === "" && stdinFile.data.length === 0) {
+                        // Feed an empty line to keep the program alive
+                        stdinFile.data = new Uint8Array([10]); // '\n'
+                        fds[0].file_pos = 0;
+                    }
+                }, 50); // Poll every 50ms
+
                 term.write('\x1b[33m[Debug] Starting WASM instance...\x1b[0m\r\n');
-                wasi.start(instance);
-                term.write('\x1b[32m[Debug] WASM started successfully!\x1b[0m\r\n');
+
+                // Start WASM (this will block if it hits EOF)
+                try {
+                    wasi.start(instance);
+                    wasmRunning = false;
+                    clearInterval(stdinFeeder);
+                    term.write('\x1b[32m[Debug] WASM exited normally\x1b[0m\r\n');
+                } catch (e) {
+                    wasmRunning = false;
+                    clearInterval(stdinFeeder);
+                    throw e;
+                }
 
             } catch (e) {
                 term.write(`\r\n\x1b[31m[Critical Error] ${e.message}\x1b[0m\r\n`);
