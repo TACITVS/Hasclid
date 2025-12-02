@@ -1,16 +1,74 @@
 {-# LANGUAGE DeriveGeneric #-}
 
-module Prover 
+module Prover
   ( proveTheory
   , buildSubMap
   , toPolySub
   , evaluatePoly
+  , ProofTrace(..)
+  , ProofStep(..)
+  , formatProofTrace
   ) where
 
 import Expr
-import Sturm (countRealRoots, isAlwaysPositive) 
+import Sturm (countRealRoots, isAlwaysPositive)
 import qualified Data.Map.Strict as M
 import Data.List (nub)
+
+-- =============================================
+-- Proof Tracing Data Structures
+-- =============================================
+
+data ProofStep
+  = UsedSubstitution String Expr                    -- Used variable substitution
+  | UsedConstraint Formula                          -- Used constraint assumption
+  | UsedLemma Formula                               -- Used proven lemma
+  | ComputedGroebnerBasis Int                       -- Computed basis with N polynomials
+  | ReducedToNormalForm Poly Poly                   -- Reduced polynomial: from -> to
+  | CheckedPositivity String                        -- Checked positivity with method
+  deriving (Show, Eq)
+
+data ProofTrace = ProofTrace
+  { steps :: [ProofStep]
+  , usedAssumptions :: Theory
+  , basisSize :: Int
+  } deriving (Show, Eq)
+
+emptyTrace :: ProofTrace
+emptyTrace = ProofTrace [] [] 0
+
+-- Format proof trace for display
+formatProofTrace :: ProofTrace -> String
+formatProofTrace trace = unlines $
+  [ "=========================================="
+  , "PROOF EXPLANATION:"
+  , "=========================================="
+  , ""
+  , "Used Assumptions (" ++ show (length (usedAssumptions trace)) ++ "):"
+  ] ++
+  [ "  * " ++ showFormula f | f <- usedAssumptions trace ] ++
+  [ ""
+  , "Proof Steps:"
+  ] ++
+  [ "  " ++ show (i :: Int) ++ ". " ++ formatStep s | (i, s) <- zip [1..] (steps trace) ] ++
+  [ ""
+  , "Groebner Basis Size: " ++ show (basisSize trace)
+  , "=========================================="
+  ]
+  where
+    showFormula (Eq l r) = prettyExpr l ++ " = " ++ prettyExpr r
+    showFormula (Ge l r) = prettyExpr l ++ " >= " ++ prettyExpr r
+    showFormula (Gt l r) = prettyExpr l ++ " > " ++ prettyExpr r
+
+    formatStep (UsedSubstitution v e) = "Used substitution: " ++ v ++ " -> " ++ prettyExpr e
+    formatStep (UsedConstraint f) = "Applied constraint: " ++ showFormula f
+    formatStep (UsedLemma f) = "Applied lemma: " ++ showFormula f
+    formatStep (ComputedGroebnerBasis n) = "Computed Groebner basis (" ++ show n ++ " polynomials)"
+    formatStep (ReducedToNormalForm p1 p2) =
+      if p2 == polyZero
+      then "Reduced to normal form: 0 (PROOF COMPLETE)"
+      else "Reduced to normal form: " ++ prettyPoly p2
+    formatStep (CheckedPositivity method) = "Checked positivity using: " ++ method
 
 -- =============================================
 -- Substitution Logic
@@ -116,33 +174,59 @@ partitionTheory (f:fs) =
        Eq _ _       -> (subs, f:constrs)
        _            -> (subs, constrs)
 
-proveTheory :: Theory -> Formula -> (Bool, String)
-proveTheory theory formula = 
-  let 
+proveTheory :: Theory -> Formula -> (Bool, String, ProofTrace)
+proveTheory theory formula =
+  let
       (substAssumptions, constraintAssumptions) = partitionTheory theory
       subM = buildSubMap substAssumptions
-      
-      idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r) 
+
+      -- Track substitutions used
+      substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
+
+      -- Track constraint assumptions
+      constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
+
+      idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
                         | Eq l r <- constraintAssumptions ]
-      
+
       basis = if null idealGenerators then [] else buchberger idealGenerators
-      
+      basisStep = if null idealGenerators
+                  then []
+                  else [ComputedGroebnerBasis (length basis)]
+
       (pL, pR) = case formula of
                    Eq l r -> (toPolySub subM l, toPolySub subM r)
                    Ge l r -> (toPolySub subM l, toPolySub subM r)
                    Gt l r -> (toPolySub subM l, toPolySub subM r)
-      
+
       difference = subPoly pL pR
       normalForm = reduce difference basis
-      
+
+      reductionStep = [ReducedToNormalForm difference normalForm]
+
+      -- Build trace
+      allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
+
   in case formula of
-       Eq _ _ -> 
-         if normalForm == polyZero
-         then (True, "Equality Holds (Groebner Normal Form is 0)")
-         else (False, "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")")
-       
-       Ge _ _ -> checkPositivity normalForm True
-       Gt _ _ -> checkPositivity normalForm False
+       Eq _ _ ->
+         let result = normalForm == polyZero
+             msg = if result
+                   then "Equality Holds (Groebner Normal Form is 0)"
+                   else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
+             trace = ProofTrace allSteps theory (length basis)
+         in (result, msg, trace)
+
+       Ge _ _ ->
+         let (result, msg) = checkPositivity normalForm True
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace)
+
+       Gt _ _ ->
+         let (result, msg) = checkPositivity normalForm False
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace)
 
 -- | Advanced Positivity Checker (Uses Sturm!)
 checkPositivity :: Poly -> Bool -> (Bool, String)
