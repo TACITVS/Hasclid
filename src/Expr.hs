@@ -128,6 +128,111 @@ prettyPoly (Poly m)
            (' ':'-':' ':rest) -> "-" ++ rest
            s -> s
 
+-- Enhanced pretty printing with mathematical notation
+prettyPolyNice :: Poly -> String
+prettyPolyNice (Poly m)
+  | M.null m = "0"
+  | otherwise =
+      let terms = sortTerms [ (c, mono) | (mono, c) <- M.toList m, c /= 0 ]
+      in formatTerms terms
+  where
+    -- Sort terms by total degree (descending), then lexicographically
+    sortTerms = sortBy (\(c1, m1) (c2, m2) ->
+      let deg1 = totalDegree m1
+          deg2 = totalDegree m2
+      in compare deg2 deg1 <> compare m2 m1)
+
+    totalDegree (Monomial vars) = sum (M.elems vars)
+
+    formatTerms [] = "0"
+    formatTerms [(c, mono)] = formatFirstTerm c mono
+    formatTerms ((c, mono):rest) = formatFirstTerm c mono ++ concatMap (uncurry formatOtherTerm) rest
+
+    formatFirstTerm c mono
+      | M.null (let Monomial m = mono in m) = prettyRational c
+      | c == 1 = formatMonomial mono
+      | c == -1 = "-" ++ formatMonomial mono
+      | otherwise = prettyRational c ++ formatMonomial mono
+
+    formatOtherTerm c mono
+      | c < 0 = " - " ++ formatCoeff (abs c) mono
+      | otherwise = " + " ++ formatCoeff c mono
+
+    formatCoeff c mono
+      | M.null (let Monomial m = mono in m) = prettyRational c
+      | c == 1 = formatMonomial mono
+      | otherwise = prettyRational c ++ formatMonomial mono
+
+    formatMonomial (Monomial m)
+      | M.null m = ""
+      | otherwise = concatMap formatVar (M.toAscList m)
+
+    formatVar (v, 1) = v
+    formatVar (v, e) = v ++ "^" ++ show e
+
+-- =============================================
+-- Expression Simplification
+-- =============================================
+
+-- Simplify an Expr by applying algebraic rules
+simplifyExpr :: Expr -> Expr
+simplifyExpr (Add e1 e2) =
+  let s1 = simplifyExpr e1
+      s2 = simplifyExpr e2
+  in case (s1, s2) of
+       (Const 0, e) -> e                    -- 0 + e = e
+       (e, Const 0) -> e                    -- e + 0 = e
+       (Const r1, Const r2) -> Const (r1 + r2)  -- Fold constants
+       _ -> Add s1 s2
+
+simplifyExpr (Sub e1 e2) =
+  let s1 = simplifyExpr e1
+      s2 = simplifyExpr e2
+  in case (s1, s2) of
+       (e, Const 0) -> e                    -- e - 0 = e
+       (Const r1, Const r2) -> Const (r1 - r2)
+       _ | s1 == s2 -> Const 0              -- e - e = 0
+       _ -> Sub s1 s2
+
+simplifyExpr (Mul e1 e2) =
+  let s1 = simplifyExpr e1
+      s2 = simplifyExpr e2
+  in case (s1, s2) of
+       (Const 0, _) -> Const 0              -- 0 * e = 0
+       (_, Const 0) -> Const 0              -- e * 0 = 0
+       (Const 1, e) -> e                    -- 1 * e = e
+       (e, Const 1) -> e                    -- e * 1 = e
+       (Const r1, Const r2) -> Const (r1 * r2)
+       _ -> Mul s1 s2
+
+simplifyExpr (Div e1 e2) =
+  let s1 = simplifyExpr e1
+      s2 = simplifyExpr e2
+  in case (s1, s2) of
+       (Const 0, _) -> Const 0              -- 0 / e = 0
+       (e, Const 1) -> e                    -- e / 1 = e
+       (Const r1, Const r2) | r2 /= 0 -> Const (r1 / r2)
+       _ | s1 == s2 -> Const 1              -- e / e = 1
+       _ -> Div s1 s2
+
+simplifyExpr (Pow e 0) = Const 1            -- e^0 = 1
+simplifyExpr (Pow e 1) = simplifyExpr e     -- e^1 = e
+simplifyExpr (Pow (Const r) n) = Const (r ^ n)  -- Fold constant powers
+simplifyExpr (Pow e n) = Pow (simplifyExpr e) n
+
+-- Geometric primitives don't simplify further at Expr level
+simplifyExpr e@(Dist2 _ _) = e
+simplifyExpr e@(Collinear _ _ _) = e
+simplifyExpr e@(Dot _ _ _ _) = e
+simplifyExpr e@(Circle _ _ _) = e
+simplifyExpr e@(Midpoint _ _ _) = e
+simplifyExpr e@(Perpendicular _ _ _ _) = e
+simplifyExpr e@(Parallel _ _ _ _) = e
+
+-- Base cases
+simplifyExpr e@(Var _) = e
+simplifyExpr e@(Const _) = e
+
 -- =============================================
 -- Univariate Support (New for Sturm)
 -- =============================================

@@ -2,7 +2,7 @@
 
 module Main where
 
-import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, Theory, polyZero, toUnivariate, polyFromConst)
+import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
 import Parser (parseFormulaPrefix, parseFormulaWithRest)
 import Prover (proveTheory, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace)
 import CAD (discriminant, toRecursive)
@@ -171,6 +171,7 @@ processLine state rawInput = do
         "  (= expr1 expr2)         Prove equality",
         "  :lemma (= a b)          Prove and store theorem",
         "  :verbose                Toggle detailed proof explanations",
+        "  :simplify (expr)        Simplify an expression",
         "",
         "Lemma Libraries:",
         "  :save-lemmas file.lemmas  Save proven lemmas to file",
@@ -281,6 +282,23 @@ processLine state rawInput = do
         if count == 0
           then return (stateWithHist, "No lemmas to clear.")
           else return (stateWithHist { lemmas = [] }, "Cleared " ++ show count ++ " lemmas.")
+
+    (":simplify":_) ->
+        let str = drop 10 input
+        in if null (filter (/= ' ') str)
+           then return (stateWithHist, "Usage: :simplify (expression)")
+           else do
+             let parseInput = "(= " ++ str ++ " 0)"
+             case parseFormulaPrefix parseInput of
+               Left err -> return (stateWithHist, "Parse Error: " ++ err)
+               Right (Eq e _) -> do
+                 let simplified = simplifyExpr e
+                 let poly = toPolySub (buildSubMap (theory state)) simplified
+                 return (stateWithHist,
+                         "Original:    " ++ prettyExpr e ++ "\n" ++
+                         "Simplified:  " ++ prettyExpr simplified ++ "\n" ++
+                         "As Polynomial: " ++ prettyPolyNice poly)
+               _ -> return (stateWithHist, "Parse Error: Could not parse expression")
 
     (":project":args) -> do
          if null args 
