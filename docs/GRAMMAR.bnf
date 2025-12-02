@@ -1,0 +1,172 @@
+================================================================================
+EUCLID GEOMETRIC THEOREM PROVER - FORMAL GRAMMAR SPECIFICATION
+Version 7.3
+================================================================================
+
+This document defines the complete formal grammar of the Euclid language
+using Extended Backus-Naur Form (EBNF) notation.
+
+================================================================================
+1. LEXICAL STRUCTURE
+================================================================================
+
+<whitespace>    ::= " " | "\t" | "\n" | "\r"
+<comment>       ::= "--" <any-char>* <newline>
+<digit>         ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+<letter>        ::= "a".."z" | "A".."Z"
+<identifier>    ::= <letter> (<letter> | <digit>)*
+
+<integer>       ::= ["-"] <digit>+
+<rational>      ::= <integer> ["/" <digit>+]
+<number>        ::= <rational>
+
+================================================================================
+2. EXPRESSIONS
+================================================================================
+
+<expr>          ::= <var>
+                  | <const>
+                  | <arithmetic-op>
+                  | <geometric-primitive>
+
+<var>           ::= <identifier>
+
+<const>         ::= <number>
+
+<arithmetic-op> ::= "(" <operator> <expr>+ ")"
+
+<operator>      ::= "+" | "-" | "*" | "/" | "^"
+
+<geometric-primitive>
+                ::= <dist2>
+                  | <collinear>
+                  | <dot>
+                  | <circle>
+                  | <midpoint>
+                  | <perpendicular>
+                  | <parallel>
+
+<dist2>         ::= "(dist2" <point-name> <point-name> ")"
+<collinear>     ::= "(collinear" <point-name> <point-name> <point-name> ")"
+<dot>           ::= "(dot" <point-name> <point-name> <point-name> <point-name> ")"
+<circle>        ::= "(circle" <point-name> <point-name> <expr> ")"
+<midpoint>      ::= "(midpoint" <point-name> <point-name> <point-name> ")"
+<perpendicular> ::= "(perpendicular" <point-name> <point-name> <point-name> <point-name> ")"
+<parallel>      ::= "(parallel" <point-name> <point-name> <point-name> <point-name> ")"
+
+<point-name>    ::= <identifier>
+
+================================================================================
+3. FORMULAS (TOP-LEVEL STATEMENTS)
+================================================================================
+
+<formula>       ::= "(" <relation> <expr> <expr> ")"
+
+<relation>      ::= "=" | ">=" | ">"
+
+================================================================================
+4. COMMANDS
+================================================================================
+
+<command>       ::= <geometry-command>
+                  | <proof-command>
+                  | <lemma-command>
+                  | <utility-command>
+                  | <advanced-command>
+
+-- Geometry Commands
+<geometry-command>
+                ::= ":point" <point-name> <coord> <coord> [<coord>]
+                  | ":assume" <formula>
+
+<coord>         ::= <number> | <identifier>
+
+-- Proof Commands
+<proof-command> ::= <formula>
+                  | ":lemma" <formula>
+                  | ":verbose"
+
+-- Lemma Library Commands
+<lemma-command> ::= ":save-lemmas" <filename>
+                  | ":load-lemmas" <filename>
+                  | ":clear-lemmas"
+
+-- Utility Commands
+<utility-command>
+                ::= ":help"
+                  | ":list"
+                  | ":history"
+                  | ":clean" | ":cls"
+                  | ":reset"
+                  | ":clear"
+                  | ":load" <filename>
+                  | ":q" | "quit" | "exit"
+
+-- Advanced Commands (CAD)
+<advanced-command>
+                ::= ":project" <expr> <var>
+                  | ":solve" <formula> <var> [<var>]
+
+<filename>      ::= <identifier> ["." <identifier>]+
+
+================================================================================
+5. SCRIPT FILE STRUCTURE
+================================================================================
+
+<script>        ::= <line>*
+<line>          ::= <command> | <comment> | <empty-line>
+<empty-line>    ::= <whitespace>*
+
+================================================================================
+6. LEMMA FILE STRUCTURE (.lemmas files)
+================================================================================
+
+<lemma-file>    ::= <lemma-header> <lemma-list>
+<lemma-header>  ::= "-- Lemma Library" <newline>
+                    "-- Saved:" <integer> "lemmas" <newline>
+                    "-- File:" <filename> <newline>
+                    <newline>
+<lemma-list>    ::= (<formula> <newline>)*
+
+================================================================================
+7. OPERATOR PRECEDENCE (Highest to Lowest)
+================================================================================
+
+1. Function application (geometric primitives)
+2. Power (^)
+3. Multiplication (*), Division (/)
+4. Addition (+), Subtraction (-)
+5. Relations (=, >=, >)
+
+================================================================================
+8. SEMANTIC CONSTRAINTS
+================================================================================
+
+Type Rules:
+- Arithmetic operators require numeric arguments
+- Geometric primitives require point names (identifiers)
+- Relations compare expressions of the same dimension
+
+Point Naming:
+- Each point P implicitly defines three coordinates: xP, yP, zP
+- 2D points have zP = 0
+- Point names must be unique within a context
+
+Variable Substitution:
+- Variables bound by :point commands are substituted in expressions
+- Formulas in :assume create constraints for the theorem prover
+
+================================================================================
+9. NOTES
+================================================================================
+
+- All expressions are in prefix (S-expression) notation
+- Whitespace is generally insignificant except in tokenization
+- Comments extend from "--" to end of line
+- Case-sensitive identifiers
+- No reserved keywords (all commands start with ":")
+- Rational arithmetic is exact (no floating-point)
+
+================================================================================
+END OF GRAMMAR SPECIFICATION
+================================================================================
