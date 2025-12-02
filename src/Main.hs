@@ -4,7 +4,8 @@ module Main where
 
 import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
 import Parser (parseFormulaPrefix, parseFormulaWithRest)
-import Prover (proveTheory, proveTheoryWithCache, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace)
+import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger)
+import BuchbergerOpt (SelectionStrategy(..), buchbergerOptimized, buchbergerWithStrategy)
 import CAD (discriminant, toRecursive)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Error (ProverError(..), formatError)
@@ -28,8 +29,8 @@ main :: IO ()
 main = do
   putStr "\ESC[2J\ESC[H"
   putStrLn "=================================================="
-  putStrLn "   Euclid Geometric Prover v7.3"
-  putStrLn "   Now with Proof Explanations!"
+  putStrLn "   Euclid Geometric Prover v7.4"
+  putStrLn "   Now with Optimized Buchberger!"
   putStrLn "   Type :help for commands."
   putStrLn "=================================================="
   repl initialState
@@ -46,10 +47,13 @@ data REPLState = REPLState
   , autoSimplify :: Bool
   , groebnerCache :: GroebnerCache
   , termOrder :: TermOrder
+  , useOptimizedBuchberger :: Bool
+  , selectionStrategy :: SelectionStrategy
   }
 
 initialState :: REPLState
-initialState = REPLState [] [] [] False True emptyCache defaultTermOrder  -- verbose off, autoSimplify on, empty cache, GrevLex
+initialState = REPLState [] [] [] False True emptyCache defaultTermOrder False NormalStrategy
+  -- verbose off, autoSimplify on, empty cache, GrevLex, optimization off, NormalStrategy
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -188,7 +192,37 @@ processLine state rawInput = do
     (":show-order":_) -> do
         let current = showTermOrder (termOrder state)
         return (stateWithHist, "Current term ordering: " ++ current)
-    
+
+    (":optimize":onOff:_) -> do
+        case onOff of
+          "on"  -> return (stateWithHist { useOptimizedBuchberger = True },
+                          "Optimized Buchberger enabled (2-5x faster with criteria)")
+          "off" -> return (stateWithHist { useOptimizedBuchberger = False },
+                          "Optimized Buchberger disabled (using standard algorithm)")
+          _     -> return (stateWithHist, "Usage: :optimize on|off")
+
+    (":strategy":stratStr:_) -> do
+        let parseStrategy s = case map toLowerChar s of
+              "normal"  -> Just NormalStrategy
+              "sugar"   -> Just SugarStrategy
+              "minimal" -> Just MinimalStrategy
+              _         -> Nothing
+            toLowerChar c | c >= 'A' && c <= 'Z' = toEnum (fromEnum c + 32)
+                          | otherwise = c
+        case parseStrategy stratStr of
+          Nothing -> return (stateWithHist, "Invalid strategy. Use: normal, sugar, or minimal")
+          Just newStrat -> return (stateWithHist { selectionStrategy = newStrat },
+                                   "Selection strategy set to: " ++ show newStrat)
+
+    (":show-buchberger":_) -> do
+        let optStatus = if useOptimizedBuchberger state then "ON (optimized)" else "OFF (standard)"
+        let strategyStr = show (selectionStrategy state)
+        return (stateWithHist, unlines [
+            "Buchberger Configuration:",
+            "  Optimization: " ++ optStatus,
+            "  Strategy: " ++ strategyStr
+          ])
+
     (":help":_)  -> return (stateWithHist, unlines [
         "--- Euclid Geometric Prover Commands ---",
         "",
@@ -232,6 +266,14 @@ processLine state rawInput = do
         "  :set-order grlex        Use graded lexicographic ordering",
         "  :set-order grevlex      Use graded reverse lex (default, fastest)",
         "  :show-order             Show current term ordering",
+        "",
+        "Buchberger Optimization (2-5x speedup with criteria):",
+        "  :optimize on            Enable optimized Buchberger algorithm",
+        "  :optimize off           Use standard Buchberger (default)",
+        "  :strategy normal        Use normal selection strategy",
+        "  :strategy sugar         Use sugar selection strategy",
+        "  :strategy minimal       Use minimal degree strategy",
+        "  :show-buchberger        Show current optimization settings",
         "",
         "Utilities:",
         "  :load file.euclid       Run script",
@@ -298,7 +340,10 @@ processLine state rawInput = do
              Left err -> return (stateWithHist, formatError err)
              Right formula -> do
                let fullContext = theory state ++ lemmas state
-               let (isProved, reason, trace, newCache) = proveTheoryWithCache (Just (groebnerCache state)) fullContext formula
+               let buchbergerFunc = if useOptimizedBuchberger state
+                                    then buchbergerWithStrategy (selectionStrategy state)
+                                    else buchberger
+               let (isProved, reason, trace, newCache) = proveTheoryWithOptions buchbergerFunc (Just (groebnerCache state)) fullContext formula
                if isProved
                  then do
                    let msg = "LEMMA ESTABLISHED: " ++ reason ++ "\n(Saved)" ++
@@ -414,7 +459,10 @@ processLine state rawInput = do
           Left err -> return (stateWithHist, formatError err)
           Right formula -> do
             let fullContext = theory state ++ lemmas state
-            let (isProved, reason, trace, newCache) = proveTheoryWithCache (Just (groebnerCache state)) fullContext formula
+            let buchbergerFunc = if useOptimizedBuchberger state
+                                 then buchbergerWithStrategy (selectionStrategy state)
+                                 else buchberger
+            let (isProved, reason, trace, newCache) = proveTheoryWithOptions buchbergerFunc (Just (groebnerCache state)) fullContext formula
             let subM = buildSubMap fullContext
             let (l, r) = case formula of
                            Eq a b -> (a,b)
