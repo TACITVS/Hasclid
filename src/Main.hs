@@ -30,8 +30,8 @@ main :: IO ()
 main = do
   putStr "\ESC[2J\ESC[H"
   putStrLn "=================================================="
-  putStrLn "   Euclid Geometric Prover v7.5"
-  putStrLn "   Now with Counter-example Finding!"
+  putStrLn "   Euclid Geometric Prover v7.6"
+  putStrLn "   Now with Enhanced Positivity Checking!"
   putStrLn "   Type :help for commands."
   putStrLn "=================================================="
   repl initialState

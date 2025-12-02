@@ -31,6 +31,7 @@ executable prover
         Error
         Expr
         Parser
+        Positivity
         Prover
         Sturm
         TermOrder

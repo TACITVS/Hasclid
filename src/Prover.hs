@@ -18,6 +18,7 @@ module Prover
 
 import Expr
 import Sturm (countRealRoots, isAlwaysPositive)
+import Positivity (checkPositivityEnhanced, PositivityResult(..), PositivityMethod(..), Confidence(..))
 import Cache (GroebnerCache, lookupBasis, insertBasis)
 import qualified Data.Map.Strict as M
 import Data.List (nub)
@@ -327,37 +328,13 @@ proveTheory theory formula =
   let (isProved, reason, trace, _) = proveTheoryWithCache Nothing theory formula
   in (isProved, reason, trace)
 
--- | Advanced Positivity Checker (Uses Sturm!)
+-- | Enhanced Positivity Checker with multiple methods
 checkPositivity :: Poly -> Bool -> (Bool, String)
 checkPositivity p allowZero =
-  case toUnivariate p of
-    -- Case 1: Univariate Polynomial -> Use STURM!
-    Just (var, coeffs) ->
-        let nRoots = countRealRoots coeffs
-            lcVal  = if null coeffs then 0 else last coeffs
-        in if nRoots == 0 && lcVal > 0
-           then (True, "Proven by Sturm's Theorem (0 real roots, LC > 0)")
-           else (False, "Sturm Analysis Failed: Found " ++ show nRoots ++ " real roots.")
-
-    -- Case 2: Constant
-    Nothing | isConstant p ->
-        let c = getConst p
-        in if c > 0 || (allowZero && c==0)
-           then (True, "Constant Value check")
-           else (False, "Constant is negative")
-
-    -- Case 3: Multivariate -> Fallback to Sum of Squares
-    Nothing ->
-        if isTrivialSOS p
-        then (True, "Sum of Squares (Heuristic)")
-        else (False, "Multivariate polynomial (Sturm requires univariate).")
-
-isConstant :: Poly -> Bool
-isConstant (Poly m) = all (\(Monomial v) -> M.null v) (M.keys m)
-
-getConst :: Poly -> Rational
-getConst (Poly m) = sum (M.elems m)
-
-isTrivialSOS :: Poly -> Bool
-isTrivialSOS (Poly m) = all checkTerm (M.toList m)
-  where checkTerm (Monomial vars, coeff) = coeff > 0 && all even (M.elems vars)
+  let result = checkPositivityEnhanced p allowZero
+      confidenceStr = case confidence result of
+                        Proven -> "[PROVEN]"
+                        HighConfidence -> "[HIGH CONFIDENCE]"
+                        Heuristic -> "[HEURISTIC]"
+      methodStr = show (method result)
+  in (isPositive result, confidenceStr ++ " " ++ explanation result ++ " (Method: " ++ methodStr ++ ")")
