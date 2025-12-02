@@ -25,11 +25,13 @@ executable prover
     hs-source-dirs:   src
     other-modules:
         CAD
+        Cache
         Error
         Expr
         Parser
         Prover
         Sturm
+        TermOrder
         Validation
     build-depends:
         base >= 4.16 && < 5,

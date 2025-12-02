@@ -10,6 +10,7 @@ import Sturm (isolateRoots, samplePoints, evalPoly)
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
+import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder)
 
 import System.IO (hFlush, stdout)
 import Control.Monad (foldM)
@@ -44,10 +45,11 @@ data REPLState = REPLState
   , verbose :: Bool
   , autoSimplify :: Bool
   , groebnerCache :: GroebnerCache
+  , termOrder :: TermOrder
   }
 
 initialState :: REPLState
-initialState = REPLState [] [] [] False True emptyCache  -- verbose off, autoSimplify on, empty cache
+initialState = REPLState [] [] [] False True emptyCache defaultTermOrder  -- verbose off, autoSimplify on, empty cache, GrevLex
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -174,6 +176,18 @@ processLine state rawInput = do
     (":cache-clear":_) -> do
         let newCache = clearCache (groebnerCache state)
         return (stateWithHist { groebnerCache = newCache }, "Cache cleared.")
+
+    (":set-order":orderStr:_) -> do
+        case parseTermOrder orderStr of
+          Nothing -> return (stateWithHist, "Invalid term order. Use: lex, grlex, or grevlex")
+          Just newOrder -> do
+            let newCache = clearCache (groebnerCache state)  -- Clear cache when order changes
+            let msg = "Term order set to: " ++ showTermOrder newOrder ++ "\n(Cache cleared)"
+            return (stateWithHist { termOrder = newOrder, groebnerCache = newCache }, msg)
+
+    (":show-order":_) -> do
+        let current = showTermOrder (termOrder state)
+        return (stateWithHist, "Current term ordering: " ++ current)
     
     (":help":_)  -> return (stateWithHist, unlines [
         "--- Euclid Geometric Prover Commands ---",
@@ -212,6 +226,12 @@ processLine state rawInput = do
         "Caching & Performance:",
         "  :cache-stats            Show cache statistics",
         "  :cache-clear            Clear Gröbner basis cache",
+        "",
+        "Term Ordering (affects Gröbner basis performance):",
+        "  :set-order lex          Use lexicographic ordering",
+        "  :set-order grlex        Use graded lexicographic ordering",
+        "  :set-order grevlex      Use graded reverse lex (default, fastest)",
+        "  :show-order             Show current term ordering",
         "",
         "Utilities:",
         "  :load file.euclid       Run script",
