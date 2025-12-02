@@ -39,10 +39,11 @@ data REPLState = REPLState
   , history :: [String]
   , lemmas :: Theory
   , verbose :: Bool
+  , autoSimplify :: Bool
   }
 
 initialState :: REPLState
-initialState = REPLState [] [] [] False
+initialState = REPLState [] [] [] False True  -- verbose off, autoSimplify on by default
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -145,7 +146,14 @@ processLine state rawInput = do
                   then "Verbose mode ON: Will show detailed proof explanations"
                   else "Verbose mode OFF: Will show only proof results"
         return (stateWithHist { verbose = newVerbose }, msg)
-    
+
+    (":auto-simplify":_) -> do
+        let newAutoSimplify = not (autoSimplify state)
+        let msg = if newAutoSimplify
+                  then "Auto-simplification ON: Expressions will be simplified automatically"
+                  else "Auto-simplification OFF: Expressions will be shown in raw form"
+        return (stateWithHist { autoSimplify = newAutoSimplify }, msg)
+
     (":list":_)  -> do
         let tStr = if null (theory state) then "  (None)" else prettyTheory (theory state)
         let lStr = if null (lemmas state) then "  (None)" else prettyTheory (lemmas state)
@@ -171,7 +179,8 @@ processLine state rawInput = do
         "  (= expr1 expr2)         Prove equality",
         "  :lemma (= a b)          Prove and store theorem",
         "  :verbose                Toggle detailed proof explanations",
-        "  :simplify (expr)        Simplify an expression",
+        "  :auto-simplify          Toggle automatic expression simplification",
+        "  :simplify (expr)        Manually simplify an expression",
         "",
         "Lemma Libraries:",
         "  :save-lemmas file.lemmas  Save proven lemmas to file",
@@ -185,7 +194,7 @@ processLine state rawInput = do
         "",
         "Utilities:",
         "  :load file.euclid       Run script",
-        "  :list, :history, :clean, :reset, :verbose, :q"
+        "  :list, :history, :clean, :reset, :verbose, :auto-simplify, :q"
         ])
 
     -- COMMAND: :solve <Formula> <Var1> [Var2]
@@ -368,12 +377,21 @@ processLine state rawInput = do
                            Eq a b -> (a,b)
                            Ge a b -> (a,b)
                            Gt a b -> (a,b)
-            let pL = prettyPoly (toPolySub subM l)
-            let pR = prettyPoly (toPolySub subM r)
+
+            -- Apply simplification if enabled
+            let (l', r', diff) = if autoSimplify state
+                                 then (simplifyExpr l, simplifyExpr r, simplifyExpr (Sub l r))
+                                 else (l, r, Sub l r)
+
+            -- Use appropriate pretty printer
+            let prettyFunc = if autoSimplify state then prettyPolyNice else prettyPoly
+            let pL = prettyFunc (toPolySub subM l')
+            let pR = prettyFunc (toPolySub subM r')
+            let pDiff = prettyFunc (toPolySub subM diff)
 
             if isProved
                then do
-                 let basicMsg = "RESULT: PROVED (" ++ reason ++ ")\nDiff Normal Form: " ++ prettyPoly (toPolySub subM (Sub l r))
+                 let basicMsg = "RESULT: PROVED (" ++ reason ++ ")\nDiff Normal Form: " ++ pDiff
                  let fullMsg = if verbose state
                                then basicMsg ++ "\n\n" ++ formatProofTrace trace
                                else basicMsg
