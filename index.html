@@ -9,13 +9,15 @@
         .success { color: #5f5; font-weight: bold; }
         .info { color: #88f; }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.2.19/dist/browser_wasi_shim.min.js"></script>
 </head>
 <body>
     <h1>Hasclid System Diagnostics</h1>
     <div id="log"></div>
 
-    <script>
+    <script type="module">
+        // 1. Import the WASI Shim directly from a reliable CDN endpoint
+        import { WASI, File, OpenFile, ConsoleStdout } from 'https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.2.19/dist/index.min.js';
+
         function log(msg, type = '') {
             const el = document.getElementById('log');
             el.innerHTML += `<span class="${type}">[${new Date().toLocaleTimeString()}] ${msg}</span>\n`;
@@ -23,12 +25,7 @@
 
         async function run() {
             try {
-                // 1. Check Shim
-                log("Checking WASI Shim...");
-                if (typeof browser_wasi_shim === 'undefined') {
-                    throw new Error("CRITICAL: browser_wasi_shim failed to load. Check your ad-blocker or internet connection.");
-                }
-                log("Shim Loaded OK.", "success");
+                log("WASI Shim imported successfully.", "success");
 
                 // 2. Fetch File
                 log("Fetching Euclid.wasm...");
@@ -43,27 +40,38 @@
 
                 // 3. Compile
                 log("Compiling WebAssembly...");
+                // Setup the WASI args/env
+                const args = ["Euclid.wasm"];
+                const env = [];
+                const fds = [
+                    new OpenFile(new File([])), // stdin
+                    new OpenFile(new File([])), // stdout
+                    new OpenFile(new File([])), // stderr
+                ];
+                
+                const wasi = new WASI(args, env, fds);
+
                 const { instance } = await WebAssembly.instantiate(bytes, {
-                    "wasi_snapshot_preview1": new browser_wasi_shim.WASI([], {}, []).wasiImport
+                    "wasi_snapshot_preview1": wasi.wasiImport
                 });
                 log("Compilation Success.", "success");
 
                 // 4. Run
                 log("Starting Engine... (Check Console for Output)");
                 
-                const fds = [
-                    new browser_wasi_shim.File([]), // stdin
-                    new browser_wasi_shim.File([]), // stdout
-                    new browser_wasi_shim.File([]), // stderr
-                ];
-                const wasi = new browser_wasi_shim.WASI(["Euclid.wasm"], {}, fds);
+                // Hijack the stdout to print to our HTML log
+                // The shim writes to the 'File' object we passed in fds[1]
+                // We can wrap the write to intercept it, or just read the buffer after.
+                // For a live stream, we can shim the fd directly:
                 
+                const originalWrite = fds[1].write; // Save original
                 const decoder = new TextDecoder();
-                fds[1].writeSync = function(iovs) {
-                    let text = "";
-                    for (const iov of iovs) text += decoder.decode(iov);
+                
+                // Override write to capture output live
+                fds[1].write = function(data) {
+                    const text = decoder.decode(data);
                     log("STDOUT: " + text, "info");
-                    return iovs.reduce((acc, iov) => acc + iov.byteLength, 0);
+                    return originalWrite.call(fds[1], data);
                 };
 
                 wasi.start(instance);
