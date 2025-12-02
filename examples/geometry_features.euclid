@@ -1,0 +1,65 @@
+-- ============================================
+-- Geometry Features Demo
+-- Testing: midpoint, perpendicular, parallel
+-- ============================================
+
+-- Example 1: Rectangle Properties
+-- Define rectangle ABCD with width=4, height=3
+:point A 0 0
+:point B 4 0
+:point C 4 3
+:point D 0 3
+
+-- Prove perpendicular sides
+-- (= (perpendicular A B A D) 0)
+
+-- Prove opposite sides are parallel
+(= (parallel A B D C) 0)
+(= (parallel A D B C) 0)
+
+-- Example 2: Midpoint Theorem
+-- M is midpoint of diagonal AC
+:point M 2 1.5
+:assume (= (midpoint A C M) 0)
+
+-- Prove AM = MC (equal distances from midpoint)
+(= (dist2 A M) (dist2 M C))
+
+-- Example 3: Right Triangle
+:point O 0 0
+:point P 3 0
+:point Q 0 4
+
+-- Prove OQP angle is 90° (perpendicular)
+(= (perpendicular O P O Q) 0)
+
+-- Example 4: Parallel Lines
+-- Create two parallel horizontal lines
+:point L1A 0 0
+:point L1B 5 0
+:point L2C 1 2
+:point L2D 6 2
+
+(= (parallel L1A L1B L2C L2D) 0)
+
+-- Example 5: Collinearity
+-- Three points on y-axis
+:point Y1 0 1
+:point Y2 0 3
+:point Y3 0 7
+
+(= (collinear Y1 Y2 Y3) 0)
+
+-- ============================================
+-- Advanced: Theorem of Thales
+-- If M is midpoint of AB, and lines AM, BM
+-- are equal, then angle AMB can be studied
+-- ============================================
+
+:point Thales_A 0 0
+:point Thales_B 6 0
+:point Thales_M 3 0
+:assume (= (midpoint Thales_A Thales_B Thales_M) 0)
+
+-- Verify midpoint creates equal segments
+(= (dist2 Thales_A Thales_M) (dist2 Thales_M Thales_B))

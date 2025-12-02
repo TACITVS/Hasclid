@@ -4,7 +4,7 @@ module Main where
 
 import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, Theory, polyZero, toUnivariate, polyFromConst)
 import Parser (parseFormulaPrefix, parseFormulaWithRest)
-import Prover (proveTheory, buildSubMap, toPolySub, evaluatePoly)
+import Prover (proveTheory, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace)
 import CAD (discriminant, toRecursive)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 
@@ -24,7 +24,8 @@ main :: IO ()
 main = do
   putStr "\ESC[2J\ESC[H"
   putStrLn "=================================================="
-  putStrLn "   Euclid Geometric Prover v7.2 (Final)"
+  putStrLn "   Euclid Geometric Prover v7.3"
+  putStrLn "   Now with Proof Explanations!"
   putStrLn "   Type :help for commands."
   putStrLn "=================================================="
   repl initialState
@@ -33,14 +34,15 @@ main = do
 -- 2. REPL State
 -- =============================================
 
-data REPLState = REPLState 
-  { theory :: Theory 
+data REPLState = REPLState
+  { theory :: Theory
   , history :: [String]
   , lemmas :: Theory
+  , verbose :: Bool
   }
 
 initialState :: REPLState
-initialState = REPLState [] [] []
+initialState = REPLState [] [] [] False
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -105,6 +107,13 @@ processLine state rawInput = do
 
     (":reset":_) -> return (stateWithHist { theory = [] }, "Active Theory reset (Lemmas preserved).")
     (":clear":_) -> return (initialState { history = newHist }, "Full System Reset.")
+
+    (":verbose":_) -> do
+        let newVerbose = not (verbose state)
+        let msg = if newVerbose
+                  then "Verbose mode ON: Will show detailed proof explanations"
+                  else "Verbose mode OFF: Will show only proof results"
+        return (stateWithHist { verbose = newVerbose }, msg)
     
     (":list":_)  -> do
         let tStr = if null (theory state) then "  (None)" else prettyTheory (theory state)
@@ -112,20 +121,34 @@ processLine state rawInput = do
         return (stateWithHist, "Active Assumptions:\n" ++ tStr ++ "\nProven Lemmas:\n" ++ lStr)
     
     (":help":_)  -> return (stateWithHist, unlines [
-        "--- Euclid Commands ---",
-        "Geometry:",
-        "  :point A x y z     Define 3D point",
-        "  :assume (= xA 0)   Add assumption",
+        "--- Euclid Geometric Prover Commands ---",
         "",
-        "Logic & CAD:",
-        "  :lemma (= a b)     Prove and store theorem",
-        "  :project expr var  Compute CAD Shadow (Discriminant)",
-        "  :solve (> p 0) x   Solve inequality (1D)",
-        "  :solve (> p 0) x y Solve inequality (2D Lifting)",
+        "Geometry Basics:",
+        "  :point A x y z          Define 3D point (or x y for 2D)",
+        "  :assume (= xA 0)        Add assumption",
+        "",
+        "Geometric Constraints:",
+        "  (dist2 A B)             Squared distance between points",
+        "  (midpoint A B M)        M is midpoint of AB",
+        "  (perpendicular A B C D) AB ⊥ CD (perpendicular)",
+        "  (parallel A B C D)      AB ∥ CD (parallel)",
+        "  (collinear A B C)       A, B, C are collinear",
+        "  (dot A B C D)           Dot product of vectors AB and CD",
+        "  (circle P C r)          Point P on circle with center C and radius r",
+        "",
+        "Logic & Proving:",
+        "  (= expr1 expr2)         Prove equality",
+        "  :lemma (= a b)          Prove and store theorem",
+        "  :verbose                Toggle detailed proof explanations",
+        "",
+        "Advanced (CAD for Inequalities):",
+        "  :project expr var       Compute CAD Shadow (Discriminant)",
+        "  :solve (> p 0) x        Solve inequality (1D)",
+        "  :solve (> p 0) x y      Solve inequality (2D Lifting)",
         "",
         "Utilities:",
-        "  :load file.euclid  Run script",
-        "  :list, :history, :clean, :reset, :q"
+        "  :load file.euclid       Run script",
+        "  :list, :history, :clean, :reset, :verbose, :q"
         ])
 
     -- COMMAND: :solve <Formula> <Var1> [Var2]
@@ -182,16 +205,18 @@ processLine state rawInput = do
 
                  _ -> return (stateWithHist, "Only 1D and 2D solving supported currently.")
 
-    (":lemma":_) -> 
+    (":lemma":_) ->
         let str = drop 7 input
         in case parseFormulaPrefix str of
              Left err -> return (stateWithHist, "Parse Error: " ++ err)
              Right formula -> do
                let fullContext = theory state ++ lemmas state
-               let (isProved, reason) = proveTheory fullContext formula
-               if isProved 
-                 then return (stateWithHist { lemmas = formula : lemmas state }, 
-                              "LEMMA ESTABLISHED: " ++ reason ++ "\n(Saved)")
+               let (isProved, reason, trace) = proveTheory fullContext formula
+               if isProved
+                 then do
+                   let msg = "LEMMA ESTABLISHED: " ++ reason ++ "\n(Saved)" ++
+                             (if verbose state then "\n\n" ++ formatProofTrace trace else "")
+                   return (stateWithHist { lemmas = formula : lemmas state }, msg)
                  else return (stateWithHist, "LEMMA FAILED: " ++ reason)
 
     (":project":args) -> do
@@ -251,12 +276,12 @@ processLine state rawInput = do
                                  ) (stateWithHist, "") linesOfFile
         return (finalState, "File loaded: " ++ filename)
 
-    _ -> 
+    _ ->
         case parseFormulaPrefix input of
           Left err -> return (stateWithHist, "Parse Error: " ++ err)
           Right formula -> do
             let fullContext = theory state ++ lemmas state
-            let (isProved, reason) = proveTheory fullContext formula
+            let (isProved, reason, trace) = proveTheory fullContext formula
             let subM = buildSubMap fullContext
             let (l, r) = case formula of
                            Eq a b -> (a,b)
@@ -264,9 +289,14 @@ processLine state rawInput = do
                            Gt a b -> (a,b)
             let pL = prettyPoly (toPolySub subM l)
             let pR = prettyPoly (toPolySub subM r)
-            
-            if isProved 
-               then return (stateWithHist, "RESULT: PROVED (" ++ reason ++ ")\nDiff Normal Form: " ++ prettyPoly (toPolySub subM (Sub l r)))
+
+            if isProved
+               then do
+                 let basicMsg = "RESULT: PROVED (" ++ reason ++ ")\nDiff Normal Form: " ++ prettyPoly (toPolySub subM (Sub l r))
+                 let fullMsg = if verbose state
+                               then basicMsg ++ "\n\n" ++ formatProofTrace trace
+                               else basicMsg
+                 return (stateWithHist, fullMsg)
                else return (stateWithHist, "RESULT: FALSE (" ++ reason ++ ")\nLHS: " ++ pL ++ "\nRHS: " ++ pR)
 
 -- =============================================
