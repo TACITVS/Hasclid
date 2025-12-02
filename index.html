@@ -22,6 +22,9 @@
     <div id="terminal"></div>
 
     <script type="module">
+        // Import WASI shim for runtime support
+        import { WASI } from 'https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.2.19/dist/index.min.js';
+
         // Reactor-mode WASM - no blocking I/O, just function calls!
         async function main() {
             const term = new Terminal({
@@ -50,15 +53,12 @@
                 // Instantiate WASM in reactor mode (no main(), just exported functions)
                 term.write('\x1b[33m[Debug] Instantiating WASM module...\x1b[0m\r\n');
 
-                // Memory helpers for FFI
-                const memory = new WebAssembly.Memory({ initial: 256, maximum: 512 });
-                const importObject = {
-                    env: {
-                        memory: memory
-                    }
-                };
+                // Setup minimal WASI (needed for GHC runtime, but we won't call main)
+                const wasi = new WASI([], [], []);
 
-                const { instance } = await WebAssembly.instantiate(bytes, importObject);
+                const { instance } = await WebAssembly.instantiate(bytes, {
+                    wasi_snapshot_preview1: wasi.wasiImport
+                });
                 term.write('\x1b[32m[System] WASM module loaded successfully!\x1b[0m\r\n');
 
                 // Access exported functions
@@ -85,6 +85,12 @@
                     while (mem[end] !== 0) end++;
                     const bytes = mem.subarray(ptr, end);
                     return new TextDecoder().decode(bytes);
+                }
+
+                // Initialize WASI (but don't call wasi.start() which would run main!)
+                // We only need this to setup the runtime environment
+                if (instance.exports._initialize) {
+                    instance.exports._initialize();
                 }
 
                 // Initialize the prover
