@@ -17,13 +17,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup GHC Wasm
-      run: |
-        cd /tmp
-        curl -L https://gitlab.haskell.org/ghc/ghc-wasm-meta/-/archive/master/ghc-wasm-meta-master.tar.gz | tar xz
-        cd ghc-wasm-meta-master
-        ./setup.sh
-        # Add the ghc-wasm bin directory to the PATH for subsequent steps
-        echo "$HOME/.ghc-wasm/bin" >> $GITHUB_PATH
+        run: |
+          cd /tmp
+          curl -L https://gitlab.haskell.org/ghc/ghc-wasm-meta/-/archive/master/ghc-wasm-meta-master.tar.gz | tar xz
+          cd ghc-wasm-meta-master
+          ./setup.sh
+          # Add the ghc-wasm bin directory to the PATH for subsequent steps
+          echo "$HOME/.ghc-wasm/bin" >> $GITHUB_PATH
 
       - name: Compile Hasclid to WASM
         run: |
