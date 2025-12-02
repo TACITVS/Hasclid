@@ -30,6 +30,7 @@ executable prover
         Parser
         Prover
         Sturm
+        Validation
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7

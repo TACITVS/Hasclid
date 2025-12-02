@@ -8,6 +8,7 @@ import Prover (proveTheory, buildSubMap, toPolySub, evaluatePoly, ProofTrace, fo
 import CAD (discriminant, toRecursive)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Error (ProverError(..), formatError)
+import Validation (validateTheory, formatWarnings)
 
 import System.IO (hFlush, stdout)
 import Control.Monad (foldM)
@@ -159,6 +160,10 @@ processLine state rawInput = do
         let tStr = if null (theory state) then "  (None)" else prettyTheory (theory state)
         let lStr = if null (lemmas state) then "  (None)" else prettyTheory (lemmas state)
         return (stateWithHist, "Active Assumptions:\n" ++ tStr ++ "\nProven Lemmas:\n" ++ lStr)
+
+    (":validate":_) -> do
+        let warnings = validateTheory (theory state)
+        return (stateWithHist, formatWarnings warnings)
     
     (":help":_)  -> return (stateWithHist, unlines [
         "--- Euclid Geometric Prover Commands ---",
@@ -166,6 +171,7 @@ processLine state rawInput = do
         "Geometry Basics:",
         "  :point A x y z          Define 3D point (or x y for 2D)",
         "  :assume (= xA 0)        Add assumption",
+        "  :validate               Check for degenerate configurations",
         "",
         "Geometric Constraints:",
         "  (dist2 A B)             Squared distance between points",
@@ -195,7 +201,7 @@ processLine state rawInput = do
         "",
         "Utilities:",
         "  :load file.euclid       Run script",
-        "  :list, :history, :clean, :reset, :verbose, :auto-simplify, :q"
+        "  :list, :history, :clean, :reset, :verbose, :auto-simplify, :validate, :q"
         ])
 
     -- COMMAND: :solve <Formula> <Var1> [Var2]
