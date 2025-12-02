@@ -25,6 +25,7 @@ executable prover
     hs-source-dirs:   src
     other-modules:
         CAD
+        Error
         Expr
         Parser
         Prover

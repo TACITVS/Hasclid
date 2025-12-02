@@ -7,6 +7,7 @@ import Parser (parseFormulaPrefix, parseFormulaWithRest)
 import Prover (proveTheory, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace)
 import CAD (discriminant, toRecursive)
 import Sturm (isolateRoots, samplePoints, evalPoly)
+import Error (ProverError(..), formatError)
 
 import System.IO (hFlush, stdout)
 import Control.Monad (foldM)
@@ -79,7 +80,7 @@ loadLemmasFromFile filename = do
       let (errors, formulas) = partitionEithers parseResults
       if null errors
         then return $ Right formulas
-        else return $ Left $ "Parse errors in lemma file:\n" ++ unlines errors
+        else return $ Left $ "Parse errors in lemma file:\n" ++ unlines (map formatError errors)
   where
     partitionEithers :: [Either a b] -> ([a], [b])
     partitionEithers = foldr (either left right) ([], [])
@@ -200,9 +201,9 @@ processLine state rawInput = do
     -- COMMAND: :solve <Formula> <Var1> [Var2]
     (":solve":rest) -> do
        let inputStr = unwords rest
-       
+
        case parseFormulaWithRest inputStr of
-         Left err -> return (stateWithHist, "Parse Error: " ++ err)
+         Left err -> return (stateWithHist, formatError err)
          Right (formula, vars) -> do
            
            if null vars then return (stateWithHist, "Usage: :solve (formula) x [y]")
@@ -254,7 +255,7 @@ processLine state rawInput = do
     (":lemma":_) ->
         let str = drop 7 input
         in case parseFormulaPrefix str of
-             Left err -> return (stateWithHist, "Parse Error: " ++ err)
+             Left err -> return (stateWithHist, formatError err)
              Right formula -> do
                let fullContext = theory state ++ lemmas state
                let (isProved, reason, trace) = proveTheory fullContext formula
@@ -299,7 +300,7 @@ processLine state rawInput = do
            else do
              let parseInput = "(= " ++ str ++ " 0)"
              case parseFormulaPrefix parseInput of
-               Left err -> return (stateWithHist, "Parse Error: " ++ err)
+               Left err -> return (stateWithHist, formatError err)
                Right (Eq e _) -> do
                  let simplified = simplifyExpr e
                  let poly = toPolySub (buildSubMap (theory state)) simplified
@@ -319,13 +320,13 @@ processLine state rawInput = do
                then return (stateWithHist, "Usage: :project (expression) var")
                else do
                  let exprStr = unwords exprParts
-                 let parseInput = "(= " ++ exprStr ++ " 0)" 
-                 case parseFormulaPrefix parseInput of 
+                 let parseInput = "(= " ++ exprStr ++ " 0)"
+                 case parseFormulaPrefix parseInput of
                    Right (Eq e _) -> do
                        let poly = toPolySub (buildSubMap (theory state ++ lemmas state)) e
                        let shadow = discriminant poly varStr
                        return (stateWithHist, "Projection (Discriminant w.r.t " ++ varStr ++ "):\n" ++ prettyPoly shadow)
-                   Left err -> return (stateWithHist, "Projection Failed: " ++ err)
+                   Left err -> return (stateWithHist, formatError err)
                    _ -> return (stateWithHist, "Projection Failed: Unknown logic error.")
 
     (":point":name:xStr:yStr:zStr:_) -> do
@@ -350,11 +351,11 @@ processLine state rawInput = do
     
     (":point":_) -> return (stateWithHist, "Usage: :point A x y z  OR  :point A x y")
 
-    (":assume":_) -> 
+    (":assume":_) ->
         let str = drop 8 input
         in case parseFormulaPrefix str of
              Right f -> return (stateWithHist { theory = f : theory state }, "Assumed: " ++ show f)
-             Left err -> return (stateWithHist, "Parse Error: " ++ err)
+             Left err -> return (stateWithHist, formatError err)
 
     (":load":filename:_) -> do
         content <- readFile filename
@@ -368,7 +369,7 @@ processLine state rawInput = do
 
     _ ->
         case parseFormulaPrefix input of
-          Left err -> return (stateWithHist, "Parse Error: " ++ err)
+          Left err -> return (stateWithHist, formatError err)
           Right formula -> do
             let fullContext = theory state ++ lemmas state
             let (isProved, reason, trace) = proveTheory fullContext formula

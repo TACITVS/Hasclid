@@ -279,7 +279,7 @@ toPoly (Const r)   = polyFromConst r
 toPoly (Add e1 e2) = polyAdd (toPoly e1) (toPoly e2)
 toPoly (Sub e1 e2) = polySub (toPoly e1) (toPoly e2)
 toPoly (Mul e1 e2) = polyMul (toPoly e1) (toPoly e2)
-toPoly (Div _ _)   = error "Division not supported"
+toPoly (Div _ _)   = error "Division Error: Division is not supported in polynomial expressions.\nNote: Rational constants like 1/2 are supported, but division of variables is not.\nContext: Attempting to convert Div expression to polynomial."
 toPoly (Pow e n)   = polyPow (toPoly e) n
 
 toPoly (Dist2 p1 p2) =
