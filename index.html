@@ -7,8 +7,9 @@
         #log { white-space: pre-wrap; }
         .error { color: #f55; }
         .success { color: #5f5; font-weight: bold; }
+        .info { color: #88f; }
     </style>
-    <script src="https://unpkg.com/@bjorn3/browser_wasi_shim@0.2.19/dist/browser_wasi_shim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.2.19/dist/browser_wasi_shim.min.js"></script>
 </head>
 <body>
     <h1>Hasclid System Diagnostics</h1>
@@ -25,7 +26,7 @@
                 // 1. Check Shim
                 log("Checking WASI Shim...");
                 if (typeof browser_wasi_shim === 'undefined') {
-                    throw new Error("browser_wasi_shim failed to load from CDN.");
+                    throw new Error("CRITICAL: browser_wasi_shim failed to load. Check your ad-blocker or internet connection.");
                 }
                 log("Shim Loaded OK.", "success");
 
@@ -50,7 +51,6 @@
                 // 4. Run
                 log("Starting Engine... (Check Console for Output)");
                 
-                // Minimal WASI setup
                 const fds = [
                     new browser_wasi_shim.File([]), // stdin
                     new browser_wasi_shim.File([]), // stdout
@@ -58,12 +58,11 @@
                 ];
                 const wasi = new browser_wasi_shim.WASI(["Euclid.wasm"], {}, fds);
                 
-                // Capture output
                 const decoder = new TextDecoder();
                 fds[1].writeSync = function(iovs) {
                     let text = "";
                     for (const iov of iovs) text += decoder.decode(iov);
-                    log("STDOUT: " + text);
+                    log("STDOUT: " + text, "info");
                     return iovs.reduce((acc, iov) => acc + iov.byteLength, 0);
                 };
 
