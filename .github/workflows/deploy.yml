@@ -22,24 +22,42 @@ jobs:
           curl -L https://gitlab.haskell.org/ghc/ghc-wasm-meta/-/archive/master/ghc-wasm-meta-master.tar.gz | tar xz
           cd ghc-wasm-meta-master
           ./setup.sh
-          # Add to path for this session
-          echo "$HOME/.ghc-wasm/add_to_github_path.sh" >> $GITHUB_ENV
+          # FIX: Manually add the path to GITHUB_PATH instead of using the generated script
+          echo "$HOME/.ghc-wasm/wasm32-wasi-ghc/bin" >> $GITHUB_PATH
 
       - name: Compile Hasclid to WASM
         run: |
-          # Use the wasm-specific compiler installed above
+          # Use the environment (now automatically in PATH)
+          # We might still need the env file for other variables, so let's source it just in case
           source $HOME/.ghc-wasm/env
-          # Compile src/Main.hs to Euclid.wasm
-          # -no-hs-main allows us to control entry if needed, but standard is fine
+          
+          # Debug: Show we have the source
+          ls -R src/
+          
+          # Compile
           wasm32-wasi-ghc -package containers -isrc src/Main.hs -o Euclid.wasm -O2
+          
+          # Debug: Verify the output exists
+          ls -lh Euclid.wasm
 
       - name: Prepare Website
         run: |
           mkdir public
+          
+          # Copy the binary
           cp Euclid.wasm public/
+          
+          # Copy the interface
           cp index.html public/
-          # Copy theorems if you want to download them
-          cp -r theorems public/
+          
+          # Copy the nojekyll file
+          touch public/.nojekyll
+          
+          # Copy theorems (if they exist)
+          if [ -d "theorems" ]; then cp -r theorems public/; fi
+          
+          # Debug: Show final folder structure
+          ls -R public/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
