@@ -39,17 +39,13 @@ jobs:
           # Debug: Show we have the source
           ls -R src/
 
-          # Compile
-          wasm32-wasi-ghc -package containers -isrc src/Main.hs -o Euclid_raw.wasm -O2
-
-          # Apply Asyncify transformation to make blocking calls pauseable
-          # This allows the WASM to yield control when waiting for I/O
-          wasm-opt --asyncify \
-            --pass-arg=asyncify-imports@env.invoke_* \
-            Euclid_raw.wasm -o Euclid.wasm
+          # Compile WebMain.hs (reactor mode for browser) instead of Main.hs (REPL for local)
+          # This uses FFI exports that JavaScript can call without blocking I/O
+          wasm32-wasi-ghc -package containers -isrc src/WebMain.hs -o Euclid.wasm -O2 \
+            -no-hs-main -optl-Wl,--export=prover_init,--export=prover_execute
 
           # Debug: Verify the output exists
-          ls -lh Euclid.wasm Euclid_raw.wasm
+          ls -lh Euclid.wasm
 
       - name: Prepare Website
         run: |
