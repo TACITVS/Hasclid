@@ -16,3 +16,4 @@ Euclid.exe
 dist-newstyle/
 .cabal-project/
 cabal.project.local
+.claude/settings.local.json

@@ -5,11 +5,10 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.2.1/css/xterm.css" />
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.2.1/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
-    
+
     <style>
         body { margin: 0; background: #000; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         #terminal { flex: 1; padding: 10px; }
-        /* A nice header overlay */
         #header {
             position: absolute; top: 10px; right: 20px; z-index: 10;
             color: #444; font-family: monospace; font-size: 12px; pointer-events: none;
@@ -19,22 +18,19 @@
     </style>
 </head>
 <body>
-    <div id="header">Hasclid v7.2 | <a href="https://github.com/TACITVS/Hasclid">Source</a></div>
+    <div id="header">Hasclid v7.2 (Web) | <a href="https://github.com/TACITVS/Hasclid">Source</a></div>
     <div id="terminal"></div>
 
     <script type="module">
-        // Import WASI from the robust CDN
-        import { WASI, File, OpenFile, ConsoleStdout } from 'https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.2.19/dist/index.min.js';
-
+        // Reactor-mode WASM - no blocking I/O, just function calls!
         async function main() {
-            // Setup Terminal UI
-            const term = new Terminal({ 
-                cursorBlink: true, 
-                fontSize: 16, 
+            const term = new Terminal({
+                cursorBlink: true,
+                fontSize: 16,
                 fontFamily: 'Consolas, "Courier New", monospace',
                 theme: { background: '#000000', foreground: '#f0f0f0' }
             });
-            
+
             const fitAddon = new FitAddon.FitAddon();
             term.loadAddon(fitAddon);
             term.open(document.getElementById('terminal'));
@@ -44,113 +40,113 @@
             term.write('\x1b[32m[System] Loading Hasclid Engine...\x1b[0m\r\n');
 
             try {
-                // Fetch the Wasm binary
-                term.write('\x1b[33m[Debug] Fetching Euclid.wasm...\x1b[0m\r\n');
+                // Fetch WASM binary
                 const response = await fetch('Euclid.wasm');
                 if (!response.ok) throw new Error(`Failed to load Euclid.wasm (${response.status})`);
 
                 const bytes = await response.arrayBuffer();
                 term.write(`\x1b[33m[Debug] Loaded ${bytes.byteLength} bytes\x1b[0m\r\n`);
-                term.write('\x1b[32m[System] Starting...\x1b[0m\r\n\r\n');
 
-                // Setup Virtual Files for Stdin/Stdout
-                // We use a simple File object for stdin, which is the key for easy buffer manipulation
-                // IMPORTANT: Pre-populate stdin with a newline to prevent initial getLine from blocking
-                const stdinFile = new File([new Uint8Array([10])]); // 10 = '\n' 
-                
-                const fds = [
-                    new OpenFile(stdinFile), // stdin (0)
-                    new OpenFile(new File([])), // stdout (1) - We will hook this
-                    new OpenFile(new File([])), // stderr (2) - We will hook this
-                ];
-                
-                const wasi = new WASI(["Euclid.wasm"], [], fds);
+                // Instantiate WASM in reactor mode (no main(), just exported functions)
+                term.write('\x1b[33m[Debug] Instantiating WASM module...\x1b[0m\r\n');
 
-                // --- IO HOOKING ---
+                // Memory helpers for FFI
+                const memory = new WebAssembly.Memory({ initial: 256, maximum: 512 });
+                const importObject = {
+                    env: {
+                        memory: memory
+                    }
+                };
 
-                // 1. INPUT: Terminal -> Haskell
+                const { instance } = await WebAssembly.instantiate(bytes, importObject);
+                term.write('\x1b[32m[System] WASM module loaded successfully!\x1b[0m\r\n');
+
+                // Access exported functions
+                const prover_init = instance.exports.prover_init;
+                const prover_execute = instance.exports.prover_execute;
+                const malloc = instance.exports.malloc || instance.exports._malloc;
+                const free = instance.exports.free || instance.exports._free;
+                const wasm_memory = instance.exports.memory;
+
+                // Helper: Write JS string to WASM memory
+                function writeString(str) {
+                    const encoder = new TextEncoder();
+                    const bytes = encoder.encode(str + '\0'); // null-terminated
+                    const ptr = malloc(bytes.length);
+                    const mem = new Uint8Array(wasm_memory.buffer, ptr, bytes.length);
+                    mem.set(bytes);
+                    return ptr;
+                }
+
+                // Helper: Read C string from WASM memory
+                function readString(ptr) {
+                    const mem = new Uint8Array(wasm_memory.buffer);
+                    let end = ptr;
+                    while (mem[end] !== 0) end++;
+                    const bytes = mem.subarray(ptr, end);
+                    return new TextDecoder().decode(bytes);
+                }
+
+                // Initialize the prover
+                term.write('\x1b[33m[Debug] Initializing prover...\x1b[0m\r\n');
+                const initPtr = prover_init();
+                const banner = readString(initPtr);
+                free(initPtr);
+
+                // Display banner
+                term.write('\r\n');
+                term.write(banner.replace(/\n/g, '\r\n'));
+                term.write('\r\n');
+
+                // Setup input handling
                 let inputBuffer = "";
-                const encoder = new TextEncoder();
-                
+
+                function showPrompt() {
+                    term.write('\x1b[32mEuclid> \x1b[0m');
+                }
+
+                showPrompt();
+
                 term.onData(data => {
-                    // Enter key handler
-                    if (data === '\r') {
+                    if (data === '\r') { // Enter
                         term.write('\r\n');
 
-                        // Add input to stdin and RESET the file position
-                        const inputBytes = encoder.encode(inputBuffer + "\n");
+                        // Execute command via WASM
+                        const cmdPtr = writeString(inputBuffer);
+                        const resultPtr = prover_execute(cmdPtr);
+                        const result = readString(resultPtr);
 
-                        // Replace stdin data completely (don't append)
-                        stdinFile.data = inputBytes;
+                        // Free memory
+                        free(cmdPtr);
+                        free(resultPtr);
 
-                        // CRITICAL: Reset the read position to 0 so WASM can read the new input
-                        fds[0].file_pos = 0;
+                        // Display result
+                        if (result.length > 0) {
+                            term.write(result.replace(/\n/g, '\r\n'));
+                            term.write('\r\n');
+                        }
+
+                        // Check for exit commands
+                        if (inputBuffer === 'exit' || inputBuffer === 'quit' || inputBuffer === ':q') {
+                            term.write('\x1b[33m\r\nSession ended. Refresh to restart.\x1b[0m\r\n');
+                            return;
+                        }
 
                         inputBuffer = "";
-                    } 
-                    // Backspace
-                    else if (data === '\u007F') {
+                        showPrompt();
+
+                    } else if (data === '\u007F') { // Backspace
                         if (inputBuffer.length > 0) {
                             inputBuffer = inputBuffer.slice(0, -1);
                             term.write('\b \b');
                         }
-                    } 
-                    // Standard Char
-                    else {
+                    } else if (data >= ' ' || data === '\t') { // Printable characters
                         inputBuffer += data;
                         term.write(data);
                     }
                 });
 
-                // 2. OUTPUT: Haskell -> Terminal (Direct Hook)
-                const stdoutFile = fds[1].file;
-                const stderrFile = fds[2].file;
-                const decoder = new TextDecoder();
-
-                // Override the stdout write
-                fds[1].write = function(data) {
-                    const text = decoder.decode(data);
-                    term.write(text.replace(/\n/g, '\r\n'));
-                    return data.length; // Return number of bytes written
-                };
-                
-                // Override stderr (print in red)
-                fds[2].write = function(data) {
-                    const text = decoder.decode(data);
-                    term.write('\x1b[31m' + text.replace(/\n/g, '\r\n') + '\x1b[0m');
-                    return data.length;
-                };
-
-                // Instantiate and Start
-                term.write('\x1b[33m[Debug] Instantiating WASM module...\x1b[0m\r\n');
-                const { instance } = await WebAssembly.instantiate(bytes, {
-                    "wasi_snapshot_preview1": wasi.wasiImport
-                });
-
-                // Keep stdin fed with newlines so the program keeps running
-                // This allows the Haskell program to "poll" for input
-                let wasmRunning = true;
-                const stdinFeeder = setInterval(() => {
-                    if (wasmRunning && inputBuffer === "" && stdinFile.data.length === 0) {
-                        // Feed an empty line to keep the program alive
-                        stdinFile.data = new Uint8Array([10]); // '\n'
-                        fds[0].file_pos = 0;
-                    }
-                }, 50); // Poll every 50ms
-
-                term.write('\x1b[33m[Debug] Starting WASM instance...\x1b[0m\r\n');
-
-                // Start WASM (this will block if it hits EOF)
-                try {
-                    wasi.start(instance);
-                    wasmRunning = false;
-                    clearInterval(stdinFeeder);
-                    term.write('\x1b[32m[Debug] WASM exited normally\x1b[0m\r\n');
-                } catch (e) {
-                    wasmRunning = false;
-                    clearInterval(stdinFeeder);
-                    throw e;
-                }
+                term.write('\x1b[32m[System] Ready! Type :help for commands.\x1b[0m\r\n\r\n');
 
             } catch (e) {
                 term.write(`\r\n\x1b[31m[Critical Error] ${e.message}\x1b[0m\r\n`);

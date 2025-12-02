@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh run:*)",
+      "Bash(gh repo view:*)",
+      "Bash(git merge:*)",
+      "Bash(git pull:*)",
+      "Bash(git reset:*)",
+      "Bash(cabal run:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
