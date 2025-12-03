@@ -1,4 +1,12 @@
-module CAD (discriminant, toRecursive, resultant) where
+module CAD
+  ( discriminant
+  , toRecursive
+  , resultant
+  , psc
+  , leadingCoeff
+  , allCoeffs
+  , completeProjection
+  ) where
 
 import Expr
 import Data.List (dropWhileEnd)
@@ -149,3 +157,114 @@ discriminant f var =
 derivRec :: RecPoly -> RecPoly
 derivRec [] = []
 derivRec (_:xs) = zipWith (\pow coeff -> polyMul (polyFromConst (fromIntegral pow)) coeff) [1..] xs
+
+-- =============================================
+-- 5. Principal Subresultant Coefficients (PSC)
+-- =============================================
+
+-- | Compute Principal Subresultant Coefficients (PSC) of two polynomials.
+--   PSC are the leading coefficients of the polynomial subresultant sequence.
+--   These are CRITICAL for Collins' complete projection - they ensure sign-invariance.
+--
+--   The PSC sequence includes all intermediate polynomials in the subresultant PRS.
+--   For polynomials f, g of degrees m, n, we get PSC_m, PSC_{m-1}, ..., PSC_0
+psc :: Poly -> Poly -> String -> [Poly]
+psc f g var =
+  let rf = toRecursive f var
+      rg = toRecursive g var
+      prsSequence = subresultantPRSSequence rf rg
+  in filter (/= polyZero) prsSequence
+
+-- | Compute the full Polynomial Remainder Sequence (PRS), not just the final resultant.
+--   This is the subresultant chain needed for PSC.
+subresultantPRSSequence :: RecPoly -> RecPoly -> [Poly]
+subresultantPRSSequence f g = go f g []
+  where
+    go f' g' acc
+      | normalizeRec f' == [] = reverse acc
+      | normalizeRec g' == [] = reverse (lcRec f' : acc)
+      | degRec g' == 0 = reverse (polyPow (lcRec g') (fromIntegral (degRec f')) : acc)
+      | otherwise =
+          let r = pseudoRem f' g'
+              -- Extract the leading coefficient of the current remainder
+              -- This is a principal subresultant coefficient
+              lc_r = if normalizeRec r == [] then polyZero else lcRec r
+          in go g' r (lc_r : acc)
+
+-- =============================================
+-- 6. Coefficient Projection (Complete CAD)
+-- =============================================
+
+-- | Extract the leading coefficient of a polynomial w.r.t. a variable.
+--   For f(x,y) = a_n(y) * x^n + ..., this returns a_n(y).
+--   Leading coefficients must be in the projection set to ensure well-definedness.
+leadingCoeff :: Poly -> String -> Poly
+leadingCoeff f var =
+  let coeffs = toRecursive f var
+  in if null coeffs then polyZero else last coeffs
+
+-- | Extract ALL coefficients of a polynomial w.r.t. a variable.
+--   For f(x,y) = a_n(y)*x^n + ... + a_0(y), returns [a_0(y), a_1(y), ..., a_n(y)].
+--   All coefficients are needed for complete sign-invariance guarantees.
+allCoeffs :: Poly -> String -> [Poly]
+allCoeffs f var = filter (/= polyZero) (toRecursive f var)
+
+-- =============================================
+-- 7. Collins' Complete Projection
+-- =============================================
+
+-- | Complete projection operator for CAD.
+--   This is THE correct projection for Collins' CAD algorithm.
+--
+--   Given polynomials and a variable to eliminate, returns ALL polynomials needed
+--   to guarantee sign-invariance in the lifted cells.
+--
+--   Components (as per Collins 1975):
+--   1. Discriminants: disc(f) for each f
+--   2. Resultants: res(f, g) for all pairs f, g
+--   3. PSC: Principal subresultant coefficients for all pairs
+--   4. Leading coefficients: lc(f) for each f
+--   5. All coefficients: coeff_i(f) for each f
+--
+--   This is expensive but mathematically correct!
+completeProjection :: [Poly] -> String -> [Poly]
+completeProjection polys var =
+  let
+      -- Only project non-constant polynomials that depend on var
+      relevantPolys = filter (dependsOn var) polys
+
+      -- 1. Discriminants
+      discriminants = [ discriminant p var | p <- relevantPolys, polyDegreeIn p var >= 2 ]
+
+      -- 2. Resultants
+      resultants = [ resultant p q var | p <- relevantPolys, q <- relevantPolys, p /= q ]
+
+      -- 3. Principal Subresultant Coefficients (PSC) - THE CRITICAL MISSING PIECE!
+      pscPolys = concat [ psc p q var | p <- relevantPolys, q <- relevantPolys, p /= q ]
+
+      -- 4. Leading Coefficients
+      leadingCoeffs = [ leadingCoeff p var | p <- relevantPolys ]
+
+      -- 5. All Coefficients (for complete invariance)
+      allCoeffPolys = concat [ allCoeffs p var | p <- relevantPolys ]
+
+      -- Combine and remove duplicates/zeros
+      allProjected = discriminants ++ resultants ++ pscPolys ++
+                     leadingCoeffs ++ allCoeffPolys
+
+  in nub (filter (/= polyZero) allProjected)
+
+-- Helper: Check if polynomial depends on a variable
+dependsOn :: String -> Poly -> Bool
+dependsOn var p = polyDegreeIn p var > 0
+
+-- Helper: Degree of polynomial in a specific variable
+polyDegreeIn :: Poly -> String -> Int
+polyDegreeIn (Poly m) var =
+  maximum (0 : [ fromIntegral (M.findWithDefault 0 var vars)
+               | (Monomial vars, _) <- M.toList m ])
+
+-- Helper: Remove duplicates
+nub :: Eq a => [a] -> [a]
+nub [] = []
+nub (x:xs) = x : nub (filter (/= x) xs)

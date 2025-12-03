@@ -1,0 +1,14 @@
+:point A 0 0
+:point B x 0
+(> (dist2 A B) 0)
+:reset
+:point P x y
+(> (+ (* x x) (* y y)) 0)
+:reset
+:point Q a b
+(>= (+ (* a a) (* b b)) 0)
+:reset
+(> (+ (* 2 (^ x 2)) (* 3 (^ y 2))) 0)
+:reset
+(> (+ (^ x 2) (^ y 2) 1) 0)
+:q

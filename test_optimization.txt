@@ -1,0 +1,10 @@
+:show-buchberger
+:point A 0 0
+:point B 3 0
+:point C 0 4
+(= (+ (dist2 A B) (dist2 A C)) (dist2 B C))
+:optimize on
+:strategy normal
+:show-buchberger
+(= (+ (dist2 A B) (dist2 A C)) (dist2 B C))
+:q
