@@ -57,30 +57,73 @@ parseList (t:ts)
 -- Macro Expansion
 -- =============================================
 
--- | Recursively expand macros in an S-Expression
+-- | Recursively expand macros in an S-Expression with depth limit
 expandMacros :: MacroMap -> SExpr -> SExpr
-expandMacros macros (List (Atom name : args)) =
-  case M.lookup name macros of
-    Just (params, body) ->
-      if length params /= length args
-      then List (Atom name : map (expandMacros macros) args) -- Arity mismatch: don't expand (or could error?)
-      -- For now, treat as regular call if arity wrong, or maybe let exprFromSExpr catch it later.
-      -- Actually, better to expand if arity matches.
-      else
-        let 
-            -- Expand arguments first (eager evaluation of args)
-            expandedArgs = map (expandMacros macros) args
-            -- Create substitution map: param -> expanded arg
-            subst = M.fromList $ zip params expandedArgs
-            -- Substitute into body
-            substitutedBody = substituteSExpr subst body
-        in 
-            -- Recursively expand the result (in case body contains other macros)
-            expandMacros macros substitutedBody
-    Nothing -> List (Atom name : map (expandMacros macros) args)
+expandMacros macros sexpr = expandMacros' 100 macros sexpr
 
-expandMacros macros (List list) = List (map (expandMacros macros) list)
-expandMacros _ atom = atom
+expandMacros' :: Int -> MacroMap -> SExpr -> SExpr
+expandMacros' 0 _ _ = error "Macro expansion depth limit exceeded (possible infinite recursion)"
+expandMacros' depth macros expr@(List (Atom name : args)) =
+  case name of
+    -- Special Form: IF
+    -- Usage: (if (= a b) trueBranch falseBranch)
+    "if" ->
+        case args of
+            [cond, trueBranch, falseBranch] ->
+                -- Evaluate condition
+                case evalCondition (expandMacros' (depth-1) macros cond) of
+                    Just True -> expandMacros' (depth-1) macros trueBranch
+                    Just False -> expandMacros' (depth-1) macros falseBranch
+                    Nothing -> List (Atom "if" : map (expandMacros' (depth-1) macros) args) -- Keep as is if undecidable
+            _ -> expr -- Wrong arity
+
+    -- Special Form: Arithmetic (compile-time)
+    -- Only reduces if arguments are integer literals
+    op | op `elem` ["+", "-", "*"] ->
+        let expandedArgs = map (expandMacros' (depth-1) macros) args
+        in case mapM toInt expandedArgs of
+             Just nums -> Atom (show (foldl1 (opFunc op) nums))
+             Nothing -> List (Atom op : expandedArgs)
+
+    _ ->
+      case M.lookup name macros of
+        Just (params, body) ->
+          if length params /= length args
+          then List (Atom name : map (expandMacros' (depth-1) macros) args)
+          else
+            let 
+                -- Expand arguments first (eager evaluation of args)
+                expandedArgs = map (expandMacros' (depth-1) macros) args
+                -- Create substitution map: param -> expanded arg
+                subst = M.fromList $ zip params expandedArgs
+                -- Substitute into body
+                substitutedBody = substituteSExpr subst body
+            in 
+                -- Recursively expand the result
+                expandMacros' (depth-1) macros substitutedBody
+        Nothing -> List (Atom name : map (expandMacros' (depth-1) macros) args)
+
+expandMacros' depth macros (List list) = List (map (expandMacros' depth macros) list)
+expandMacros' _ _ atom = atom
+
+-- | Evaluate condition for macros
+evalCondition :: SExpr -> Maybe Bool
+evalCondition (List [Atom "=", a, b]) = Just (a == b) -- Structural equality
+evalCondition (List [Atom "eq", a, b]) = Just (a == b)
+evalCondition (List [Atom "ne", a, b]) = Just (a /= b)
+evalCondition _ = Nothing
+
+-- | Helper to parse integer from SExpr
+toInt :: SExpr -> Maybe Integer
+toInt (Atom s) | all (\c -> isDigit c || c == '-') s = Just (read s)
+toInt _ = Nothing
+
+-- | Arithmetic operators
+opFunc :: String -> (Integer -> Integer -> Integer)
+opFunc "+" = (+)
+opFunc "-" = (-)
+opFunc "*" = (*)
+opFunc _ = const
 
 -- | Substitute variables in an SExpr with other SExprs
 substituteSExpr :: M.Map String SExpr -> SExpr -> SExpr
