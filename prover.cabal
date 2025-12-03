@@ -35,6 +35,7 @@ executable prover
         Positivity
         ProblemAnalyzer
         Prover
+        SolverRouter
         Sturm
         TermOrder
         Validation

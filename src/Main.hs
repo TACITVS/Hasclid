@@ -11,6 +11,7 @@ import CAD (discriminant, toRecursive)
 import CADLift (cadDecompose, CADCell(..), formatCADCells, evaluateInequalityCAD)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Wu (wuProve, wuProveWithTrace, formatWuTrace)
+import SolverRouter (autoSolve, formatAutoSolveResult)
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
@@ -245,8 +246,9 @@ processLine state rawInput = do
         "",
         "Logic & Proving:",
         "  (= expr1 expr2)         Prove equality (uses Gröbner basis)",
-        "  :lemma (= a b)          Prove and store theorem",
+        "  :auto (= expr1 expr2)   Auto-select best solver (RECOMMENDED)",
         "  :wu (= expr1 expr2)     Prove using Wu's Method (faster for geometry)",
+        "  :lemma (= a b)          Prove and store theorem",
         "  :find-counterexample (= a b)  Find counter-example for failed proof",
         "  :verbose                Toggle detailed proof explanations",
         "  :auto-simplify          Toggle automatic expression simplification",
@@ -464,6 +466,16 @@ processLine state rawInput = do
                                  (if verbose state then "\n\n" ++ formatWuTrace trace else "")
                        return (stateWithHist, msg)
                  _ -> return (stateWithHist, "ERROR: Wu's method only supports equality goals (not inequalities)\nUsage: :wu (= expr1 expr2)")
+
+    (":auto":_) ->
+        let str = drop 6 input
+        in case parseFormulaPrefix str of
+             Left err -> return (stateWithHist, formatError err)
+             Right formula -> do
+               let fullContext = theory state ++ lemmas state
+               let result = autoSolve fullContext formula
+               let msg = formatAutoSolveResult result (verbose state)
+               return (stateWithHist, msg)
 
     (":point":name:xStr:yStr:zStr:_) -> do
          let exprX = parseCoord xStr
