@@ -29,6 +29,8 @@ data Expr
   | Midpoint String String String          -- M is midpoint of AB: (xM = (xA+xB)/2, etc.)
   | Perpendicular String String String String  -- AB ⊥ CD (dot product = 0)
   | Parallel String String String String       -- AB ∥ CD (cross product = 0)
+  -- High-level algebraic primitives
+  | Determinant [[Expr]]                   -- Lazy determinant of a matrix
   deriving (Eq, Show)
 
 prettyExpr :: Expr -> String
@@ -46,6 +48,7 @@ prettyExpr (Circle p c r) = "(circle " ++ p ++ " " ++ c ++ " " ++ prettyExpr r +
 prettyExpr (Midpoint a b m) = "(midpoint " ++ a ++ " " ++ b ++ " " ++ m ++ ")"
 prettyExpr (Perpendicular a b c d) = "(perpendicular " ++ a ++ " " ++ b ++ " " ++ c ++ " " ++ d ++ ")"
 prettyExpr (Parallel a b c d) = "(parallel " ++ a ++ " " ++ b ++ " " ++ c ++ " " ++ d ++ ")"
+prettyExpr (Determinant rows) = "(det " ++ show (length rows) ++ "x" ++ show (length (head rows)) ++ ")"
 
 prettyRational :: Rational -> String
 prettyRational r
@@ -271,6 +274,32 @@ simplifyExpr (Pow e n) =
        Const r -> Const (r ^ n)
        _ -> Pow s n
 
+simplifyExpr (Determinant rows) =
+  let 
+      -- 1. Simplify all elements
+      simpRows = map (map simplifyExpr) rows
+      
+      -- 2. Check for zero rows or zero columns
+      hasZeroRow = any (all (== Const 0)) simpRows
+      
+      -- Transpose to check columns
+      cols = if null simpRows then [] else transpose simpRows
+      hasZeroCol = any (all (== Const 0)) cols
+      
+      -- 3. Check for dependent rows (identical rows)
+      hasIdenticalRows = hasDuplicates simpRows
+      
+  in if hasZeroRow || hasZeroCol || hasIdenticalRows
+     then Const 0
+     else 
+       -- 4. Symbolic Gaussian Elimination (Bareiss Algorithm - Simplified Step)
+       -- If we find a row starting with 0, we can't easily pivot without division (which we avoid).
+       -- But if we find triangular form, it's just product of diagonals.
+       -- For now, just return the simplified matrix structure to allow lazy expansion later.
+       -- Full Bareiss is complex to implement on Expr tree without a proper polynomial type here.
+       -- We settle for "Zero/Identity Detection" which handles many geometric cases (coplanarity).
+       Determinant simpRows
+
 -- Geometric primitives don't simplify further at Expr level
 simplifyExpr e@(Dist2 _ _) = e
 simplifyExpr e@(Collinear _ _ _) = e
@@ -283,6 +312,16 @@ simplifyExpr e@(Parallel _ _ _ _) = e
 -- Base cases
 simplifyExpr e@(Var _) = e
 simplifyExpr e@(Const _) = e
+
+-- Helper: Matrix transposition
+transpose :: [[a]] -> [[a]]
+transpose ([]:_) = []
+transpose x = (map head x) : transpose (map tail x)
+
+-- Helper: Check for duplicate rows
+hasDuplicates :: Eq a => [a] -> Bool
+hasDuplicates [] = False
+hasDuplicates (x:xs) = x `elem` xs || hasDuplicates xs
 
 -- =============================================
 -- Univariate Support (New for Sturm)
@@ -394,6 +433,29 @@ toPoly (Parallel a b c d) =
       crossY = polySub (polyMul vABz vCDx) (polyMul vABx vCDz)
       crossZ = polySub (polyMul vABx vCDy) (polyMul vABy vCDx)
   in polyAdd (polyAdd (polyMul crossX crossX) (polyMul crossY crossY)) (polyMul crossZ crossZ)
+
+-- Determinant: Recursive expansion (Laplace expansion along first row)
+-- For a matrix M, det(M) = sum_{j=1..n} (-1)^(1+j) * M_{1,j} * det(M_{1,j})
+-- Base case: 1x1 matrix [a] -> a
+toPoly (Determinant rows) = detPoly rows
+  where
+    detPoly [[x]] = toPoly x
+    detPoly m = 
+        let 
+            firstRow = head m
+            restRows = tail m
+            n = length firstRow
+            
+            -- Terms of expansion
+            terms = [ let element = firstRow !! colIndex
+                          subMatrix = [ removeAt colIndex row | row <- restRows ]
+                          sign = if even colIndex then 1 else -1
+                          term = polyMul (toPoly element) (detPoly subMatrix)
+                      in if sign == 1 then term else polyNeg term
+                    | colIndex <- [0..n-1] ]
+        in foldl polyAdd polyZero terms
+
+    removeAt i xs = take i xs ++ drop (i+1) xs
 
 -- =============================================
 -- Logic
