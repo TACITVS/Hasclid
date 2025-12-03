@@ -16,7 +16,7 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
 
 ## 📚 Documentation
 
-**New in v7.3:** Complete formal language specification!
+**v9.0:** Complete formal language specification!
 
 - **[Tutorial](docs/TUTORIAL.md)** - Learn Euclid in 30 minutes
 - **[Language Reference](docs/LANGUAGE.md)** - Complete specification
@@ -31,7 +31,7 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
     *   `collinear`: Collinearity checks (determinant-based).
     *   `dot`: Vector dot products.
     *   `circle`: Circle equation constraints.
-    *   **New in v7.3:** `midpoint`, `perpendicular`, `parallel` primitives.
+    *   **v9.0:** `midpoint`, `perpendicular`, `parallel` primitives.
 *   **Advanced Proof Logic**:
     *   **Equality**: Automatically reduced using computed Groebner Bases of the hypothesis ideal.
     *   **Inequality**: Verified using root counting (Sturm sequences) and interval bisection.
@@ -41,8 +41,8 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
     *   **:lemma**: Prove and store intermediate results to the theory context.
     *   **:solve**: Find valid regions for variables satisfying an inequality (1D and 2D support).
     *   **:project**: Visualization of CAD projections (discriminants).
-    *   **New in v7.3:** **:verbose** - Show detailed proof explanations.
-    *   **New in v7.3:** **:save-lemmas / :load-lemmas** - Build reusable theorem libraries.
+    *   **v9.0:** **:verbose** - Show detailed proof explanations.
+    *   **v9.0:** **:save-lemmas / :load-lemmas** - Build reusable theorem libraries.
 *   **Scripting**: Load and verify complex multi-step theorems from `.euclid` files.
 
 ## Installation
