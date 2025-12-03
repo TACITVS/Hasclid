@@ -1,0 +1,7 @@
+:macro sq x = (^ x 2)
+:macro list3 a b c = (+ (+ a b) c) 
+:point A 0 0
+:point B 3 4
+:point C 1 1
+(= (list3 (dist2 A A) (dist2 A B) (dist2 A C)) 27)
+:list
