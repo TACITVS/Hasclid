@@ -1,18 +1,32 @@
 {-# LANGUAGE DeriveGeneric #-}
 
-module Parser where
+module Parser 
+  ( parseFormulaPrefix
+  , parseFormulaWithRest
+  , parseFormulaWithMacros
+  , parseFormulaWithRestAndMacros
+  , SExpr(..)
+  , parseSExpr
+  , tokenizePrefix
+  , expandMacros
+  , MacroMap
+  ) where
 
 import Expr
 import Error
 import Data.Char (isDigit, isAlpha, isSpace)
 import Data.Ratio ((%))
 import Data.List (foldl')
+import qualified Data.Map.Strict as M
 
 -- =============================================
 -- S-Expressions
 -- =============================================
 
-data SExpr = Atom String | List [SExpr] deriving (Show)
+data SExpr = Atom String | List [SExpr] deriving (Show, Eq)
+
+-- | Map of macro names to (parameter list, body)
+type MacroMap = M.Map String ([String], SExpr)
 
 tokenizePrefix :: String -> [String]
 tokenizePrefix s = words $ concatMap pad s
@@ -38,6 +52,44 @@ parseList (t:ts)
       case result of
         (List exprs, finalRest) -> return (List (expr:exprs), finalRest)
         _ -> Left $ ParseError (InvalidSyntax "unexpected result") "Internal parser error"
+
+-- =============================================
+-- Macro Expansion
+-- =============================================
+
+-- | Recursively expand macros in an S-Expression
+expandMacros :: MacroMap -> SExpr -> SExpr
+expandMacros macros (List (Atom name : args)) =
+  case M.lookup name macros of
+    Just (params, body) ->
+      if length params /= length args
+      then List (Atom name : map (expandMacros macros) args) -- Arity mismatch: don't expand (or could error?)
+      -- For now, treat as regular call if arity wrong, or maybe let exprFromSExpr catch it later.
+      -- Actually, better to expand if arity matches.
+      else
+        let 
+            -- Expand arguments first (eager evaluation of args)
+            expandedArgs = map (expandMacros macros) args
+            -- Create substitution map: param -> expanded arg
+            subst = M.fromList $ zip params expandedArgs
+            -- Substitute into body
+            substitutedBody = substituteSExpr subst body
+        in 
+            -- Recursively expand the result (in case body contains other macros)
+            expandMacros macros substitutedBody
+    Nothing -> List (Atom name : map (expandMacros macros) args)
+
+expandMacros macros (List list) = List (map (expandMacros macros) list)
+expandMacros _ atom = atom
+
+-- | Substitute variables in an SExpr with other SExprs
+substituteSExpr :: M.Map String SExpr -> SExpr -> SExpr
+substituteSExpr subst (Atom s) = M.findWithDefault (Atom s) s subst
+substituteSExpr subst (List xs) = List (map (substituteSExpr subst) xs)
+
+-- =============================================
+-- Expression Parsing
+-- =============================================
 
 exprFromSExpr :: SExpr -> Either ProverError Expr
 exprFromSExpr (Atom t)
@@ -124,6 +176,18 @@ exprFromSExpr (List (Atom op : args)) = case op of
     _ -> Left $ ParseError (WrongArity "parallel" 4 (length args))
                   "Usage: (parallel A B C D) - AB ∥ CD"
 
+  "x" -> case args of
+    [Atom p] -> Right $ Var ("x" ++ p)
+    _ -> Left $ ParseError (WrongArity "x" 1 (length args)) "Usage: (x Point)"
+
+  "y" -> case args of
+    [Atom p] -> Right $ Var ("y" ++ p)
+    _ -> Left $ ParseError (WrongArity "y" 1 (length args)) "Usage: (y Point)"
+
+  "z" -> case args of
+    [Atom p] -> Right $ Var ("z" ++ p)
+    _ -> Left $ ParseError (WrongArity "z" 1 (length args)) "Usage: (z Point)"
+
   "=" -> Left $ ParseError (InvalidSyntax "formula in expression context")
                   "Formula logic (=, >=, >) found inside expression. Use at top level only."
   ">=" -> Left $ ParseError (InvalidSyntax "formula in expression context")
@@ -131,18 +195,21 @@ exprFromSExpr (List (Atom op : args)) = case op of
   ">" -> Left $ ParseError (InvalidSyntax "formula in expression context")
                   "Formula logic (=, >=, >) found inside expression. Use at top level only."
 
-  _ -> Left $ ParseError (UnknownOperator op) ("Unknown operator: " ++ op)
+  -- If unknown operator, it might be a macro that wasn't expanded (e.g. wrong arity)
+  _ -> Left $ ParseError (UnknownOperator op) ("Unknown operator or macro: " ++ op)
 
 exprFromSExpr _ = Left $ ParseError (InvalidSyntax "invalid S-Expression")
                          "Invalid S-Expression format"
 
--- Parse strictly (End of input must be empty)
-parseFormulaPrefix :: String -> Either ProverError Formula
-parseFormulaPrefix input = do
+-- Parse strictly with macros
+parseFormulaWithMacros :: MacroMap -> String -> Either ProverError Formula
+parseFormulaWithMacros macros input = do
   let tokens = tokenizePrefix input
   (sexpr, rest) <- parseSExpr tokens
+  
+  let expanded = expandMacros macros sexpr
 
-  case sexpr of
+  case expanded of
     List [Atom "=", lhs, rhs] -> do
       l <- exprFromSExpr lhs
       r <- exprFromSExpr rhs
@@ -174,13 +241,19 @@ parseFormulaPrefix input = do
     _ -> Left $ ParseError (InvalidSyntax "not a formula")
                   "Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs)"
 
--- NEW: Parse formula and return remaining tokens (for :solve)
-parseFormulaWithRest :: String -> Either ProverError (Formula, [String])
-parseFormulaWithRest input = do
+-- Legacy wrapper for compatibility
+parseFormulaPrefix :: String -> Either ProverError Formula
+parseFormulaPrefix = parseFormulaWithMacros M.empty
+
+-- NEW: Parse formula and return remaining tokens (for :solve) with macros
+parseFormulaWithRestAndMacros :: MacroMap -> String -> Either ProverError (Formula, [String])
+parseFormulaWithRestAndMacros macros input = do
   let tokens = tokenizePrefix input
   (sexpr, rest) <- parseSExpr tokens
+  
+  let expanded = expandMacros macros sexpr
 
-  case sexpr of
+  case expanded of
     List [Atom "=", lhs, rhs] -> do
       l <- exprFromSExpr lhs
       r <- exprFromSExpr rhs
@@ -198,3 +271,7 @@ parseFormulaWithRest input = do
 
     _ -> Left $ ParseError (InvalidSyntax "not a formula")
                   "Expected format: (= lhs rhs) or (>= lhs rhs) or (> lhs rhs)"
+
+-- Legacy wrapper
+parseFormulaWithRest :: String -> Either ProverError (Formula, [String])
+parseFormulaWithRest = parseFormulaWithRestAndMacros M.empty

@@ -3,7 +3,7 @@
 module Main where
 
 import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
-import Parser (parseFormulaPrefix, parseFormulaWithRest)
+import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
 import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger)
 import BuchbergerOpt (SelectionStrategy(..), buchbergerOptimized, buchbergerWithStrategy)
 import CounterExample (findCounterExample, formatCounterExample)
@@ -53,11 +53,12 @@ data REPLState = REPLState
   , termOrder :: TermOrder
   , useOptimizedBuchberger :: Bool
   , selectionStrategy :: SelectionStrategy
+  , macros :: MacroMap
   }
 
 initialState :: REPLState
-initialState = REPLState [] [] [] False True emptyCache defaultTermOrder False NormalStrategy
-  -- verbose off, autoSimplify on, empty cache, GrevLex, optimization off, NormalStrategy
+initialState = REPLState [] [] [] False True emptyCache defaultTermOrder False NormalStrategy M.empty
+  -- verbose off, autoSimplify on, empty cache, GrevLex, optimization off, NormalStrategy, empty macros
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -171,7 +172,8 @@ processLine state rawInput = do
     (":list":_)  -> do
         let tStr = if null (theory state) then "  (None)" else prettyTheory (theory state)
         let lStr = if null (lemmas state) then "  (None)" else prettyTheory (lemmas state)
-        return (stateWithHist, "Active Assumptions:\n" ++ tStr ++ "\nProven Lemmas:\n" ++ lStr)
+        let mStr = if M.null (macros state) then "  (None)" else unlines [ "  :macro " ++ name ++ " " ++ unwords params ++ " = ..." | (name, (params, _)) <- M.toList (macros state) ]
+        return (stateWithHist, "Active Assumptions:\n" ++ tStr ++ "\nProven Lemmas:\n" ++ lStr ++ "\nDefined Macros:\n" ++ mStr)
 
     (":validate":_) -> do
         let warnings = validateTheory (theory state)
@@ -234,6 +236,7 @@ processLine state rawInput = do
         "  :point A x y z          Define 3D point (or x y for 2D)",
         "  :assume (= xA 0)        Add assumption",
         "  :validate               Check for degenerate configurations",
+        "  :macro name p1.. = expr Define a reuseable macro",
         "",
         "Geometric Constraints:",
         "  (dist2 A B)             Squared distance between points",
@@ -292,7 +295,7 @@ processLine state rawInput = do
     (":solve":rest) -> do
        let inputStr = unwords rest
 
-       case parseFormulaWithRest inputStr of
+       case parseFormulaWithRestAndMacros (macros state) inputStr of
          Left err -> return (stateWithHist, formatError err)
          Right (formula, vars) -> do
            
@@ -344,7 +347,7 @@ processLine state rawInput = do
 
     (":lemma":_) ->
         let str = drop 7 input
-        in case parseFormulaPrefix str of
+        in case parseFormulaWithMacros (macros state) str of
              Left err -> return (stateWithHist, formatError err)
              Right formula -> do
                let fullContext = theory state ++ lemmas state
@@ -363,7 +366,7 @@ processLine state rawInput = do
 
     (":find-counterexample":_) ->
         let str = drop 20 input
-        in case parseFormulaPrefix str of
+        in case parseFormulaWithMacros (macros state) str of
              Left err -> return (stateWithHist, formatError err)
              Right formula -> do
                let fullContext = theory state ++ lemmas state
@@ -404,7 +407,7 @@ processLine state rawInput = do
            then return (stateWithHist, "Usage: :simplify (expression)")
            else do
              let parseInput = "(= " ++ str ++ " 0)"
-             case parseFormulaPrefix parseInput of
+             case parseFormulaWithMacros (macros state) parseInput of
                Left err -> return (stateWithHist, formatError err)
                Right (Eq e _) -> do
                  let simplified = simplifyExpr e
@@ -426,7 +429,7 @@ processLine state rawInput = do
                else do
                  let exprStr = unwords exprParts
                  let parseInput = "(= " ++ exprStr ++ " 0)"
-                 case parseFormulaPrefix parseInput of
+                 case parseFormulaWithMacros (macros state) parseInput of
                    Right (Eq e _) -> do
                        let poly = toPolySub (buildSubMap (theory state ++ lemmas state)) e
                        let shadow = discriminant poly varStr
@@ -448,7 +451,7 @@ processLine state rawInput = do
 
     (":wu":_) ->
         let str = drop 4 input
-        in case parseFormulaPrefix str of
+        in case parseFormulaWithMacros (macros state) str of
              Left err -> return (stateWithHist, formatError err)
              Right formula -> do
                case formula of
@@ -469,7 +472,7 @@ processLine state rawInput = do
 
     (":auto":_) ->
         let str = drop 6 input
-        in case parseFormulaPrefix str of
+        in case parseFormulaWithMacros (macros state) str of
              Left err -> return (stateWithHist, formatError err)
              Right formula -> do
                let fullContext = theory state ++ lemmas state
@@ -501,7 +504,7 @@ processLine state rawInput = do
 
     (":assume":_) ->
         let str = drop 8 input
-        in case parseFormulaPrefix str of
+        in case parseFormulaWithMacros (macros state) str of
              Right f -> return (stateWithHist { theory = f : theory state }, "Assumed: " ++ show f)
              Left err -> return (stateWithHist, formatError err)
 
@@ -515,8 +518,25 @@ processLine state rawInput = do
                                  ) (stateWithHist, "") linesOfFile
         return (finalState, "File loaded: " ++ filename)
 
+    (":macro":rest) -> do
+        -- Syntax: :macro name p1 p2 = body
+        let (header, bodyParts) = break (== "=") rest
+        if null bodyParts 
+        then return (stateWithHist, "Usage: :macro name p1 p2 ... = (body expression)")
+        else do
+            let bodyStr = unwords (drop 1 bodyParts)
+            let tokens = tokenizePrefix bodyStr
+            case parseSExpr tokens of
+                Left err -> return (stateWithHist, "Macro body parse error: " ++ show err)
+                Right (bodyExpr, _) -> do
+                    case header of
+                        (name:params) -> do
+                            let newMacros = M.insert name (params, bodyExpr) (macros state)
+                            return (stateWithHist { macros = newMacros }, "Defined macro: " ++ name)
+                        [] -> return (stateWithHist, "Missing macro name")
+
     _ ->
-        case parseFormulaPrefix input of
+        case parseFormulaWithMacros (macros state) input of
           Left err -> return (stateWithHist, formatError err)
           Right formula -> do
             let fullContext = theory state ++ lemmas state
