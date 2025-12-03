@@ -11,7 +11,7 @@ import CAD (discriminant, toRecursive)
 import CADLift (cadDecompose, CADCell(..), formatCADCells, evaluateInequalityCAD)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Wu (wuProve, wuProveWithTrace, formatWuTrace)
-import SolverRouter (autoSolve, formatAutoSolveResult)
+import SolverRouter (autoSolve, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..))
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
@@ -520,43 +520,28 @@ processLine state rawInput = do
           Left err -> return (stateWithHist, formatError err)
           Right formula -> do
             let fullContext = theory state ++ lemmas state
-            let buchbergerFunc = if useOptimizedBuchberger state
-                                 then buchbergerWithStrategy (selectionStrategy state)
-                                 else buchberger
-            let (isProved, reason, trace, newCache) = proveTheoryWithOptions buchbergerFunc (Just (groebnerCache state)) fullContext formula
-            let subM = buildSubMap fullContext
-            let (l, r) = case formula of
-                           Eq a b -> (a,b)
-                           Ge a b -> (a,b)
-                           Gt a b -> (a,b)
-
-            -- Apply simplification if enabled
-            let (l', r', diff) = if autoSimplify state
-                                 then (simplifyExpr l, simplifyExpr r, simplifyExpr (Sub l r))
-                                 else (l, r, Sub l r)
-
-            -- Use appropriate pretty printer
-            let prettyFunc = if autoSimplify state then prettyPolyNice else prettyPoly
-            let pL = prettyFunc (toPolySub subM l')
-            let pR = prettyFunc (toPolySub subM r')
-            let pDiff = prettyFunc (toPolySub subM diff)
-
-            -- Update state with new cache
-            let stateWithCache = stateWithHist { groebnerCache = maybe (groebnerCache state) id newCache }
-
-            if isProved
+            -- USE ROUTER BY DEFAULT for intelligent solver selection
+            let result = autoSolve fullContext formula
+            let proved = isProved result
+            let reason = proofReason result
+            -- Display router's result
+            if proved
                then do
-                 let basicMsg = "RESULT: PROVED (" ++ reason ++ ")\nDiff Normal Form: " ++ pDiff
-                 let fullMsg = if verbose state
-                               then basicMsg ++ "\n\n" ++ formatProofTrace trace
-                               else basicMsg
-                 return (stateWithCache, fullMsg)
+                 let msg = "RESULT: PROVED\n" ++
+                          "Solver: " ++ show (selectedSolver result) ++ "\n" ++
+                          "Reason: " ++ reason ++
+                          (if verbose state
+                           then "\n\n" ++ formatAutoSolveResult result True
+                           else "")
+                 return (stateWithHist, msg)
                else do
                  -- Try to find counter-example when proof fails
                  let counterExampleMsg = case findCounterExample fullContext formula of
                        Just ce -> "\n\n" ++ formatCounterExample ce
                        Nothing -> "\n\nNo counter-example found with simple sampling.\nUse :find-counterexample to try more values."
-                 return (stateWithCache, "RESULT: FALSE (" ++ reason ++ ")\nLHS: " ++ pL ++ "\nRHS: " ++ pR ++ counterExampleMsg)
+                 return (stateWithHist, "RESULT: NOT PROVED\n" ++
+                                       "Solver: " ++ show (selectedSolver result) ++ "\n" ++
+                                       "Reason: " ++ reason ++ counterExampleMsg)
 
 -- =============================================
 -- 5. REPL Loop
