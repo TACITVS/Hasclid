@@ -48,6 +48,7 @@ module Wu
   ) where
 
 import Expr
+import Prover (buildSubMap, toPolySub)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List (sortBy, nub)
@@ -336,40 +337,6 @@ extractConclusionPoly (Eq l r) =
   in toPolySub subMap (Sub l r)
 extractConclusionPoly _ =
   error "Wu's method only supports equality goals (not inequalities)"
-
--- Helper: Build substitution map from theory
-buildSubMap :: Theory -> M.Map String Poly
-buildSubMap theory = M.fromList
-  [ (v, toPolySub M.empty e)
-  | Eq (Var v) e <- theory
-  , isLinearInVar v (Eq (Var v) e)
-  ]
-  where
-    isLinearInVar v (Eq (Var x) e) = x == v && v `notElem` extractVarsFromExpr e
-    isLinearInVar _ _ = False
-
-    extractVarsFromExpr (Var x) = [x]
-    extractVarsFromExpr (Const _) = []
-    extractVarsFromExpr (Add e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
-    extractVarsFromExpr (Sub e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
-    extractVarsFromExpr (Mul e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
-    extractVarsFromExpr (Div e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
-    extractVarsFromExpr (Pow e _) = extractVarsFromExpr e
-    extractVarsFromExpr _ = []
-
--- Helper: Convert expression to polynomial with substitutions
-toPolySub :: M.Map String Poly -> Expr -> Poly
-toPolySub subMap expr =
-  case expr of
-    Var v -> case M.lookup v subMap of
-               Just p -> p
-               Nothing -> polyFromVar v
-    Const c -> polyFromConst c
-    Add e1 e2 -> polyAdd (toPolySub subMap e1) (toPolySub subMap e2)
-    Sub e1 e2 -> polySub (toPolySub subMap e1) (toPolySub subMap e2)
-    Mul e1 e2 -> polyMul (toPolySub subMap e1) (toPolySub subMap e2)
-    Pow e n -> polyPow (toPolySub subMap e) n
-    _ -> error "Wu's method: Cannot convert geometric primitive to polynomial directly"
 
 -- =============================================
 -- Degeneracy Checking
