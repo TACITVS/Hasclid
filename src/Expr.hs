@@ -174,6 +174,52 @@ prettyPolyNice (Poly m)
 -- Expression Simplification
 -- =============================================
 
+-- | Substitute a variable with an expression
+substituteExpr :: String -> Expr -> Expr -> Expr
+substituteExpr var val (Var v) | v == var = val
+substituteExpr _ _ (Var v) = Var v
+substituteExpr _ _ (Const c) = Const c
+substituteExpr var val (Add e1 e2) = Add (substituteExpr var val e1) (substituteExpr var val e2)
+substituteExpr var val (Sub e1 e2) = Sub (substituteExpr var val e1) (substituteExpr var val e2)
+substituteExpr var val (Mul e1 e2) = Mul (substituteExpr var val e1) (substituteExpr var val e2)
+substituteExpr var val (Div e1 e2) = Div (substituteExpr var val e1) (substituteExpr var val e2)
+substituteExpr var val (Pow e n) = Pow (substituteExpr var val e) n
+substituteExpr _ _ e = e
+
+-- | Substitute multiple variables
+substituteAll :: M.Map String Expr -> Expr -> Expr
+substituteAll subMap (Var v) = M.findWithDefault (Var v) v subMap
+substituteAll _ (Const c) = Const c
+substituteAll subMap (Add e1 e2) = Add (substituteAll subMap e1) (substituteAll subMap e2)
+substituteAll subMap (Sub e1 e2) = Sub (substituteAll subMap e1) (substituteAll subMap e2)
+substituteAll subMap (Mul e1 e2) = Mul (substituteAll subMap e1) (substituteAll subMap e2)
+substituteAll subMap (Div e1 e2) = Div (substituteAll subMap e1) (substituteAll subMap e2)
+substituteAll subMap (Pow e n) = Pow (substituteAll subMap e) n
+substituteAll _ e = e
+
+-- | Check if two expressions are symbolically equal
+-- Tries to convert to polynomials for robust equality checking
+-- Falls back to structural equality (after simplification) if conversion fails (e.g. division)
+exprEqualsSymbolic :: Expr -> Expr -> Bool
+exprEqualsSymbolic e1 e2 = 
+  let s1 = simplifyExpr e1
+      s2 = simplifyExpr e2
+  in if s1 == s2 then True -- Fast path: identical structure
+     else 
+       -- Try polynomial equivalence
+       -- Catch errors from toPoly (like Division)
+       if hasDivision s1 || hasDivision s2 
+       then False -- Cannot prove equality with Division easily yet
+       else toPoly s1 == toPoly s2
+
+hasDivision :: Expr -> Bool
+hasDivision (Div _ _) = True
+hasDivision (Add e1 e2) = hasDivision e1 || hasDivision e2
+hasDivision (Sub e1 e2) = hasDivision e1 || hasDivision e2
+hasDivision (Mul e1 e2) = hasDivision e1 || hasDivision e2
+hasDivision (Pow e _) = hasDivision e
+hasDivision _ = False
+
 -- Simplify an Expr by applying algebraic rules
 simplifyExpr :: Expr -> Expr
 simplifyExpr (Add e1 e2) =
@@ -190,6 +236,7 @@ simplifyExpr (Sub e1 e2) =
       s2 = simplifyExpr e2
   in case (s1, s2) of
        (e, Const 0) -> e                    -- e - 0 = e
+       (Const 0, e) -> Mul (Const (-1)) e   -- 0 - e = -e
        (Const r1, Const r2) -> Const (r1 - r2)
        _ | s1 == s2 -> Const 0              -- e - e = 0
        _ -> Sub s1 s2
@@ -202,6 +249,7 @@ simplifyExpr (Mul e1 e2) =
        (_, Const 0) -> Const 0              -- e * 0 = 0
        (Const 1, e) -> e                    -- 1 * e = e
        (e, Const 1) -> e                    -- e * 1 = e
+       (Const (-1), Const (-1)) -> Const 1  -- -1 * -1 = 1
        (Const r1, Const r2) -> Const (r1 * r2)
        _ -> Mul s1 s2
 
@@ -217,8 +265,11 @@ simplifyExpr (Div e1 e2) =
 
 simplifyExpr (Pow e 0) = Const 1            -- e^0 = 1
 simplifyExpr (Pow e 1) = simplifyExpr e     -- e^1 = e
-simplifyExpr (Pow (Const r) n) = Const (r ^ n)  -- Fold constant powers
-simplifyExpr (Pow e n) = Pow (simplifyExpr e) n
+simplifyExpr (Pow e n) = 
+  let s = simplifyExpr e 
+  in case s of
+       Const r -> Const (r ^ n)
+       _ -> Pow s n
 
 -- Geometric primitives don't simplify further at Expr level
 simplifyExpr e@(Dist2 _ _) = e

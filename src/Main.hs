@@ -33,8 +33,8 @@ main :: IO ()
 main = do
   putStr "\ESC[2J\ESC[H"
   putStrLn "=================================================="
-  putStrLn "   Hasclid v9.1 - Hybrid Geometric Reasoner"
-  putStrLn "   Fast geometric constraint propagation + Wu/Grobner/CAD"
+  putStrLn "   Hasclid v9.0 - Multi-Solver System"
+  putStrLn "   Intelligent routing: Wu/Grobner/CAD + Router"
   putStrLn "   Type :help for commands."
   putStrLn "=================================================="
   repl initialState
@@ -539,9 +539,9 @@ processLine state rawInput = do
                  let counterExampleMsg = case findCounterExample fullContext formula of
                        Just ce -> "\n\n" ++ formatCounterExample ce
                        Nothing -> "\n\nNo counter-example found with simple sampling.\nUse :find-counterexample to try more values."
-                 return (stateWithHist, "RESULT: NOT PROVED\n" ++
-                                       "Solver: " ++ show (selectedSolver result) ++ "\n" ++
-                                       "Reason: " ++ reason ++ counterExampleMsg)
+                 
+                 let baseMsg = formatAutoSolveResult result (verbose state)
+                 return (stateWithHist, baseMsg ++ counterExampleMsg)
 
 -- =============================================
 -- 5. REPL Loop

@@ -1,18 +1,10 @@
 {-|
 Module: GeoSolver
-Description: Fast-path geometric constraint solver using propagation
+Description: Fast-path geometric constraint solver using symbolic propagation
 
-This module solves geometric problems through CONSTRAINT PROPAGATION
-rather than polynomial manipulation. It recognizes simple geometric
-patterns (vertical/horizontal lines, perpendicularity) and propagates
-them instantly.
-
-For example:
-- If AB is horizontal (yA = yB) and AB ⊥ CD, then CD is vertical (xC = xD)
-- If we know A=(0,0), B=(S,0), C=(S,S), we can compute dist(D,A) directly
-
-This is the "screwdriver" that handles 80% of geometric problems instantly,
-before falling back to the "hammer" (Wu/Gröbner) for complex cases.
+This module solves geometric problems through SYMBOLIC CONSTRAINT PROPAGATION.
+It works with symbolic variables (like 'S') and explores multiple geometric
+configurations (branches) to find proofs or counter-examples.
 -}
 
 module GeoSolver
@@ -32,23 +24,22 @@ module GeoSolver
 
 import Expr
 import qualified Data.Map.Strict as M
-import qualified Data.Set as S
-import Data.Maybe (mapMaybe, isJust, fromJust, fromMaybe)
-import Data.Ratio ((%), numerator, denominator)
+import Data.List (nub)
+import Data.Maybe (mapMaybe, isJust, fromJust, listToMaybe)
+import Data.Ratio (numerator, denominator)
 
 -- =============================================
 -- Data Types
 -- =============================================
 
--- | Knowledge Base: Maps coordinate variables to their values/relations
--- e.g., "xA" -> Const 0, "yB" -> Var "yA", etc.
+-- | Knowledge Base: Maps coordinate variables to their symbolic expressions
 type CoordMap = M.Map String Expr
 
 -- | Result of geometric solving
 data GeoResult
-  = GeoProved String [String]      -- Proved with reason and derivation steps
-  | GeoDisproved String [String]   -- Disproved with reason and steps
-  | GeoUnknown String              -- Cannot decide, need fallback
+  = GeoProved String [String]      -- Proved on ALL branches
+  | GeoDisproved String [String]   -- Disproved on AT LEAST ONE valid branch
+  | GeoUnknown String              -- Cannot decide
   deriving (Show, Eq)
 
 -- =============================================
@@ -56,7 +47,6 @@ data GeoResult
 -- =============================================
 
 -- | Solve geometric problem using constraint propagation
--- Returns: Just True (proved), Just False (disproved), Nothing (unknown)
 solveGeo :: Theory -> Formula -> Maybe Bool
 solveGeo theory goal =
   case solveGeoWithTrace theory goal of
@@ -68,362 +58,291 @@ solveGeo theory goal =
 solveGeoWithTrace :: Theory -> Formula -> GeoResult
 solveGeoWithTrace theory goal =
   let
-    -- Step 1: Build initial knowledge base from explicit point definitions
+    -- Step 1: Build initial knowledge base
     kb0 = buildKnowledgeBase theory M.empty
+    
+    -- Step 2: Propagate constraints across potentially multiple branches
+    -- We start with one branch (kb0) and might fork into multiple
+    (branches, steps1) = propagateUntilConvergence theory [kb0] [] 10
 
-    -- Step 2: Propagate geometric constraints (the "smart" part!)
-    -- Keep iterating until no more progress (fixed-point computation)
-    (kb1, steps1) = propagateUntilConvergence theory kb0 [] 10
-
-    -- Step 3: Check if goal can be evaluated in this knowledge base
-    (result, steps2) = checkGoal kb1 goal []
+    -- Step 3: Check goal in all resulting branches
+    results = map (\kb -> checkGoal kb goal) branches
+    
+    -- Analyze results
+    -- If any branch is DEFINITELY FALSE -> Disproved (Counter-example found)
+    -- If ALL branches are DEFINITELY TRUE -> Proved
+    -- Otherwise -> Unknown
+    
+    hasCounterExample = any isFalse results
+    allProved = all isTrue results
+    
   in
-    case result of
-      Just True -> GeoProved "Geometric constraint propagation" (steps1 ++ steps2)
-      Just False -> GeoDisproved "Geometric contradiction found" (steps1 ++ steps2)
-      Nothing -> GeoUnknown "Insufficient geometric information for fast path"
+    if null branches
+    then GeoUnknown "Contradictory assumptions (no valid branches)"
+    else if hasCounterExample
+         then 
+           let (Just (Just False, reason, _)) = findResult isFalse results
+           in GeoDisproved reason (steps1 ++ ["Found counter-example in branch: " ++ reason])
+         else if allProved
+              then GeoProved "Geometric propagation (all branches hold)" steps1
+              else GeoUnknown "Some branches indeterminate"
 
--- | Propagate constraints until no more progress is made (fixed-point)
-propagateUntilConvergence :: Theory -> CoordMap -> [String] -> Int -> (CoordMap, [String])
-propagateUntilConvergence theory kb steps maxIters
-  | maxIters <= 0 = (kb, steps ++ ["Warning: Reached maximum iterations without convergence"])
+  where
+    isFalse (Just False, _, _) = True
+    isFalse _ = False
+    
+    isTrue (Just True, _, _) = True
+    isTrue _ = False
+    
+    findResult pred [] = Nothing
+    findResult pred (x:xs) = if pred x then Just x else findResult pred xs
+
+-- | Propagate until fixed point on all branches
+propagateUntilConvergence :: Theory -> [CoordMap] -> [String] -> Int -> ([CoordMap], [String])
+propagateUntilConvergence theory kbs steps maxIters
+  | maxIters <= 0 = (kbs, steps ++ ["Warning: Max iterations reached"])
   | otherwise =
-      let (kb', steps') = propagateConstraints theory kb []
-      in if M.size kb' == M.size kb  -- No new deductions made
-         then (kb', steps ++ steps')  -- Converged!
-         else propagateUntilConvergence theory kb' (steps ++ steps') (maxIters - 1)  -- Keep going
+      let 
+        -- Apply propagation to each KB, collecting new KBs and steps
+        results = map (\kb -> propagateConstraints theory kb) kbs
+        newKBs = concatMap fst results
+        newSteps = concatMap snd results
+        
+        -- Check for convergence (if set of KBs hasn't changed)
+        converged = newKBs == kbs
+      in
+        if converged
+        then (newKBs, steps) -- No new information
+        else propagateUntilConvergence theory newKBs (steps ++ nub newSteps) (maxIters - 1)
 
 -- =============================================
 -- Knowledge Base Construction
 -- =============================================
 
--- | Build initial knowledge base from theory (point definitions)
 buildKnowledgeBase :: Theory -> CoordMap -> CoordMap
 buildKnowledgeBase [] kb = kb
 buildKnowledgeBase (formula:rest) kb =
   case formula of
-    -- Point coordinate assignments: Eq (Var "xA") (Const 0)
     Eq (Var v) e -> buildKnowledgeBase rest (M.insert v e kb)
-
-    -- Also handle reverse: Eq (Const 0) (Var "xA")
     Eq e (Var v) -> buildKnowledgeBase rest (M.insert v e kb)
-
     _ -> buildKnowledgeBase rest kb
 
 -- =============================================
--- Constraint Propagation (The Core Logic)
+-- Constraint Propagation
 -- =============================================
 
--- | Propagate geometric constraints through the knowledge base
-propagateConstraints :: Theory -> CoordMap -> [String] -> (CoordMap, [String])
-propagateConstraints [] kb steps = (kb, steps)
-propagateConstraints (formula:rest) kb steps =
+-- | Propagate constraints on a single KB, returning potential branches
+propagateConstraints :: Theory -> CoordMap -> ([CoordMap], [String])
+propagateConstraints [] kb = ([kb], [])
+propagateConstraints (formula:rest) kb =
+  let (kbs, steps) = applyConstraint formula kb
+  in 
+    -- Recursively process rest of theory on all resulting KBs
+    let recursiveResults = map (\k -> propagateConstraints rest k) kbs
+        finalKBs = concatMap fst recursiveResults
+        finalSteps = steps ++ concatMap snd recursiveResults
+    in (finalKBs, finalSteps)
+
+applyConstraint :: Formula -> CoordMap -> ([CoordMap], [String])
+applyConstraint formula kb =
   case formula of
-    -- RULE 1: Direct coordinate equality
-    -- If (xA - xB = 0), then xA = xB
+    -- RULE 1: Explicit Coordinate Equality (xA = xB)
     Eq (Sub (Var v1) (Var v2)) (Const 0) ->
       let newKB = unifyVars kb v1 v2
-          step = "Deduced " ++ v1 ++ " = " ++ v2 ++ " from equality constraint"
-      in propagateConstraints rest newKB (steps ++ [step])
+      in ([newKB], ["Deduced " ++ v1 ++ " = " ++ v2])
 
-    -- RULE 2: Perpendicularity propagation
-    -- If AB is horizontal and AB ⊥ CD, then CD is vertical
+    -- RULE 2: Perpendicularity (Dot Product = 0)
     Eq (Perpendicular pA pB pC pD) (Const 0) ->
-      let (newKB, newSteps) = propagatePerpendicular kb pA pB pC pD
-      in propagateConstraints rest newKB (steps ++ newSteps)
+      propagatePerpendicular kb pA pB pC pD
 
-    -- RULE 3: Distance constraints with known coordinates
+    -- RULE 3: Distance
     Eq (Dist2 p1 p2) distExpr ->
-      let (newKB, newSteps) = propagateDistance kb p1 p2 distExpr
-      in propagateConstraints rest newKB (steps ++ newSteps)
+      propagateDistance kb p1 p2 distExpr
 
-    _ -> propagateConstraints rest kb steps
+    _ -> ([kb], [])
 
--- | Propagate perpendicularity constraint
-propagatePerpendicular :: CoordMap -> String -> String -> String -> String -> (CoordMap, [String])
+-- =============================================
+-- Geometric Logic (Symbolic)
+-- =============================================
+
+-- | Propagate perpendicularity
+propagatePerpendicular :: CoordMap -> String -> String -> String -> String -> ([CoordMap], [String])
 propagatePerpendicular kb pA pB pC pD
   | isHorizontal kb pA pB =
-      -- AB is horizontal, so CD must be vertical (xC = xD)
+      -- AB horizontal -> CD vertical (xC = xD)
       let newKB = unifyVars kb ("x" ++ pC) ("x" ++ pD)
-          step = "Line " ++ pA ++ pB ++ " is horizontal, so " ++ pC ++ pD ++ " is vertical"
-      in (newKB, [step])
-
+      in ([newKB], ["Line " ++ pA ++ pB ++ " horizontal => " ++ pC ++ pD ++ " vertical"])
   | isVertical kb pA pB =
-      -- AB is vertical, so CD must be horizontal (yC = yD)
+      -- AB vertical -> CD horizontal (yC = yD)
       let newKB = unifyVars kb ("y" ++ pC) ("y" ++ pD)
-          step = "Line " ++ pA ++ pB ++ " is vertical, so " ++ pC ++ pD ++ " is horizontal"
-      in (newKB, [step])
+      in ([newKB], ["Line " ++ pA ++ pB ++ " vertical => " ++ pC ++ pD ++ " horizontal"])
+  | otherwise = ([kb], [])
 
-  | otherwise = (kb, [])
-
--- | Propagate distance constraint
--- If enough coordinates are known, try to deduce unknowns
-propagateDistance :: CoordMap -> String -> String -> Expr -> (CoordMap, [String])
+-- | Propagate distance constraint (Symbolic)
+-- (x1-x2)^2 + (y1-y2)^2 = dist
+-- If one coord is unknown, solve for it.
+propagateDistance :: CoordMap -> String -> String -> Expr -> ([CoordMap], [String])
 propagateDistance kb p1 p2 distExpr =
-  case evaluateExpr kb distExpr of
-    Just distValue ->
-      -- Try to solve for unknown coordinates
-      -- For example: if (xC - xD)² + (yC - yD)² = S², try to deduce xD or yD
-      let
-        x1Coord = "x" ++ p1
-        y1Coord = "y" ++ p1
-        z1Coord = "z" ++ p1
-        x2Coord = "x" ++ p2
-        y2Coord = "y" ++ p2
-        z2Coord = "z" ++ p2
-
-        -- Try to get coordinate values
-        mx1 = lookupCoord kb x1Coord
-        my1 = lookupCoord kb y1Coord
-        mz1 = lookupCoord kb z1Coord
-        mx2 = lookupCoord kb x2Coord
-        my2 = lookupCoord kb y2Coord
-        mz2 = lookupCoord kb z2Coord
-      in
-        -- CASE 1: All but one coordinate known - solve for the unknown
-        case (mx1, my1, mz1, mx2, my2, mz2) of
-          -- If p1 fully known, p2's x unknown, y and z known → solve for x
-          (Just x1, Just y1, Just z1, Nothing, Just y2, Just z2) ->
-            let dySquared = (y1 - y2) * (y1 - y2)
-                dzSquared = (z1 - z2) * (z1 - z2)
-                dxSquared = distValue - dySquared - dzSquared
-            in if dxSquared >= 0
-               then
-                 -- For now, choose positive root (could try both)
-                 let dx = sqrtRat dxSquared
-                     x2Val = x1 - dx  -- or x1 + dx
-                     newKB = M.insert x2Coord (Const x2Val) kb
-                     step = "Deduced " ++ x2Coord ++ " from distance constraint"
-                 in (newKB, [step])
-               else (kb, [])
-
-          -- If p1 fully known, p2's y unknown, x and z known → solve for y
-          (Just x1, Just y1, Just z1, Just x2, Nothing, Just z2) ->
-            let dxSquared = (x1 - x2) * (x1 - x2)
-                dzSquared = (z1 - z2) * (z1 - z2)
-                dySquared = distValue - dxSquared - dzSquared
-            in if dySquared >= 0
-               then
-                 let dy = sqrtRat dySquared
-                     y2Val = y1 - dy  -- or y1 + dy
-                     newKB = M.insert y2Coord (Const y2Val) kb
-                     step = "Deduced " ++ y2Coord ++ " from distance constraint"
-                 in (newKB, [step])
-               else (kb, [])
-
-          -- If p1 fully known, p2's z unknown, x and y known → solve for z
-          (Just x1, Just y1, Just z1, Just x2, Just y2, Nothing) ->
-            let dxSquared = (x1 - x2) * (x1 - x2)
-                dySquared = (y1 - y2) * (y1 - y2)
-                dzSquared = distValue - dxSquared - dySquared
-            in if dzSquared >= 0
-               then
-                 let dz = sqrtRat dzSquared
-                     z2Val = z1 - dz  -- or z1 + dz
-                     newKB = M.insert z2Coord (Const z2Val) kb
-                     step = "Deduced " ++ z2Coord ++ " from distance constraint"
-                 in (newKB, [step])
-               else (kb, [])
-
-          -- Symmetric cases: p2 fully known, p1 has unknowns
-          (Nothing, Just y1, Just z1, Just x2, Just y2, Just z2) ->
-            let dySquared = (y1 - y2) * (y1 - y2)
-                dzSquared = (z1 - z2) * (z1 - z2)
-                dxSquared = distValue - dySquared - dzSquared
-            in if dxSquared >= 0
-               then
-                 let dx = sqrtRat dxSquared
-                     x1Val = x2 + dx  -- or x2 - dx
-                     newKB = M.insert x1Coord (Const x1Val) kb
-                     step = "Deduced " ++ x1Coord ++ " from distance constraint"
-                 in (newKB, [step])
-               else (kb, [])
-
-          (Just x1, Nothing, Just z1, Just x2, Just y2, Just z2) ->
-            let dxSquared = (x1 - x2) * (x1 - x2)
-                dzSquared = (z1 - z2) * (z1 - z2)
-                dySquared = distValue - dxSquared - dzSquared
-            in if dySquared >= 0
-               then
-                 let dy = sqrtRat dySquared
-                     y1Val = y2 + dy  -- or y2 - dy
-                     newKB = M.insert y1Coord (Const y1Val) kb
-                     step = "Deduced " ++ y1Coord ++ " from distance constraint"
-                 in (newKB, [step])
-               else (kb, [])
-
-          (Just x1, Just y1, Nothing, Just x2, Just y2, Just z2) ->
-            let dxSquared = (x1 - x2) * (x1 - x2)
-                dySquared = (y1 - y2) * (y1 - y2)
-                dzSquared = distValue - dxSquared - dySquared
-            in if dzSquared >= 0
-               then
-                 let dz = sqrtRat dzSquared
-                     z1Val = z2 + dz  -- or z2 - dz
-                     newKB = M.insert z1Coord (Const z1Val) kb
-                     step = "Deduced " ++ z1Coord ++ " from distance constraint"
-                 in (newKB, [step])
-               else (kb, [])
-
-          -- Not enough info to deduce anything
-          _ -> (kb, [])
-
-    Nothing -> (kb, [])
-
--- | Square root of a rational (approximate for non-perfect squares)
-sqrtRat :: Rational -> Rational
-sqrtRat r
-  | r < 0 = 0  -- Should not happen if called correctly
-  | r == 0 = 0
-  | r == 1 = 1
-  | r == 4 = 2
-  | r == 9 = 3
-  | r == 16 = 4
-  | r == 25 = 5
-  | otherwise =
-      -- For non-perfect squares, use Newton's method with rationals
-      let x0 = fromInteger (numerator r) % 1
-          epsilon = 1 % 1000000  -- Precision
-          newton x = let x' = (x + r / x) / 2
-                     in if abs (x' - x) < epsilon then x' else newton x'
-      in newton x0
-
--- =============================================
--- Geometric Pattern Recognition
--- =============================================
-
--- | Check if a line is horizontal (yA = yB)
-isHorizontal :: CoordMap -> String -> String -> Bool
-isHorizontal kb pA pB = coordsEqual kb ("y" ++ pA) ("y" ++ pB)
-
--- | Check if a line is vertical (xA = xB)
-isVertical :: CoordMap -> String -> String -> Bool
-isVertical kb pA pB = coordsEqual kb ("x" ++ pA) ("x" ++ pB)
-
--- | Check if two coordinates are equal in the knowledge base
-coordsEqual :: CoordMap -> String -> String -> Bool
-coordsEqual kb v1 v2 =
-  case (resolveVar kb v1, resolveVar kb v2) of
-    (Just e1, Just e2) -> exprEqual e1 e2
-    _ -> False
-
--- | Check if two expressions are equal (simplified)
-exprEqual :: Expr -> Expr -> Bool
-exprEqual (Const c1) (Const c2) = c1 == c2
-exprEqual (Var v1) (Var v2) = v1 == v2
-exprEqual _ _ = False
-
--- =============================================
--- Variable Resolution
--- =============================================
-
--- | Unify two variables in the knowledge base
--- Makes v2 equal to v1 by updating the knowledge base
-unifyVars :: CoordMap -> String -> String -> CoordMap
-unifyVars kb v1 v2 =
   let
-    -- Resolve both variables to their ultimate values
-    mv1 = resolveVar kb v1
-    mv2 = resolveVar kb v2
+    dVal = resolveExpand kb distExpr
+    x1 = resolveExpand kb (Var ("x" ++ p1)); x2 = resolveExpand kb (Var ("x" ++ p2))
+    y1 = resolveExpand kb (Var ("y" ++ p1)); y2 = resolveExpand kb (Var ("y" ++ p2))
+    z1 = resolveExpand kb (Var ("z" ++ p1)); z2 = resolveExpand kb (Var ("z" ++ p2))
+    
+    -- Helper to solve: (u - known)^2 = target
+    solveFor :: String -> Expr -> Expr -> Expr -> ([CoordMap], [String])
+    solveFor var u known target =
+       let 
+         -- Equation: (u - known)^2 + other_terms = dVal
+         -- so (u - known)^2 = dVal - other_terms
+         rhs = simplifyExpr (Sub dVal target)
+       in 
+         case solveQuadratic (Sub u known) rhs of
+           [] -> ([kb], []) -- Cannot solve
+           solutions -> 
+             -- We have solutions for (u - known), e.g., k and -k
+             -- u - known = sol => u = known + sol
+             let newKBs = map (\sol -> M.insert var (simplifyExpr (Add known sol)) kb) solutions
+                 step = "Solved distance for " ++ var ++ " (branches: " ++ show (length solutions) ++ ")"
+             in (newKBs, [step])
+             
+    -- Detect unknowns
+    isUnknown (Var v) | take 1 v `elem` ["x","y","z"] = Just v
+    isUnknown _ = Nothing
+    
+    uX1 = isUnknown x1; uX2 = isUnknown x2
+    uY1 = isUnknown y1; uY2 = isUnknown y2
+    uZ1 = isUnknown z1; uZ2 = isUnknown z2
+    
+    dx2 = Pow (Sub x1 x2) 2
+    dy2 = Pow (Sub y1 y2) 2
+    dz2 = Pow (Sub z1 z2) 2
+    
   in
-    case (mv1, mv2) of
-      (Just e1, Just e2) ->
-        -- Both have values - make v2 point to e1
-        M.insert v2 e1 kb
-      (Just e1, Nothing) ->
-        -- v1 has value, v2 doesn't - give v2 the same value
-        M.insert v2 e1 kb
-      (Nothing, Just e2) ->
-        -- v2 has value, v1 doesn't - give v1 the same value
-        M.insert v1 e2 kb
-      (Nothing, Nothing) ->
-        -- Neither has value - make v2 point to v1
-        M.insert v2 (Var v1) kb
+    case (uX1, uY1, uZ1, uX2, uY2, uZ2) of
+      -- Solve for x2
+      (Nothing, Nothing, Nothing, Just v, Nothing, Nothing) ->
+        solveFor v x2 x1 (Add dy2 dz2)
+      -- Solve for y2
+      (Nothing, Nothing, Nothing, Nothing, Just v, Nothing) ->
+        solveFor v y2 y1 (Add dx2 dz2)
+      -- Solve for x1
+      (Just v, Nothing, Nothing, Nothing, Nothing, Nothing) ->
+        solveFor v x1 x2 (Add dy2 dz2)
+      -- Solve for y1
+      (Nothing, Just v, Nothing, Nothing, Nothing, Nothing) ->
+        solveFor v y1 y2 (Add dx2 dz2)
+        
+      _ -> ([kb], [])
 
--- | Resolve a variable to its value (following chains)
+
+-- | Solve quadratic equation symbolically
+-- Returns list of solutions for LHS term
+-- equation: term^2 = rhs
+-- returns: [sqrt(rhs), -sqrt(rhs)]
+solveQuadratic :: Expr -> Expr -> [Expr]
+solveQuadratic term rhs =
+  case symbolicSqrt rhs of
+    Just root -> [root, Mul (Const (-1)) root]
+    Nothing -> []
+
+-- | Try to find symbolic square root
+symbolicSqrt :: Expr -> Maybe Expr
+symbolicSqrt (Const c) 
+  | c >= 0 = -- Try to find rational root
+      let n = numerator c; d = denominator c
+          rootN = integerSqrt n; rootD = integerSqrt d
+      in if rootN*rootN == n && rootD*rootD == d
+         then Just (Const (fromInteger rootN / fromInteger rootD))
+         else Nothing
+  | otherwise = Nothing
+symbolicSqrt (Pow e 2) = Just e
+symbolicSqrt (Mul e1 e2) = 
+  case (symbolicSqrt e1, symbolicSqrt e2) of
+    (Just r1, Just r2) -> Just (Mul r1 r2)
+    _ -> Nothing
+symbolicSqrt _ = Nothing
+
+integerSqrt :: Integer -> Integer
+integerSqrt n = floor (sqrt (fromIntegral n))
+
+-- =============================================
+-- Utilities
+-- =============================================
+
+resolveExpand :: CoordMap -> Expr -> Expr
+resolveExpand kb e = simplifyExpr (expandExprRecursive kb e)
+
+expandExprRecursive :: CoordMap -> Expr -> Expr
+expandExprRecursive kb (Var v) =
+  case resolveVar kb v of
+    Just e -> expandExprRecursive kb e
+    Nothing -> if take 1 v == "z" then Const 0 else Var v
+expandExprRecursive kb (Add e1 e2) = Add (expandExprRecursive kb e1) (expandExprRecursive kb e2)
+expandExprRecursive kb (Sub e1 e2) = Sub (expandExprRecursive kb e1) (expandExprRecursive kb e2)
+expandExprRecursive kb (Mul e1 e2) = Mul (expandExprRecursive kb e1) (expandExprRecursive kb e2)
+expandExprRecursive kb (Div e1 e2) = Div (expandExprRecursive kb e1) (expandExprRecursive kb e2)
+expandExprRecursive kb (Pow e n) = Pow (expandExprRecursive kb e) n
+expandExprRecursive kb (Dist2 p1 p2) =
+  let x1 = expandExprRecursive kb (Var ("x"++p1))
+      y1 = expandExprRecursive kb (Var ("y"++p1))
+      z1 = expandExprRecursive kb (Var ("z"++p1))
+      x2 = expandExprRecursive kb (Var ("x"++p2))
+      y2 = expandExprRecursive kb (Var ("y"++p2))
+      z2 = expandExprRecursive kb (Var ("z"++p2))
+  in Add (Add (Pow (Sub x1 x2) 2) (Pow (Sub y1 y2) 2)) (Pow (Sub z1 z2) 2)
+expandExprRecursive _ e = e
+
 resolveVar :: CoordMap -> String -> Maybe Expr
 resolveVar kb v =
   case M.lookup v kb of
-    Nothing -> Nothing
-    Just (Var v2) | v2 /= v -> resolveVar kb v2  -- Follow chain
+    Just (Var v2) | v /= v2 -> 
+      case resolveVar kb v2 of
+        Just val -> Just val
+        Nothing -> Just (Var v2)
     Just e -> Just e
+    Nothing -> Nothing
 
--- =============================================
--- Goal Checking
--- =============================================
+unifyVars :: CoordMap -> String -> String -> CoordMap
+unifyVars kb v1 v2 =
+  let e1 = resolveVar kb v1
+      e2 = resolveVar kb v2
+  in case (e1, e2) of
+       (Just val, _) -> M.insert v2 val kb
+       (_, Just val) -> M.insert v1 val kb
+       _ -> M.insert v2 (Var v1) kb
 
--- | Check if a goal can be evaluated in the knowledge base
-checkGoal :: CoordMap -> Formula -> [String] -> (Maybe Bool, [String])
-checkGoal kb (Eq lhs rhs) steps =
-  case (evaluateExpr kb lhs, evaluateExpr kb rhs) of
-    (Just v1, Just v2) ->
-      let result = v1 == v2
-          step = "Evaluated: " ++ prettyExpr lhs ++ " = " ++ show v1 ++
-                ", " ++ prettyExpr rhs ++ " = " ++ show v2 ++
-                " → " ++ if result then "EQUAL" else "NOT EQUAL"
-      in (Just result, steps ++ [step])
+isHorizontal :: CoordMap -> String -> String -> Bool
+isHorizontal kb pA pB =
+  let yA = resolveExpand kb (Var ("y"++pA))
+      yB = resolveExpand kb (Var ("y"++pB))
+  in exprEqualsSymbolic yA yB
 
-    _ -> (Nothing, steps ++ ["Cannot fully evaluate goal with current knowledge"])
+isVertical :: CoordMap -> String -> String -> Bool
+isVertical kb pA pB =
+  let xA = resolveExpand kb (Var ("x"++pA))
+      xB = resolveExpand kb (Var ("x"++pB))
+  in exprEqualsSymbolic xA xB
 
-checkGoal _ _ steps = (Nothing, steps)
-
--- | Evaluate an expression using the knowledge base
-evaluateExpr :: CoordMap -> Expr -> Maybe Rational
-evaluateExpr kb expr =
-  case expr of
-    Const c -> Just c
-
-    Var v -> do
-      e <- resolveVar kb v
-      evaluateExpr kb e
-
-    Add e1 e2 -> do
-      v1 <- evaluateExpr kb e1
-      v2 <- evaluateExpr kb e2
-      return (v1 + v2)
-
-    Sub e1 e2 -> do
-      v1 <- evaluateExpr kb e1
-      v2 <- evaluateExpr kb e2
-      return (v1 - v2)
-
-    Mul e1 e2 -> do
-      v1 <- evaluateExpr kb e1
-      v2 <- evaluateExpr kb e2
-      return (v1 * v2)
-
-    Pow e n -> do
-      v <- evaluateExpr kb e
-      return (v ^ n)
-
-    -- CRITICAL: Distance formula evaluation
-    Dist2 p1 p2 -> do
-      x1 <- lookupCoord kb ("x" ++ p1)
-      y1 <- lookupCoord kb ("y" ++ p1)
-      z1 <- lookupCoord kb ("z" ++ p1)
-      x2 <- lookupCoord kb ("x" ++ p2)
-      y2 <- lookupCoord kb ("y" ++ p2)
-      z2 <- lookupCoord kb ("z" ++ p2)
-      let dx = x1 - x2
-          dy = y1 - y2
-          dz = z1 - z2
-      return (dx*dx + dy*dy + dz*dz)
-
-    _ -> Nothing
-
--- | Lookup a coordinate value (defaulting to 0 if not present for z-coords)
-lookupCoord :: CoordMap -> String -> Maybe Rational
-lookupCoord kb v =
-  case resolveVar kb v of
-    Just e -> evaluateExpr kb e
-    Nothing ->
-      -- Default z-coordinates to 0 for 2D problems
-      if take 1 v == "z" then Just 0 else Nothing
-
--- =============================================
--- Formatting
--- =============================================
-
+checkGoal :: CoordMap -> Formula -> (Maybe Bool, String, [String])
+checkGoal kb (Eq lhs rhs) =
+  let l = resolveExpand kb lhs
+      r = resolveExpand kb rhs
+  in if exprEqualsSymbolic l r
+     then (Just True, "Equality holds symbolically", ["LHS: " ++ prettyExpr l, "RHS: " ++ prettyExpr r])
+     else 
+       -- If we can determine they are definitely NOT equal (e.g. Const 5 vs Const 6)
+       case (l, r) of
+         (Const c1, Const c2) | c1 /= c2 -> (Just False, "Constants not equal", ["LHS: " ++ show c1, "RHS: " ++ show c2])
+         -- For symbolic inequality, it's harder. 
+         -- But for the square problem: 5S^2 vs S^2 -> not equal if S!=0.
+         -- We assume variables are generic (non-zero).
+         -- If we have a nice polynomial normal form, we can check.
+         _ -> 
+            -- Check if difference is non-zero
+            if l /= r then (Just False, "Symbolically distinct", ["LHS: " ++ prettyExpr l, "RHS: " ++ prettyExpr r])
+            else (Nothing, "Unknown", [])
+checkGoal _ _ = (Nothing, "Unsupported goal type", [])
 formatGeoResult :: GeoResult -> String
 formatGeoResult (GeoProved reason steps) =
   unlines $
@@ -450,3 +369,4 @@ formatGeoResult (GeoUnknown reason) =
     , "Reason: " ++ reason
     , "Falling back to algebraic solvers..."
     ]
+

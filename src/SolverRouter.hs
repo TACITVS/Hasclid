@@ -311,7 +311,7 @@ formatAutoSolveResult result verbose =
     , "Result: " ++ (if isProved result then "PROVED" else "NOT PROVED")
     , "  " ++ proofReason result
     ] ++
-    (if verbose && isProved result
+    (if verbose
      then case detailedTrace result of
             Just trace -> ["", "Detailed Trace:", trace]
             Nothing -> []
