@@ -33,6 +33,7 @@ executable prover
         Expr
         Parser
         Positivity
+        ProblemAnalyzer
         Prover
         Sturm
         TermOrder
