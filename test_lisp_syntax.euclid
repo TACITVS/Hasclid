@@ -1,0 +1,11 @@
+-- Test Lisp-style defpoints
+:verbose
+
+-- Use new Lisp-like syntax
+(defpoints P 5)
+
+-- Define macro to sum distances
+:macro sum_dist i = (if (= i 1) 0 (+ (dist2 (idx P (- i 1)) (idx P i)) (sum_dist (- i 1))))
+
+-- Verify expansion
+(= (sum_dist 5) (sum_dist 5))

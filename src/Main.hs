@@ -3,7 +3,7 @@
 module Main where
 
 import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
-import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
+import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, expandMacros, MacroMap)
 import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger)
 import BuchbergerOpt (SelectionStrategy(..), buchbergerOptimized, buchbergerWithStrategy)
 import CounterExample (findCounterExample, formatCounterExample)
@@ -557,39 +557,60 @@ processLine state rawInput = do
                             return (stateWithHist { macros = newMacros }, "Defined macro: " ++ name)
                         [] -> return (stateWithHist, "Missing macro name")
 
-    _ ->
-        case parseFormulaWithMacros (macros state) input of
-          Left err -> return (stateWithHist, formatError err)
-          Right formula -> do
-            let fullContext = theory state ++ lemmas state
+    _ -> do
+      -- Try to interpret as a Lisp-style command first
+      let tokens = tokenizePrefix input
+      case parseSExpr tokens of
+        Right (List [Atom "defpoints", Atom prefix, countExpr], []) -> do
+            -- Expand macros in the count expression to support e.g. (+ 2 3)
+            let expandedCount = expandMacros (macros state) countExpr
             
-            -- VERBOSITY IMPROVEMENT (Issue #1): Show the expanded formula
-            if verbose state 
-            then putStrLn ("\n[Verbose] Expanded Formula:\n  " ++ show formula ++ "\n")
-            else return ()
+            let countVal = case expandedCount of
+                             Atom c | all isDigit c -> Just (read c :: Int)
+                             _ -> Nothing
+            
+            case countVal of
+                Just count | count > 0 -> do
+                     let names = [ prefix ++ show i | i <- [1..count] ]
+                     -- Define each point with generic variables e.g. xP1, yP1
+                     -- (Implicitly handled by Expr logic, but we confirm to user)
+                     return (stateWithHist, "Defined " ++ show count ++ " points: " ++ unwords names)
+                _ -> return (stateWithHist, "Error: defpoints requires a positive integer count. Got: " ++ show countExpr)
 
-            -- USE ROUTER BY DEFAULT for intelligent solver selection
-            let result = autoSolve fullContext formula
-            let proved = isProved result
-            let reason = proofReason result
-            -- Display router's result
-            if proved
-               then do
-                 let msg = "RESULT: PROVED\n" ++
-                          "Solver: " ++ show (selectedSolver result) ++ "\n" ++
-                          "Reason: " ++ reason ++
-                          (if verbose state
-                           then "\n\n" ++ formatAutoSolveResult result True
-                           else "")
-                 return (stateWithHist, msg)
-               else do
-                 -- Try to find counter-example when proof fails
-                 let counterExampleMsg = case findCounterExample fullContext formula of
-                       Just ce -> "\n\n" ++ formatCounterExample ce
-                       Nothing -> "\n\nNo counter-example found with simple sampling.\nUse :find-counterexample to try more values."
-                 
-                 let baseMsg = formatAutoSolveResult result (verbose state)
-                 return (stateWithHist, baseMsg ++ counterExampleMsg)
+        -- If not a command, try to interpret as a formula to prove
+        _ -> 
+            case parseFormulaWithMacros (macros state) input of
+              Left err -> return (stateWithHist, formatError err)
+              Right formula -> do
+                let fullContext = theory state ++ lemmas state
+                
+                -- VERBOSITY IMPROVEMENT: Show the expanded formula
+                if verbose state 
+                then putStrLn ("\n[Verbose] Expanded Formula:\n  " ++ show formula ++ "\n")
+                else return ()
+
+                -- USE ROUTER BY DEFAULT for intelligent solver selection
+                let result = autoSolve fullContext formula
+                let proved = isProved result
+                let reason = proofReason result
+                -- Display router's result
+                if proved
+                   then do
+                     let msg = "RESULT: PROVED\n" ++
+                              "Solver: " ++ show (selectedSolver result) ++ "\n" ++
+                              "Reason: " ++ reason ++
+                              (if verbose state
+                               then "\n\n" ++ formatAutoSolveResult result True
+                               else "")
+                     return (stateWithHist, msg)
+                   else do
+                     -- Try to find counter-example when proof fails
+                     let counterExampleMsg = case findCounterExample fullContext formula of
+                           Just ce -> "\n\n" ++ formatCounterExample ce
+                           Nothing -> "\n\nNo counter-example found with simple sampling.\nUse :find-counterexample to try more values."
+                     
+                     let baseMsg = formatAutoSolveResult result (verbose state)
+                     return (stateWithHist, baseMsg ++ counterExampleMsg)
 
 -- =============================================
 -- 5. REPL Loop
