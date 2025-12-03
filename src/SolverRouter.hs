@@ -24,7 +24,7 @@ module SolverRouter
 
     -- * Solver Selection Logic
   , SolverChoice(..)
-  , selectSolver
+  , selectAlgebraicSolver
   , explainSolverChoice
 
     -- * Result Types
@@ -34,6 +34,7 @@ module SolverRouter
 
 import Expr
 import ProblemAnalyzer
+import GeoSolver (solveGeoWithTrace, GeoResult(..), formatGeoResult)
 import Wu (wuProve, wuProveWithTrace, WuTrace, formatWuTrace)
 import Prover (proveTheoryWithOptions, ProofTrace, formatProofTrace, buchberger)
 import CADLift (evaluateInequalityCAD)
@@ -45,7 +46,8 @@ import qualified Data.Set as S
 
 -- | Available solving methods
 data SolverChoice
-  = UseWu           -- Wu's method (fast for geometry)
+  = UseGeoSolver    -- Geometric constraint propagation (FASTEST - Phase 1)
+  | UseWu           -- Wu's method (fast for geometry)
   | UseGroebner     -- Gröbner basis (general purpose)
   | UseCAD          -- CAD (for inequalities, limited to 1D-2D)
   | Unsolvable      -- Problem too complex or type not supported
@@ -66,29 +68,66 @@ data AutoSolveResult = AutoSolveResult
 -- =============================================
 
 -- | Automatically select and run the best solver for a problem
+-- ARCHITECTURE: Two-phase solving approach
+--
+-- PHASE 1: Fast Geometric Constraint Propagation (the "screwdriver")
+--   Try GeoSolver first - uses constraint propagation, not polynomial algebra
+--   Returns in milliseconds with GeoProved/GeoDisproved/GeoUnknown
+--
+-- PHASE 2: Algebraic Solvers (the "hammers")
+--   If GeoSolver returns GeoUnknown, fall back to Wu/Gröbner/CAD
+--   These use polynomial manipulation - slower but more general
 autoSolve :: Theory -> Formula -> AutoSolveResult
 autoSolve theory goal =
   let
-    -- Analyze the problem
+    -- Analyze the problem structure
     profile = analyzeProblem theory goal
-
-    -- Select appropriate solver
-    solver = selectSolver profile goal
-
-    -- Get explanation for choice
-    reason = explainSolverChoice solver profile
-
-    -- Execute the chosen solver
-    (proved, proofMsg, trace) = executeSolver solver theory goal
   in
-    AutoSolveResult
-      { selectedSolver = solver
-      , solverReason = reason
-      , problemProfile = profile
-      , isProved = proved
-      , proofReason = proofMsg
-      , detailedTrace = trace
-      }
+    -- PHASE 1: Try fast geometric constraint propagation first
+    case solveGeoWithTrace theory goal of
+      GeoProved reason steps ->
+        -- Success! GeoSolver proved it via constraint propagation
+        AutoSolveResult
+          { selectedSolver = UseGeoSolver
+          , solverReason = "Fast geometric constraint propagation (PHASE 1)"
+          , problemProfile = profile
+          , isProved = True
+          , proofReason = reason
+          , detailedTrace = Just (unlines steps)
+          }
+
+      GeoDisproved reason steps ->
+        -- Success! GeoSolver disproved it via constraint propagation
+        AutoSolveResult
+          { selectedSolver = UseGeoSolver
+          , solverReason = "Fast geometric constraint propagation (PHASE 1)"
+          , problemProfile = profile
+          , isProved = False
+          , proofReason = reason
+          , detailedTrace = Just (unlines steps)
+          }
+
+      GeoUnknown reason ->
+        -- GeoSolver insufficient, fall back to PHASE 2 (algebraic solvers)
+        let
+          -- Select appropriate algebraic solver
+          solver = selectAlgebraicSolver profile goal
+
+          -- Get explanation for choice
+          solverReason' = "Geometric propagation insufficient. Fallback to PHASE 2: " ++
+                         explainSolverChoice solver profile
+
+          -- Execute the chosen algebraic solver
+          (proved, proofMsg, trace) = executeSolver solver theory goal
+        in
+          AutoSolveResult
+            { selectedSolver = solver
+            , solverReason = solverReason'
+            , problemProfile = profile
+            , isProved = proved
+            , proofReason = proofMsg
+            , detailedTrace = trace
+            }
 
 -- | Automatic solve with verbose trace information
 autoSolveWithTrace :: Theory -> Formula -> Bool -> AutoSolveResult
@@ -100,9 +139,10 @@ autoSolveWithTrace theory goal verbose =
 -- Solver Selection Logic
 -- =============================================
 
--- | Select the most appropriate solver based on problem characteristics
-selectSolver :: ProblemProfile -> Formula -> SolverChoice
-selectSolver profile goal
+-- | Select the most appropriate ALGEBRAIC solver (PHASE 2)
+-- This is called only if GeoSolver returns GeoUnknown in PHASE 1
+selectAlgebraicSolver :: ProblemProfile -> Formula -> SolverChoice
+selectAlgebraicSolver profile goal
   -- RULE 1: Unsupported formula types
   | not (isEquality goal) && not (isInequality goal) = Unsolvable
 
@@ -214,6 +254,10 @@ extractVariablesFromExpr _ = []
 
 -- | Explain why a particular solver was chosen
 explainSolverChoice :: SolverChoice -> ProblemProfile -> String
+explainSolverChoice UseGeoSolver profile =
+  "Geometric Constraint Propagation: " ++
+  "Fast-path geometric reasoner using constraint propagation (milliseconds), not polynomial algebra"
+
 explainSolverChoice UseWu profile =
   "Selected Wu's Method: " ++
   (case problemType profile of

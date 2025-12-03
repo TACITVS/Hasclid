@@ -1,0 +1,4 @@
+:point A 0 0
+:point B 1 0
+:assume (= (dist2 A B) 1)
+(= (dist2 B A) 1)

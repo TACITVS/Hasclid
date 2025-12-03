@@ -33,8 +33,8 @@ main :: IO ()
 main = do
   putStr "\ESC[2J\ESC[H"
   putStrLn "=================================================="
-  putStrLn "   Euclid Geometric Prover v8.0"
-  putStrLn "   Now with Complete CAD Lifting!"
+  putStrLn "   Hasclid v9.1 - Hybrid Geometric Reasoner"
+  putStrLn "   Fast geometric constraint propagation + Wu/Grobner/CAD"
   putStrLn "   Type :help for commands."
   putStrLn "=================================================="
   repl initialState
