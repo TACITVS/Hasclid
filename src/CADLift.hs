@@ -139,15 +139,97 @@ interleave xs [] = xs
 interleave (x:xs) (y:ys) = x : y : interleave xs ys
 
 -- | Find roots of a polynomial in a specific variable
+--   HYBRID STRATEGY:
+--   1. Use Sturm to isolate root intervals
+--   2. Refine each interval to find exact rational root (or close approximation)
 findRootsIn :: String -> Poly -> [Rational]
 findRootsIn var p =
   case toUnivariate p of
     Just (v, coeffs) | v == var ->
-      let roots = isolateRoots coeffs
-          -- Extract midpoints of intervals as sample roots
-          midpoints = [ (lo + hi) / 2 | (lo, hi) <- roots ]
-      in midpoints
+      let intervals = isolateRoots coeffs
+          -- Refine each interval to get exact or very close root
+          refinedRoots = map (refineToExactRoot coeffs) intervals
+      in refinedRoots
     _ -> []  -- Not univariate in this variable
+
+-- | Refine interval to find exact rational root
+--   Try to find exact rational root first, otherwise refine numerically
+refineToExactRoot :: [Rational] -> (Rational, Rational) -> Rational
+refineToExactRoot coeffs (lo, hi) =
+  -- Try integer values WITHIN the interval (not outside!)
+  let loInt = ceiling lo  -- First integer >= lo
+      hiInt = floor hi    -- Last integer <= hi
+      integerCandidates = [loInt .. hiInt]
+      exactRoot = filter (\x -> isRoot coeffs (fromIntegral x)) integerCandidates
+  in case exactRoot of
+       (r:_) -> fromIntegral r  -- Found exact integer root!
+       [] -> refineRootNumerically coeffs (lo, hi) -- Fall back to numerical refinement
+
+-- | Numerically refine a root interval
+refineRootNumerically :: [Rational] -> (Rational, Rational) -> Rational
+refineRootNumerically coeffs (lo, hi)
+  | hi - lo < 1/100000 = (lo + hi) / 2  -- Close enough
+  | otherwise =
+      let mid = (lo + hi) / 2
+          valMid = evalPolyAt coeffs mid
+      in if abs valMid < 1/1000000000
+         then mid  -- Found it!
+         else
+           let valLo = evalPolyAt coeffs lo
+           in if valLo * valMid < 0
+              then refineRootNumerically coeffs (lo, mid)
+              else refineRootNumerically coeffs (mid, hi)
+
+-- | Find all rational roots using Rational Root Theorem
+--   For polynomial a_n*x^n + ... + a_1*x + a_0,
+--   rational roots are of the form p/q where p divides a0 and q divides a_n
+findRationalRoots :: [Rational] -> [Rational]
+findRationalRoots coeffs
+  | null coeffs || all (== 0) coeffs = []
+  | otherwise =
+      let a0 = head coeffs
+          an = last coeffs
+
+          -- Check if 0 is a root (when a0 = 0)
+          zeroRoot = if a0 == 0 then [0] else []
+
+          -- For other roots, need non-zero a0
+          otherRoots = if a0 == 0 || an == 0
+                       then []
+                       else
+                         let a0_num = abs (numerator a0)
+                             an_num = abs (numerator an)
+                             divisors_a0 = [d | d <- [1..a0_num], a0_num `mod` d == 0]
+                             divisors_an = [d | d <- [1..an_num], an_num `mod` d == 0]
+                             candidates = nub ([ p % q | p <- divisors_a0, q <- divisors_an ]
+                                            ++ [ (- p) % q | p <- divisors_a0, q <- divisors_an ])
+                             actualRoots = filter (isRoot coeffs) candidates
+                         in actualRoots
+      in sort (nub (zeroRoot ++ otherRoots))
+
+-- | Test if a value is a root of the polynomial
+isRoot :: [Rational] -> Rational -> Bool
+isRoot coeffs x = abs (evalPolyAt coeffs x) < 1/1000000000
+
+-- | Refine a root interval to get an accurate root location
+--   Bisects the interval until width < 1/1024, then returns midpoint
+refineRoot :: [Rational] -> (Rational, Rational) -> Rational
+refineRoot coeffs (lo, hi)
+  | hi - lo < 1/1024 = (lo + hi) / 2  -- Good enough
+  | otherwise =
+      let mid = (lo + hi) / 2
+          valMid = evalPolyAt coeffs mid
+      in if abs valMid < 1/1000000  -- Very close to zero
+         then mid  -- Found it!
+         else
+           let valLo = evalPolyAt coeffs lo
+           in if valLo * valMid < 0
+              then refineRoot coeffs (lo, mid)  -- Root in left half
+              else refineRoot coeffs (mid, hi)  -- Root in right half
+
+-- | Evaluate polynomial at a point (for refinement)
+evalPolyAt :: [Rational] -> Rational -> Rational
+evalPolyAt coeffs x = sum [ c * (x ^ i) | (i, c) <- zip [0..] coeffs ]
 
 -- | Generate sample points between critical values
 generateSamples :: [Rational] -> [Rational]

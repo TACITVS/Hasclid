@@ -1,0 +1,91 @@
+// ============================================
+// CAD STRESS TEST SUITE
+// Testing Complete CAD Implementation
+// ============================================
+
+// TEST 1: Simple 1D polynomial
+// x^2 - 1 = 0 (roots at x = -1, 1)
+:reset
+:assume (= (* x x) 1)
+:cad x
+
+// Expected: 5 cells
+// Cell 1: SECTOR x < -1 (positive)
+// Cell 2: SECTION x = -1 (zero)
+// Cell 3: SECTOR -1 < x < 1 (negative)
+// Cell 4: SECTION x = 1 (zero)
+// Cell 5: SECTOR x > 1 (positive)
+
+// TEST 2: Cubic polynomial
+// x^3 - x = 0 (roots at x = -1, 0, 1)
+:reset
+:assume (= (- (* x (* x x)) x) 0)
+:cad x
+
+// Expected: 7 cells
+// Sections at x = -1, 0, 1
+// Sectors between them
+
+// TEST 3: Quartic with 4 real roots
+// (x^2 - 1)(x^2 - 4) = x^4 - 5x^2 + 4 = 0
+// Roots at x = -2, -1, 1, 2
+:reset
+:assume (= (+ (- (* x (* x (* x x))) (* 5 (* x x))) 4) 0)
+:cad x
+
+// Expected: 9 cells (4 sections + 5 sectors)
+
+// TEST 4: 2D Circle
+// x^2 + y^2 = 1
+:reset
+:assume (= (+ (* x x) (* y y)) 1)
+:cad x y
+
+// Expected: Multiple cells showing circle decomposition
+
+// TEST 5: 2D Ellipse
+// 4x^2 + 9y^2 = 36
+:reset
+:assume (= (+ (* 4 (* x x)) (* 9 (* y y))) 36)
+:cad x y
+
+// TEST 6: Two circles intersection
+// Circle 1: x^2 + y^2 = 1
+// Circle 2: (x-1)^2 + y^2 = 1
+:reset
+:assume (= (+ (* x x) (* y y)) 1)
+:assume (= (+ (* (- x 1) (- x 1)) (* y y)) 1)
+:cad x y
+
+// Expected: Complex decomposition showing intersection points
+
+// TEST 7: Perpendicular lines
+// Line 1: y = x
+// Line 2: y = -x
+:reset
+:assume (= y x)
+:assume (= y (- 0 x))
+:cad x y
+
+// Expected: Decomposition showing intersection at origin
+
+// TEST 8: Parabola
+// y = x^2
+:reset
+:assume (= y (* x x))
+:cad x y
+
+// TEST 9: Hyperbola
+// x^2 - y^2 = 1
+:reset
+:assume (= (- (* x x) (* y y)) 1)
+:cad x y
+
+// TEST 10: Distance constraint
+// Distance from origin = 2
+// x^2 + y^2 = 4
+:reset
+:assume (= (+ (* x x) (* y y)) 4)
+:cad x y
+
+:q

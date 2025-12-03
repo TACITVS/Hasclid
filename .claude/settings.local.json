@@ -9,7 +9,9 @@
       "Bash(cabal run:*)",
       "Bash(chcp 65001)",
       "Bash(export LANG=en_US.UTF-8)",
-      "Bash(cabal build:*)"
+      "Bash(cabal build:*)",
+      "Bash(ghc:*)",
+      "Bash(./test_sturm_roots.exe:*)"
     ],
     "deny": [],
     "ask": []
