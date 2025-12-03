@@ -331,17 +331,12 @@ checkGoal kb (Eq lhs rhs) =
   in if exprEqualsSymbolic l r
      then (Just True, "Equality holds symbolically", ["LHS: " ++ prettyExpr l, "RHS: " ++ prettyExpr r])
      else 
-       -- If we can determine they are definitely NOT equal (e.g. Const 5 vs Const 6)
        case (l, r) of
          (Const c1, Const c2) | c1 /= c2 -> (Just False, "Constants not equal", ["LHS: " ++ show c1, "RHS: " ++ show c2])
-         -- For symbolic inequality, it's harder. 
-         -- But for the square problem: 5S^2 vs S^2 -> not equal if S!=0.
-         -- We assume variables are generic (non-zero).
-         -- If we have a nice polynomial normal form, we can check.
-         _ -> 
-            -- Check if difference is non-zero
-            if l /= r then (Just False, "Symbolically distinct", ["LHS: " ++ prettyExpr l, "RHS: " ++ prettyExpr r])
-            else (Nothing, "Unknown", [])
+         -- For symbolic expressions that don't match structurally, we cannot be sure they are mathematically distinct
+         -- without a canonical form or stronger algebra.
+         -- Return Nothing (Unknown) to allow fallback to Wu/Groebner which handle this correctly.
+         _ -> (Nothing, "Symbolic mismatch (needs algebraic proof)", ["LHS: " ++ prettyExpr l, "RHS: " ++ prettyExpr r])
 checkGoal _ _ = (Nothing, "Unsupported goal type", [])
 formatGeoResult :: GeoResult -> String
 formatGeoResult (GeoProved reason steps) =
