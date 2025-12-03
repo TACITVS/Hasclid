@@ -1,4 +1,4 @@
--- Test Bulk Points and Indexing
+-- Test Bulk Points and Indexing with valid syntax
 :verbose
 
 -- 1. Define 5 points P1..P5
@@ -10,7 +10,4 @@
 
 -- 3. Test expansion
 -- Should expand to dist2(P4,P5) + dist2(P3,P4) + dist2(P2,P3) + dist2(P1,P2) + 0
--- We check if the formula parses and expands correctly.
--- Since P1..P5 are symbolic, the result is a large polynomial.
--- We just check if it runs without error.
 (= (sum_dist 5) (sum_dist 5))
