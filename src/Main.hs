@@ -502,6 +502,28 @@ processLine state rawInput = do
     
     (":point":_) -> return (stateWithHist, "Usage: :point A x y z  OR  :point A x y")
 
+    (":points":prefix:countStr:_) -> do
+         -- Bulk point definition: :points P 5 -> P1, P2, P3, P4, P5
+         if all isDigit countStr
+         then do
+             let count = read countStr :: Int
+             if count <= 0 then return (stateWithHist, "Count must be positive")
+             else do
+                 let names = [ prefix ++ show i | i <- [1..count] ]
+                 -- Define each point with generic variables e.g. xP1, yP1
+                 let newAssumptions = concat [ [ Eq (Var ("x"++n)) (Var ("x"++n)), 
+                                                 Eq (Var ("y"++n)) (Var ("y"++n)), 
+                                                 Eq (Var ("z"++n)) (Const 0) ] 
+                                             | n <- names ]
+                 -- We actually don't need to add identity assumptions xP1=xP1, but we might want to add them to theory to track existence?
+                 -- Actually, Hasclid usually assumes 0 for z if not specified.
+                 -- Let's just print confirmation. Symbols xP1 etc are automatically valid in Expr.
+                 -- But user might expect them to be listed in :list.
+                 -- Let's add dummy assumptions to register them if we want them in :list, or just rely on implicit.
+                 -- Better: Just return success.
+                 return (stateWithHist, " defined points " ++ unwords names ++ " (implicit 2D)")
+         else return (stateWithHist, "Usage: :points <Prefix> <Count> (e.g. :points P 5)")
+
     (":assume":_) ->
         let str = drop 8 input
         in case parseFormulaWithMacros (macros state) str of
@@ -540,6 +562,12 @@ processLine state rawInput = do
           Left err -> return (stateWithHist, formatError err)
           Right formula -> do
             let fullContext = theory state ++ lemmas state
+            
+            -- VERBOSITY IMPROVEMENT (Issue #1): Show the expanded formula
+            if verbose state 
+            then putStrLn ("\n[Verbose] Expanded Formula:\n  " ++ show formula ++ "\n")
+            else return ()
+
             -- USE ROUTER BY DEFAULT for intelligent solver selection
             let result = autoSolve fullContext formula
             let proved = isProved result

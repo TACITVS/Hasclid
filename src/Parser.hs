@@ -85,6 +85,17 @@ expandMacros' depth macros expr@(List (Atom name : args)) =
              Just nums -> Atom (show (foldl1 (opFunc op) nums))
              Nothing -> List (Atom op : expandedArgs)
 
+    -- Special Form: Indexer (compile-time string concatenation)
+    -- Usage: (idx P 1) -> P1
+    "idx" ->
+        case args of
+            [Atom prefix, indexExpr] ->
+                let expandedIndex = expandMacros' (depth-1) macros indexExpr
+                in case toInt expandedIndex of
+                     Just n -> Atom (prefix ++ show n)
+                     Nothing -> List (Atom "idx" : [Atom prefix, expandedIndex])
+            _ -> expr
+
     _ ->
       case M.lookup name macros of
         Just (params, body) ->
