@@ -38,6 +38,7 @@ executable prover
         Sturm
         TermOrder
         Validation
+        Wu
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7

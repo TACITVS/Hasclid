@@ -10,6 +10,7 @@ import CounterExample (findCounterExample, formatCounterExample)
 import CAD (discriminant, toRecursive)
 import CADLift (cadDecompose, CADCell(..), formatCADCells, evaluateInequalityCAD)
 import Sturm (isolateRoots, samplePoints, evalPoly)
+import Wu (wuProve, wuProveWithTrace, formatWuTrace)
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
@@ -243,8 +244,9 @@ processLine state rawInput = do
         "  (circle P C r)          Point P on circle with center C and radius r",
         "",
         "Logic & Proving:",
-        "  (= expr1 expr2)         Prove equality",
+        "  (= expr1 expr2)         Prove equality (uses Gröbner basis)",
         "  :lemma (= a b)          Prove and store theorem",
+        "  :wu (= expr1 expr2)     Prove using Wu's Method (faster for geometry)",
         "  :find-counterexample (= a b)  Find counter-example for failed proof",
         "  :verbose                Toggle detailed proof explanations",
         "  :auto-simplify          Toggle automatic expression simplification",
@@ -441,6 +443,27 @@ processLine state rawInput = do
              let output = "CAD Decomposition (" ++ show (length cells) ++ " cells):\n\n" ++
                           formatCADCells cells
              return (stateWithHist, output)
+
+    (":wu":_) ->
+        let str = drop 4 input
+        in case parseFormulaPrefix str of
+             Left err -> return (stateWithHist, formatError err)
+             Right formula -> do
+               case formula of
+                 Eq _ _ -> do
+                   let fullContext = theory state ++ lemmas state
+                   let trace = wuProveWithTrace fullContext formula
+                   let (isProved, reason) = wuProve fullContext formula
+                   if isProved
+                     then do
+                       let msg = "WU'S METHOD: PROVED\n" ++ reason ++
+                                 (if verbose state then "\n\n" ++ formatWuTrace trace else "")
+                       return (stateWithHist, msg)
+                     else do
+                       let msg = "WU'S METHOD: NOT PROVED\n" ++ reason ++
+                                 (if verbose state then "\n\n" ++ formatWuTrace trace else "")
+                       return (stateWithHist, msg)
+                 _ -> return (stateWithHist, "ERROR: Wu's method only supports equality goals (not inequalities)\nUsage: :wu (= expr1 expr2)")
 
     (":point":name:xStr:yStr:zStr:_) -> do
          let exprX = parseCoord xStr
