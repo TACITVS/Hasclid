@@ -611,3 +611,11 @@ repl state = do
         if null msg then return () else putStrLn msg
         putStrLn ""
         repl newState
+    `CE.catch` (\e -> do
+        -- Catch any synchronous exception (like error "...") not caught by tryIO
+        let err = show (e :: CE.SomeException)
+        putStrLn $ "\n!!! CRITICAL ERROR !!!"
+        putStrLn $ "The system encountered an unexpected error: " ++ err
+        putStrLn "The REPL state has been preserved. You may continue, but investigate the last command."
+        putStrLn ""
+        repl state)
