@@ -59,7 +59,7 @@ parseList (t:ts)
 
 -- | Recursively expand macros in an S-Expression with depth limit
 expandMacros :: MacroMap -> SExpr -> SExpr
-expandMacros macros sexpr = expandMacros' 100 macros sexpr
+expandMacros macros sexpr = expandMacros' 1000 macros sexpr
 
 expandMacros' :: Int -> MacroMap -> SExpr -> SExpr
 expandMacros' 0 _ _ = error "Macro expansion depth limit exceeded (possible infinite recursion)"
