@@ -146,8 +146,8 @@ selectAlgebraicSolver profile goal
   -- RULE 1: Unsupported formula types
   | not (isEquality goal) && not (isInequality goal) = Unsolvable
 
-  -- RULE 2: Too complex (avoid hanging)
-  | estimatedComplexity profile >= VeryHigh = Unsolvable
+  -- RULE 2: Too complex (avoid hanging) - Relaxed for Algebraic Equality
+  | estimatedComplexity profile >= VeryHigh && not (isEquality goal) = Unsolvable
 
   -- RULE 3: Pure geometric problems → Wu's method
   | problemType profile == Geometric = UseWu

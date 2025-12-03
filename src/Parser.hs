@@ -95,8 +95,12 @@ expandMacros' depth macros expr@(List (Atom name : args)) =
                 -- Expand arguments first (eager evaluation of args)
                 expandedArgs = map (expandMacros' (depth-1) macros) args
                 -- Create substitution map: param -> expanded arg
+                -- Only substitute if the atom matches a parameter name
                 subst = M.fromList $ zip params expandedArgs
-                -- Substitute into body
+                
+                -- Substitute into body, but be careful not to substitute global vars if they clash with params (though unique naming helps)
+                -- Actually, the issue might be that `e1`, `e2` etc in the body are being treated as parameters? No, they are atoms in the body.
+                -- They should be expanded in the next recursive step if they are macros.
                 substitutedBody = substituteSExpr subst body
             in 
                 -- Recursively expand the result
