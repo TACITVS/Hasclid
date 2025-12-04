@@ -54,6 +54,9 @@ data Formula
   = Eq Expr Expr
   | Ge Expr Expr
   | Gt Expr Expr
+  | And Formula Formula
+  | Or Formula Formula
+  | Not Formula
   | Forall [QuantVar] Formula
   | Exists [QuantVar] Formula
   deriving (Eq, Show)
@@ -104,6 +107,9 @@ prettyFormula :: Formula -> String
 prettyFormula (Eq l r) = "(= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 prettyFormula (Ge l r) = "(>= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 prettyFormula (Gt l r) = "(> " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
+prettyFormula (And f1 f2) = "(and " ++ prettyFormula f1 ++ " " ++ prettyFormula f2 ++ ")"
+prettyFormula (Or f1 f2) = "(or " ++ prettyFormula f1 ++ " " ++ prettyFormula f2 ++ ")"
+prettyFormula (Not f) = "(not " ++ prettyFormula f ++ ")"
 prettyFormula (Forall qs f) =
   "(forall (" ++ unwords (map prettyQuantVar qs) ++ ") " ++ prettyFormula f ++ ")"
 prettyFormula (Exists qs f) =
@@ -685,6 +691,9 @@ substituteInts :: M.Map String Expr -> Formula -> Formula
 substituteInts sub (Eq l r) = Eq (substituteIntsExpr sub l) (substituteIntsExpr sub r)
 substituteInts sub (Ge l r) = Ge (substituteIntsExpr sub l) (substituteIntsExpr sub r)
 substituteInts sub (Gt l r) = Gt (substituteIntsExpr sub l) (substituteIntsExpr sub r)
+substituteInts sub (And f1 f2) = And (substituteInts sub f1) (substituteInts sub f2)
+substituteInts sub (Or f1 f2) = Or (substituteInts sub f1) (substituteInts sub f2)
+substituteInts sub (Not f) = Not (substituteInts sub f)
 substituteInts sub (Forall qs f) =
   let sub' = foldr M.delete sub (map qvName qs)
   in Forall qs (substituteInts sub' f)
@@ -709,6 +718,9 @@ containsSqrtFormula :: Formula -> Bool
 containsSqrtFormula (Eq l r) = containsSqrtExpr l || containsSqrtExpr r
 containsSqrtFormula (Ge l r) = containsSqrtExpr l || containsSqrtExpr r
 containsSqrtFormula (Gt l r) = containsSqrtExpr l || containsSqrtExpr r
+containsSqrtFormula (And f1 f2) = containsSqrtFormula f1 || containsSqrtFormula f2
+containsSqrtFormula (Or f1 f2) = containsSqrtFormula f1 || containsSqrtFormula f2
+containsSqrtFormula (Not f) = containsSqrtFormula f
 containsSqrtFormula (Forall _ f) = containsSqrtFormula f
 containsSqrtFormula (Exists _ f) = containsSqrtFormula f
 
@@ -736,6 +748,9 @@ containsIntFormula :: Formula -> Bool
 containsIntFormula (Eq l r) = containsIntExpr l || containsIntExpr r
 containsIntFormula (Ge l r) = containsIntExpr l || containsIntExpr r
 containsIntFormula (Gt l r) = containsIntExpr l || containsIntExpr r
+containsIntFormula (And f1 f2) = containsIntFormula f1 || containsIntFormula f2
+containsIntFormula (Or f1 f2) = containsIntFormula f1 || containsIntFormula f2
+containsIntFormula (Not f) = containsIntFormula f
 containsIntFormula (Forall qs f) =
   any (\q -> qvType q == QuantInt) qs || containsIntFormula f
 containsIntFormula (Exists qs f) =

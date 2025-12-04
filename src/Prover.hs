@@ -788,6 +788,9 @@ isPolyFormula (Ge l r) = not (hasNonPolynomial l || hasNonPolynomial r)
 isPolyFormula (Gt l r) = not (hasNonPolynomial l || hasNonPolynomial r)
 isPolyFormula (Forall _ f) = isPolyFormula f
 isPolyFormula (Exists _ f) = isPolyFormula f
+isPolyFormula (And f1 f2) = isPolyFormula f1 && isPolyFormula f2
+isPolyFormula (Or f1 f2) = isPolyFormula f1 && isPolyFormula f2
+isPolyFormula (Not f) = isPolyFormula f
 
 -- Convert Poly to univariate coefficient list in variable v, if possible.
 polyToUPoly :: String -> Poly -> Maybe [Rational]
@@ -845,6 +848,9 @@ varsInFormula (Ge l r) = varsInExpr l ++ varsInExpr r
 varsInFormula (Gt l r) = varsInExpr l ++ varsInExpr r
 varsInFormula (Forall _ f) = varsInFormula f
 varsInFormula (Exists _ f) = varsInFormula f
+varsInFormula (And f1 f2) = varsInFormula f1 ++ varsInFormula f2
+varsInFormula (Or f1 f2) = varsInFormula f1 ++ varsInFormula f2
+varsInFormula (Not f) = varsInFormula f
 
 varsInExpr :: Expr -> [String]
 varsInExpr (Var v) = [v]
@@ -879,6 +885,9 @@ promoteIntVars names f = goF names f
     goF ns (Eq l r) = Eq (goE ns l) (goE ns r)
     goF ns (Ge l r) = Ge (goE ns l) (goE ns r)
     goF ns (Gt l r) = Gt (goE ns l) (goE ns r)
+    goF ns (And f1 f2) = And (goF ns f1) (goF ns f2)
+    goF ns (Or f1 f2) = Or (goF ns f1) (goF ns f2)
+    goF ns (Not f) = Not (goF ns f)
     goF ns (Forall qs f') =
       let ns' = ns
       in Forall qs (goF ns' f')
@@ -1107,6 +1116,9 @@ intVarsFormula :: Formula -> [String]
 intVarsFormula (Eq l r) = intVarsExpr l ++ intVarsExpr r
 intVarsFormula (Ge l r) = intVarsExpr l ++ intVarsExpr r
 intVarsFormula (Gt l r) = intVarsExpr l ++ intVarsExpr r
+intVarsFormula (And f1 f2) = intVarsFormula f1 ++ intVarsFormula f2
+intVarsFormula (Or f1 f2) = intVarsFormula f1 ++ intVarsFormula f2
+intVarsFormula (Not f) = intVarsFormula f
 intVarsFormula (Forall qs f) =
   let bound = [ qvName q | q <- qs, qvType q == QuantInt ]
   in filter (`notElem` bound) (intVarsFormula f)

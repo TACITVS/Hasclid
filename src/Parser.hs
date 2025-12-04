@@ -374,6 +374,29 @@ formulaFromSExpr macros sexpr =
       r <- exprFromSExpr rhs
       Right $ Gt l r
 
+    List (Atom "and" : args) -> do
+      fs <- mapM (formulaFromSExpr macros) args
+      case fs of
+        [] -> Left $ ParseError (WrongArity "and" 2 0) "And requires at least 2 arguments (or 1)"
+        [x] -> Right x
+        _ -> Right $ foldr1 And fs
+
+    List (Atom "or" : args) -> do
+      fs <- mapM (formulaFromSExpr macros) args
+      case fs of
+        [] -> Left $ ParseError (WrongArity "or" 2 0) "Or requires at least 2 arguments (or 1)"
+        [x] -> Right x
+        _ -> Right $ foldr1 Or fs
+
+    List [Atom "not", arg] -> do
+      f <- formulaFromSExpr macros arg
+      Right $ Not f
+
+    List [Atom "implies", p, q] -> do
+      p' <- formulaFromSExpr macros p
+      q' <- formulaFromSExpr macros q
+      Right $ Or (Not p') q'
+
     List [Atom "forall", binderBlock, body] -> do
       qs <- parseBinderBlock binderBlock
       inner <- formulaFromSExpr macros body

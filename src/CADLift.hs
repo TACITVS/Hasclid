@@ -415,6 +415,10 @@ evaluateFormula formula (cell, signs) =
       let diff = exprToPoly (Sub lhs rhs)
       in M.lookup diff signs == Just Positive
 
+    And f1 f2 -> evaluateFormula f1 (cell, signs) && evaluateFormula f2 (cell, signs)
+    Or f1 f2 -> evaluateFormula f1 (cell, signs) || evaluateFormula f2 (cell, signs)
+    Not f -> not (evaluateFormula f (cell, signs))
+
     Forall _ _ -> error "Nested quantification evaluation not supported at cell level"
     Exists _ _ -> error "Nested quantification evaluation not supported at cell level"
 
@@ -461,6 +465,9 @@ formulaToPolys formula =
     Eq lhs rhs -> [exprToPoly (Sub lhs rhs)]
     Ge lhs rhs -> [exprToPoly (Sub lhs rhs)]
     Gt lhs rhs -> [exprToPoly (Sub lhs rhs)]
+    And f1 f2 -> formulaToPolys f1 ++ formulaToPolys f2
+    Or f1 f2 -> formulaToPolys f1 ++ formulaToPolys f2
+    Not f -> formulaToPolys f
     Forall _ f -> formulaToPolys f
     Exists _ f -> formulaToPolys f
 
@@ -657,4 +664,7 @@ evaluateAtNode theory goal (EvalNode _ children) =
 getQuantifierOrder :: Formula -> [QuantVar]
 getQuantifierOrder (Forall qs f) = qs ++ getQuantifierOrder f
 getQuantifierOrder (Exists qs f) = qs ++ getQuantifierOrder f
+getQuantifierOrder (And f1 f2) = getQuantifierOrder f1 ++ getQuantifierOrder f2
+getQuantifierOrder (Or f1 f2) = getQuantifierOrder f1 ++ getQuantifierOrder f2
+getQuantifierOrder (Not f) = getQuantifierOrder f
 getQuantifierOrder _ = []
