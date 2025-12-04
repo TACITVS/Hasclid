@@ -17,7 +17,7 @@ import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
 import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder)
 
-import System.IO (hFlush, stdout, stdin, hIsEOF)
+import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice)
 import Control.Monad (foldM)
 import Data.List (isPrefixOf)
 import Data.Ratio ((%))
@@ -322,7 +322,7 @@ processLine state rawInput = do
              
              case maybeResult of
                Just res -> return res
-               Nothing -> return (stateWithHist, "⏱️  TIMEOUT: exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+               Nothing -> return (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
 
     (":wu":_) ->
       let str = drop 4 input
@@ -343,7 +343,7 @@ processLine state rawInput = do
                
                case maybeResult of
                  Just res -> return res
-                 Nothing -> return (stateWithHist, "⏱️  TIMEOUT: exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                 Nothing -> return (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
              _ -> return (stateWithHist, "ERROR: Wu's method only supports equality goals (not inequalities)\nUsage: :wu (= expr1 expr2)")
 
     (":auto":_) ->
@@ -357,11 +357,11 @@ processLine state rawInput = do
              case maybeResult of
                Nothing -> do
                  let bumped = max (current + 1) (current * 2)
-                 putStrLn ("⏱️  TIMEOUT: Proof attempt exceeded " ++ show current ++ " seconds. Retrying automatically with " ++ show bumped ++ "s... (use :set-timeout to override)")
+                 putStrLn ("[TIMEOUT] Proof attempt exceeded " ++ show current ++ " seconds. Retrying automatically with " ++ show bumped ++ "s... (use :set-timeout to override)")
                  retry <- runWithTimeout bumped $ CE.evaluate (autoSolve (solverOptions state) fullContext formula)
                  case retry of
                    Nothing ->
-                     let failMsg = "⏱️  TIMEOUT: Second attempt also timed out at " ++ show bumped ++ "s. Simplify the problem or increase timeout manually."
+                     let failMsg = "[TIMEOUT] Second attempt also timed out at " ++ show bumped ++ "s. Simplify the problem or increase timeout manually."
                      in return (stateWithHist { solverTimeout = bumped, lastTimeoutSeconds = Just current }, failMsg)
                    Just result2 ->
                      let resMsg = formatAutoSolveResult result2 (verbose state) ++
@@ -393,7 +393,7 @@ processLine state rawInput = do
                  current = solverTimeout state
              maybeResult <- runWithTimeout current $ CE.evaluate (autoSolve (solverOptions state) fullContext formula)
              case maybeResult of
-               Nothing -> return (stateWithHist, "⏱️  TIMEOUT: exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+               Nothing -> return (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
                Just result ->
                  let msg = formatAutoSolveResult result (verbose state)
                  in return (stateWithHist, msg)
@@ -405,7 +405,8 @@ processLine state rawInput = do
 
 repl :: REPLState -> IO ()
 repl state = do
-  putStr "Euclid> "
+  isTerminal <- hIsTerminalDevice stdin
+  if isTerminal then putStr "Euclid> " else return ()
   hFlush stdout
   isEOF <- hIsEOF stdin
   if isEOF
@@ -415,6 +416,7 @@ repl state = do
       case eof of
         Left _ -> putStrLn "\n[End of input]"
         Right input -> do
+          if not isTerminal then putStrLn ("> " ++ input) else return ()
           if input `elem` ["exit", "quit", ":q"] then putStrLn "Goodbye."
           else do
             result <- tryIO (processLine state input)
@@ -460,8 +462,9 @@ processScriptStreaming state content = do
       let trimmed = dropWhile (== ' ') cmd
       (st', msg) <- case trimmed of
                       "" -> return (st, "")
-                      _ | isCommentLine trimmed -> return (st, "")
+                      _ | isCommentLine trimmed -> return (st, trimmed)
                       (c:_) | c /= ':' -> do
+                        putStrLn ("> " ++ trimmed)
                         -- Treat as formula line: auto-solve with timeout
                         case parseFormulaPrefix trimmed of
                           Right formula -> do
@@ -469,10 +472,12 @@ processScriptStreaming state content = do
                                 current = solverTimeout st
                             maybeRes <- runWithTimeout current $ CE.evaluate (autoSolve (solverOptions st) fullContext formula)
                             case maybeRes of
-                              Nothing -> return (st, "⏱️  TIMEOUT: exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                              Nothing -> return (st, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
                               Just res -> return (st, formatAutoSolveResult res (verbose st))
                           Left err -> return (st, formatError err)
-                      _ -> processLine st cmd
+                      _ -> do
+                        putStrLn ("> " ++ trimmed)
+                        processLine st cmd
       if null msg then return () else putStrLn msg
       return st'
 
