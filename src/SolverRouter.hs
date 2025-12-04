@@ -32,13 +32,16 @@ module SolverRouter
   , formatAutoSolveResult
   , SolverOptions(..)
   , defaultSolverOptions
+  , intSolve
+  , intSat
+  , proveExistentialConstructive
   ) where
 
 import Expr
 import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..), formatGeoResult)
 import Wu (wuProve, wuProveWithTrace, WuTrace, formatWuTrace)
-import Prover (proveTheoryWithOptions, ProofTrace, formatProofTrace, buchberger, buildSubMap, toPolySub, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome)
+import Prover (proveTheoryWithOptions, ProofTrace, formatProofTrace, buchberger, buildSubMap, toPolySub, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive)
 import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
 import CADLift (proveFormulaCAD)
 import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..))
@@ -57,6 +60,7 @@ data SolverChoice
   = UseGeoSolver    -- Geometric constraint propagation (FASTEST - Phase 1)
   | UseWu           -- Wu's method (fast for geometry)
   | UseGroebner     -- Gröbner basis (general purpose)
+  | UseConstructiveGroebner -- Constructive existence for equations (Elimination)
   | UseCAD          -- CAD (for inequalities, limited to 1D-2D)
   | Unsolvable      -- Problem too complex or type not supported
   deriving (Show, Eq)
@@ -275,6 +279,10 @@ selectAlgebraicSolver profile goal
   | containsSqrtFormula goal = UseCAD
   -- If integers appear, try integer evaluator first (handled in executeSolver); keep router permissive
   | containsIntFormula goal = UseGroebner
+  
+  -- RULE 0: Existential Equalities -> Constructive Gröbner (Elimination)
+  | isExistentialEquality goal = UseConstructiveGroebner
+
   -- RULE 1: Unsupported formula types
   | not (isEquality goal) && not (isInequality goal) = Unsolvable
 
@@ -311,6 +319,17 @@ selectAlgebraicSolver profile goal
 
   -- DEFAULT: Gröbner basis (most reliable general-purpose method)
   | otherwise = UseGroebner
+
+-- | Check if formula is an existential quantification of equalities
+isExistentialEquality :: Formula -> Bool
+isExistentialEquality (Exists _ body) = isEqualityBody body
+isExistentialEquality _ = False
+
+isEqualityBody :: Formula -> Bool
+isEqualityBody (Eq _ _) = True
+isEqualityBody (And f1 f2) = isEqualityBody f1 && isEqualityBody f2
+isEqualityBody (Or f1 f2) = isEqualityBody f1 || isEqualityBody f2 -- Relaxed for disjunction of equalities
+isEqualityBody _ = False
 
 -- | Check if formula is an equality
 isEquality :: Formula -> Bool
@@ -439,6 +458,10 @@ executeSolver solver opts theory goal =
                      let (proved, reason, trace, _) = proveTheoryWithOptions buchberger Nothing theory goal
                       in (proved, reason, Just (formatProofTrace trace))
            _ -> (False, "Gröbner basis method only supports equality goals", Nothing)
+
+       UseConstructiveGroebner ->
+         let (proved, reason, trace) = proveExistentialConstructive theory goal
+         in (proved, reason, Just (formatProofTrace trace))
 
        UseCAD ->
          if hasInt

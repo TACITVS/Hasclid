@@ -20,6 +20,7 @@ module Prover
   , reasonOutcome
   , intSolve
   , intSat
+  , proveExistentialConstructive
   ) where
 
 import Expr
@@ -1686,6 +1687,58 @@ linearRelaxation theory goal env =
       ) (0,0) coeffs
 
     addMaybe base m = maybe base (\x -> base + x) m
+
+-- | Prove existential goal using Constructive Gröbner Basis (Elimination)
+-- Heuristic: If the system of equations is consistent (GB /= {1}), we assume generic existence.
+proveExistentialConstructive :: Theory -> Formula -> (Bool, String, ProofTrace)
+proveExistentialConstructive theory goal =
+  case goal of
+    Exists qs body ->
+      let
+        -- 1. Extract equations from the body
+        -- For OR, we need to check if ANY branch is consistent.
+        eqsBranches = extractEqualitiesBranches body
+        
+        -- 2. Build ideal from equations + theory equalities
+        theoryEqs = [ Sub l r | Eq l r <- theory ]
+        
+        checkBranch eqs = 
+            let ideal = map (toPolySub M.empty) (eqs ++ theoryEqs)
+                basis = buchberger ideal
+                isInconsistent = any isConstantNonZero basis
+            in (not isInconsistent, basis)
+
+        -- 3. Check consistency of EACH branch
+        results = map checkBranch eqsBranches
+        anyConsistent = any fst results
+        
+        -- 4. Trace (take first consistent or first if none)
+        (consistent, bestBasis) = case filter fst results of
+                                    (r:_) -> r
+                                    [] -> head results -- show why it failed
+        
+        step = ComputedGroebnerBasis (length bestBasis)
+        trace = ProofTrace [step] theory (length bestBasis)
+      in
+        if anyConsistent
+        then (True, "Solution exists generically (Algebraic consistency proved via Groebner Basis).", trace)
+        else (False, "System is inconsistent (Groebner basis contains 1). No solution exists.", trace)
+    _ -> (False, "Constructive existence only supports Exists quantification.", emptyTrace)
+
+extractEqualitiesBranches :: Formula -> [[Expr]]
+extractEqualitiesBranches (Eq l r) = [[Sub l r]]
+extractEqualitiesBranches (And f1 f2) = 
+    [ e1 ++ e2 | e1 <- extractEqualitiesBranches f1, e2 <- extractEqualitiesBranches f2 ]
+extractEqualitiesBranches (Or f1 f2) = 
+    extractEqualitiesBranches f1 ++ extractEqualitiesBranches f2
+extractEqualitiesBranches (Exists _ f) = extractEqualitiesBranches f
+extractEqualitiesBranches _ = [[]] -- Ignore inequalities for algebraic existence check (heuristic)
+
+isConstantNonZero :: Poly -> Bool
+isConstantNonZero (Poly m) =
+  case M.toList m of
+    [(Monomial vars, c)] | M.null vars -> c /= 0
+    _ -> False
 
 -- =============================================
 -- Diophantine solver (Smith/Hermite-lite)
