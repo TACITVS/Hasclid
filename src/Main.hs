@@ -310,12 +310,19 @@ processLine state rawInput = do
       in case parseFormulaWithMacros (macros state) str of
            Left err -> return (stateWithHist, formatError err)
            Right formula -> do
-             let fullContext = theory state ++ lemmas state
-             let (proved, reason, trace, cache') = proveTheoryWithOptions buchberger (Just (groebnerCache state)) fullContext formula
-             let msg = (if proved then "RESULT: PROVED\n" else "RESULT: NOT PROVED\n")
-                       ++ reason ++
-                       (if verbose state then "\n\n" ++ formatProofTrace trace else "")
-             return (stateWithHist { groebnerCache = maybe (groebnerCache state) id cache' }, msg)
+             let current = solverTimeout state
+             maybeResult <- runWithTimeout current $ do
+               let fullContext = theory state ++ lemmas state
+               let (proved, reason, trace, cache') = proveTheoryWithOptions buchberger (Just (groebnerCache state)) fullContext formula
+               let msg = (if proved then "RESULT: PROVED\n" else "RESULT: NOT PROVED\n")
+                         ++ reason ++
+                         (if verbose state then "\n\n" ++ formatProofTrace trace else "")
+               _ <- CE.evaluate (length msg)
+               return (stateWithHist { groebnerCache = maybe (groebnerCache state) id cache' }, msg)
+             
+             case maybeResult of
+               Just res -> return res
+               Nothing -> return (stateWithHist, "⏱️  TIMEOUT: exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
 
     (":wu":_) ->
       let str = drop 4 input
@@ -323,13 +330,20 @@ processLine state rawInput = do
            Left err -> return (stateWithHist, formatError err)
            Right formula -> case formula of
              Eq _ _ -> do
-               let fullContext = theory state ++ lemmas state
-               let (isProved, reason) = wuProve fullContext formula
-               let trace = wuProveWithTrace fullContext formula
-               let msg = if isProved
-                         then "WU'S METHOD: PROVED\n" ++ reason ++ (if verbose state then "\n\n" ++ formatWuTrace trace else "")
-                         else "WU'S METHOD: NOT PROVED\n" ++ reason ++ (if verbose state then "\n\n" ++ formatWuTrace trace else "")
-               return (stateWithHist, msg)
+               let current = solverTimeout state
+               maybeResult <- runWithTimeout current $ do
+                 let fullContext = theory state ++ lemmas state
+                 let (isProved, reason) = wuProve fullContext formula
+                 let trace = wuProveWithTrace fullContext formula
+                 let msg = if isProved
+                           then "WU'S METHOD: PROVED\n" ++ reason ++ (if verbose state then "\n\n" ++ formatWuTrace trace else "")
+                           else "WU'S METHOD: NOT PROVED\n" ++ reason ++ (if verbose state then "\n\n" ++ formatWuTrace trace else "")
+                 _ <- CE.evaluate (length msg)
+                 return (stateWithHist, msg)
+               
+               case maybeResult of
+                 Just res -> return res
+                 Nothing -> return (stateWithHist, "⏱️  TIMEOUT: exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
              _ -> return (stateWithHist, "ERROR: Wu's method only supports equality goals (not inequalities)\nUsage: :wu (= expr1 expr2)")
 
     (":auto":_) ->
