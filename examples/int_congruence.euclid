@@ -1,0 +1,16 @@
+-- Modular contradiction: 2x + 1 = 0 has no integer solution
+:reset
+(= (+ (* 2 (int x)) (int-const 1)) (int-const 0))
+
+-- Solvable linear equality with unique integer solution
+:reset
+:assume (= (+ (* 2 (int x)) (int-const 1)) (int-const 3))
+(= (int x) (int-const 1))
+
+-- Small bounded domain where brute force can decide (enable with :bruteforce on)
+:reset
+:assume (>= (int x) (int-const 0))
+:assume (>= (int-const 3) (int x))
+:assume (>= (int y) (int-const 0))
+:assume (>= (int-const 3) (int y))
+(= (+ (* 2 (int x)) (int y)) (int-const 5))

@@ -6,7 +6,7 @@ module CounterExample
   , formatCounterExample
   ) where
 
-import Expr (Formula(..), Expr(..), Poly(..), Monomial(..), Theory, polyFromConst, prettyRational)
+import Expr (Formula(..), Expr(..), Poly(..), Monomial(..), Theory, polyFromConst, prettyRational, containsSqrtFormula)
 import Prover (buildSubMap, toPolySub, evaluatePoly)
 import qualified Data.Map.Strict as M
 import Data.Ratio ((%), numerator, denominator)
@@ -31,6 +31,10 @@ data CounterExample = CounterExample
 -- Returns Nothing if no counter-example found in reasonable time
 findCounterExample :: Theory -> Formula -> Maybe CounterExample
 findCounterExample theory formula =
+  let
+      -- Do not attempt polynomial-based counterexamples when sqrt is present
+      hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
+  in if hasSqrt then Nothing else
   let
       subM = buildSubMap theory
       freeVars = getFreeVariables theory formula
@@ -75,6 +79,9 @@ extractVars (Sub e1 e2) = extractVars e1 ++ extractVars e2
 extractVars (Mul e1 e2) = extractVars e1 ++ extractVars e2
 extractVars (Div e1 e2) = extractVars e1 ++ extractVars e2
 extractVars (Pow e _) = extractVars e
+extractVars (IntVar _) = []
+extractVars (IntConst _) = []
+extractVars (Sqrt e) = extractVars e
 extractVars (Dist2 p1 p2) = ["x" ++ p1, "y" ++ p1, "z" ++ p1, "x" ++ p2, "y" ++ p2, "z" ++ p2]
 extractVars (Collinear p1 p2 p3) = ["x" ++ p1, "y" ++ p1, "x" ++ p2, "y" ++ p2, "x" ++ p3, "y" ++ p3]
 extractVars (Dot a b c d) = concatMap (\p -> ["x" ++ p, "y" ++ p, "z" ++ p]) [a, b, c, d]
@@ -82,6 +89,8 @@ extractVars (Circle p c _) = ["x" ++ p, "y" ++ p, "z" ++ p, "x" ++ c, "y" ++ c, 
 extractVars (Midpoint a b m) = concatMap (\p -> ["x" ++ p, "y" ++ p, "z" ++ p]) [a, b, m]
 extractVars (Perpendicular a b c d) = concatMap (\p -> ["x" ++ p, "y" ++ p, "z" ++ p]) [a, b, c, d]
 extractVars (Parallel a b c d) = concatMap (\p -> ["x" ++ p, "y" ++ p, "z" ++ p]) [a, b, c, d]
+extractVars (AngleEq2D a b c d e f) = concatMap (\p -> ["x" ++ p, "y" ++ p]) [a, b, c, d, e, f]
+extractVars (AngleEq2DAbs a b c d e f) = concatMap (\p -> ["x" ++ p, "y" ++ p]) [a, b, c, d, e, f]
 
 -- Generate simple test values
 simpleValues :: [Rational]

@@ -1,0 +1,136 @@
+=== Manual Trace of CAD for xy + 1 > 0 ===
+
+Input:
+  polynomial: xy + 1
+  variables: ["x", "y"]
+
+Step 1: cadDecompose([xy+1], ["x", "y"])
+========================================
+  Multivariate case: v="x", vs=["y"]
+
+Step 2: Project to 1D (eliminate x)
+====================================
+  projectPolynomials([xy+1], "x")
+
+  Treating xy+1 as polynomial in x:
+    xy + 1 = y*x + 1
+    Coefficients: [1, y]  (constant=1, coeff of x=y)
+
+  Collins projection includes:
+    - Leading coefficient: y
+    - Discriminant: 0 (linear polynomial)
+    - Coefficients: 1, y
+
+  Result: projectedPolys = [y, 1] or just [y]
+  (Constant 1 might be filtered out)
+
+Step 3: Decompose 1D in y
+==========================
+  cad1D([y], "y")
+
+  Roots of y: y=0
+
+  Samples (classified):
+    Sections (on roots): y=0
+    Sectors (between): y=-1 (before 0), y=1 (after 0)
+
+  Cells:
+    Cell 1: y=-1 (sector)
+    Cell 2: y=0 (section)
+    Cell 3: y=1 (sector)
+
+Step 4: Lift each 1D cell to 2D
+================================
+
+CELL 1: y=-1
+------------
+  Substitute y=-1 into xy+1:
+    (-1)*x + 1 = -x + 1
+
+  Find roots in x:
+    -x + 1 = 0 → x = 1
+
+  Samples:
+    Sectors: x=0 (before 1), x=2 (after 1)
+    Sections: x=1 (on root)
+
+  Generated 2D cells:
+    (x=0, y=-1): xy+1 = 0+1 = 1 → POSITIVE ✓
+    (x=1, y=-1): xy+1 = -1+1 = 0 → ZERO (boundary)
+    (x=2, y=-1): xy+1 = -2+1 = -1 → NEGATIVE ✗ COUNTEREXAMPLE!
+
+CELL 2: y=0
+-----------
+  Substitute y=0 into xy+1:
+    0*x + 1 = 1
+
+  Find roots in x:
+    1 = 0 → No roots
+
+  Samples:
+    Sectors: x=0 (only sector, no roots)
+
+  Generated 2D cells:
+    (x=0, y=0): xy+1 = 0+1 = 1 → POSITIVE ✓
+
+CELL 3: y=1
+-----------
+  Substitute y=1 into xy+1:
+    1*x + 1 = x + 1
+
+  Find roots in x:
+    x + 1 = 0 → x = -1
+
+  Samples:
+    Sectors: x=-2 (before -1), x=0 (after -1)
+    Sections: x=-1 (on root)
+
+  Generated 2D cells:
+    (x=-2, y=1): xy+1 = -2+1 = -1 → NEGATIVE ✗ COUNTEREXAMPLE!
+    (x=-1, y=1): xy+1 = -1+1 = 0 → ZERO (boundary)
+    (x=0, y=1): xy+1 = 0+1 = 1 → POSITIVE ✓
+
+Step 5: Check inequality
+=========================
+  Total cells: 9
+  Cells where xy+1 > 0: 4
+  Cells where xy+1 = 0: 3
+  Cells where xy+1 < 0: 2  ← COUNTEREXAMPLES EXIST!
+
+  cellSatisfiesInequality checks if:
+    sign == Positive OR sign == Zero
+
+  So it should check 7 out of 9 cells satisfy ≥ 0.
+
+  But the question is xy+1 > 0 (strict inequality), so:
+    - ZERO cells should NOT satisfy > 0
+    - Only POSITIVE cells satisfy
+
+  Expected result: 4/9 cells satisfy → NOT PROVED (not universal)
+
+HYPOTHESIS: The bug is either:
+  1. Sign assignment is wrong (assigning Positive when it's Negative)
+  2. cellSatisfiesInequality is checking the wrong thing (>= instead of >)
+  3. CAD decomposition is missing cells
+  4. Variable ordering causes issues
+
+Let me check cellSatisfiesInequality for STRICT inequality (>):
+  Looking at SolverRouter.hs executeCADInequality:
+    - For Gt l r (strict >), it calls executeCADInequality with isStrict=True
+    - isStrict determines allowZero = not isStrict
+    - Then it uses evaluateInequalityCAD... but where is allowZero used?
+
+  OH WAIT! Looking at evaluateInequalityCAD again:
+    cellSatisfiesInequality ineq (cell, signs) =
+      M.lookup ineq signs == Just Positive || M.lookup ineq signs == Just Zero
+
+  This ALWAYS allows Zero! It doesn't take allowZero parameter!
+
+  So for strict inequality >, it's checking >= instead!
+
+  BUG FOUND: cellSatisfiesInequality doesn't distinguish > from >=
+
+But wait, that still doesn't explain why it says ALL cells satisfy it.
+Even if we allow zero, we have 2 cells with NEGATIVE signs.
+
+So the bug must be in sign assignment. Let me check createLiftedCell.

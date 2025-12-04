@@ -1,0 +1,6 @@
+:reset
+:point A 0 0
+:point B 1 1
+:point C 2 2
+:assume (= (collinear A B C) 0)
+(= (collinear B C A) 0)

@@ -165,18 +165,110 @@ applyConstraint formula kb =
 -- Geometric Logic (Symbolic)
 -- =============================================
 
--- | Propagate perpendicularity
+-- | Propagate perpendicularity (BIDIRECTIONAL - checks both lines)
 propagatePerpendicular :: CoordMap -> String -> String -> String -> String -> ([CoordMap], [String])
 propagatePerpendicular kb pA pB pC pD
+  -- Case 1: AB horizontal -> CD vertical (xC = xD)
   | isHorizontal kb pA pB =
-      -- AB horizontal -> CD vertical (xC = xD)
       let newKB = unifyVars kb ("x" ++ pC) ("x" ++ pD)
       in ([newKB], ["Line " ++ pA ++ pB ++ " horizontal => " ++ pC ++ pD ++ " vertical"])
+
+  -- Case 2: AB vertical -> CD horizontal (yC = yD)
   | isVertical kb pA pB =
-      -- AB vertical -> CD horizontal (yC = yD)
       let newKB = unifyVars kb ("y" ++ pC) ("y" ++ pD)
       in ([newKB], ["Line " ++ pA ++ pB ++ " vertical => " ++ pC ++ pD ++ " horizontal"])
-  | otherwise = ([kb], [])
+
+  -- Case 3: CD horizontal -> AB vertical (xA = xB) [BIDIRECTIONAL]
+  | isHorizontal kb pC pD =
+      let newKB = unifyVars kb ("x" ++ pA) ("x" ++ pB)
+      in ([newKB], ["Line " ++ pC ++ pD ++ " horizontal => " ++ pA ++ pB ++ " vertical"])
+
+  -- Case 4: CD vertical -> AB horizontal (yA = yB) [BIDIRECTIONAL]
+  | isVertical kb pC pD =
+      let newKB = unifyVars kb ("y" ++ pA) ("y" ++ pB)
+      in ([newKB], ["Line " ++ pC ++ pD ++ " vertical => " ++ pA ++ pB ++ " horizontal"])
+
+  -- Case 5: General case - try to extract linear constraint from dot product
+  -- Perpendicularity: (xB - xA)(xD - xC) + (yB - yA)(yD - yC) = 0
+  | otherwise = tryGeneralPerpendicular kb pA pB pC pD
+
+-- | Try to derive constraints from general perpendicularity
+-- When neither line is axis-aligned, expand the dot product and solve
+tryGeneralPerpendicular :: CoordMap -> String -> String -> String -> String -> ([CoordMap], [String])
+tryGeneralPerpendicular kb pA pB pC pD =
+  let
+      -- Unexpanded (keeps coordinate variable names like xD)
+      xA' = Var ("x" ++ pA); yA' = Var ("y" ++ pA)
+      xB' = Var ("x" ++ pB); yB' = Var ("y" ++ pB)
+      xC' = Var ("x" ++ pC); yC' = Var ("y" ++ pC)
+      xD' = Var ("x" ++ pD); yD' = Var ("y" ++ pD)
+
+      dotRaw =
+        simplifyExpr $
+          Add
+            (Mul (Sub xB' xA') (Sub xD' xC'))
+            (Mul (Sub yB' yA') (Sub yD' yC'))
+
+      -- Resolve coordinates with existing substitutions
+      xA = resolveExpand kb (Var ("x" ++ pA)); yA = resolveExpand kb (Var ("y" ++ pA))
+      xB = resolveExpand kb (Var ("x" ++ pB)); yB = resolveExpand kb (Var ("y" ++ pB))
+      xC = resolveExpand kb (Var ("x" ++ pC)); yC = resolveExpand kb (Var ("y" ++ pC))
+      xD = resolveExpand kb (Var ("x" ++ pD)); yD = resolveExpand kb (Var ("y" ++ pD))
+
+      -- Dot product equation = 0 (2D)
+      dotExpr = simplifyExpr $
+                  Add
+                    (Mul (Sub xB xA) (Sub xD xC))
+                    (Mul (Sub yB yA) (Sub yD yC))
+
+      -- Prefer variables on the D line (including resolved names)
+      resolveName v = case resolveVar kb v of
+                        Just (Var v2) -> Just v2
+                        _ -> Nothing
+      preferredVars = mapMaybe id
+        [ Just ("y" ++ pD)
+        , resolveName ("y" ++ pD)
+        , Just ("x" ++ pD)
+        , resolveName ("x" ++ pD)
+        , Just ("y" ++ pC)
+        , resolveName ("y" ++ pC)
+        , Just ("x" ++ pC)
+        , resolveName ("x" ++ pC)
+        ]
+
+      varsInExpr :: Expr -> [String]
+      varsInExpr (Var v) = [v]
+      varsInExpr (Const _) = []
+      varsInExpr (Add a b) = varsInExpr a ++ varsInExpr b
+      varsInExpr (Sub a b) = varsInExpr a ++ varsInExpr b
+      varsInExpr (Mul a b) = varsInExpr a ++ varsInExpr b
+      varsInExpr (Div a b) = varsInExpr a ++ varsInExpr b
+      varsInExpr (Pow e _) = varsInExpr e
+      varsInExpr (Determinant rows) = concatMap varsInExpr (concat rows)
+      varsInExpr _ = []
+
+      candidateVars = nub (preferredVars ++ varsInExpr dotExpr ++ varsInExpr dotRaw)
+
+      trySolveExpr _ [] = Nothing
+      trySolveExpr expr (v:vs) =
+        if containsVar v expr
+        then case solveSymbolicLinear v expr (Const 0) of
+               Just sol ->
+                 let simplified = simplifyExpr sol
+                     newKB = M.insert v simplified kb
+                 in Just (newKB, "Derived from perpendicular (general): " ++ v ++ " = " ++ prettyExpr simplified)
+               Nothing -> trySolveExpr expr vs
+        else trySolveExpr expr vs
+
+      trySolve [] = Nothing
+      trySolve (expr:rest) =
+        case trySolveExpr expr candidateVars of
+          Just r -> Just r
+          Nothing -> trySolve rest
+  in
+      case trySolve [dotExpr, dotRaw] of
+        Just (newKB, msg) -> ([newKB], [msg])
+        Nothing -> ([kb], []) -- Could not derive a linear constraint
 
 -- | Propagate distance constraint (Symbolic)
 -- (x1-x2)^2 + (y1-y2)^2 = dist
@@ -261,10 +353,81 @@ symbolicSqrt (Mul e1 e2) =
   case (symbolicSqrt e1, symbolicSqrt e2) of
     (Just r1, Just r2) -> Just (Mul r1 r2)
     _ -> Nothing
+symbolicSqrt (Sqrt e) = Just (Sqrt e)
 symbolicSqrt _ = Nothing
 
-integerSqrt :: Integer -> Integer
-integerSqrt n = floor (sqrt (fromIntegral n))
+-- | Solve a linear equation symbolically: solve for 'var' in 'lhs = rhs'
+-- Returns Just solution if var appears linearly, Nothing otherwise
+-- Example: solveSymbolicLinear "x" (Add (Var "x") (Var "S")) (Mul (Const 2) (Var "S"))
+--          => Just (Var "S")   [because x + S = 2*S implies x = S]
+solveSymbolicLinear :: String -> Expr -> Expr -> Maybe Expr
+solveSymbolicLinear var lhs rhs =
+  let
+    -- Move everything to left side: lhs - rhs = 0
+    equation = simplifyExpr (Sub lhs rhs)
+
+    -- Try to extract linear form: a*var + b = 0
+    (coeff, constant) = extractLinearCoeffs var equation
+  in
+    case (coeff, constant) of
+      -- If coefficient of var is zero, equation doesn't involve var
+      (Const 0, _) -> Nothing
+
+      -- If we have a*var + b = 0, solve for var: var = -b/a
+      (a, b) -> Just (simplifyExpr (Div (Mul (Const (-1)) b) a))
+
+-- | Extract coefficients from a linear expression in given variable
+-- Returns (coefficient_of_var, constant_term)
+-- Example: extractLinearCoeffs "x" (Add (Mul (Const 2) (Var "x")) (Const 3))
+--          => (Const 2, Const 3)
+extractLinearCoeffs :: String -> Expr -> (Expr, Expr)
+extractLinearCoeffs var expr =
+  case simplifyExpr expr of
+    -- Just the variable: x => (1, 0)
+    Var v | v == var -> (Const 1, Const 0)
+
+    -- Constant: c => (0, c)
+    Const c -> (Const 0, Const c)
+
+    -- Addition: split into var-dependent and independent parts
+    Add e1 e2 ->
+      let (c1, k1) = extractLinearCoeffs var e1
+          (c2, k2) = extractLinearCoeffs var e2
+      in (simplifyExpr (Add c1 c2), simplifyExpr (Add k1 k2))
+
+    -- Subtraction: same as addition but negate second term
+    Sub e1 e2 ->
+      let (c1, k1) = extractLinearCoeffs var e1
+          (c2, k2) = extractLinearCoeffs var e2
+      in (simplifyExpr (Sub c1 c2), simplifyExpr (Sub k1 k2))
+
+    -- Multiplication: check if one operand is var-free
+    Mul e1 e2 ->
+      let (c1, k1) = extractLinearCoeffs var e1
+          (c2, k2) = extractLinearCoeffs var e2
+      in case (c1, c2) of
+           -- e1 is constant, e2 has var: c*x => (c*c2, c*k2)
+           (Const 0, _) -> (simplifyExpr (Mul e1 c2), simplifyExpr (Mul e1 k2))
+           -- e2 is constant, e1 has var: x*c => (c1*c, k1*c)
+           (_, Const 0) -> (simplifyExpr (Mul c1 e2), simplifyExpr (Mul k1 e2))
+           -- Both have var - nonlinear, give up
+           _ -> (Const 0, expr)
+
+    -- Division, power, etc.: treat as non-linear (give up)
+    _ | containsVar var expr -> (Const 0, expr) -- Nonlinear
+      | otherwise -> (Const 0, expr) -- Constant
+
+-- | Check if expression contains a variable
+containsVar :: String -> Expr -> Bool
+containsVar v (Var x) = v == x
+containsVar v (Add e1 e2) = containsVar v e1 || containsVar v e2
+containsVar v (Sub e1 e2) = containsVar v e1 || containsVar v e2
+containsVar v (Mul e1 e2) = containsVar v e1 || containsVar v e2
+containsVar v (Div e1 e2) = containsVar v e1 || containsVar v e2
+containsVar v (Pow e _) = containsVar v e
+containsVar v (Sqrt e) = containsVar v e
+containsVar v (IntVar x) = v == x
+containsVar _ _ = False
 
 -- =============================================
 -- Utilities
@@ -283,6 +446,7 @@ expandExprRecursive kb (Sub e1 e2) = Sub (expandExprRecursive kb e1) (expandExpr
 expandExprRecursive kb (Mul e1 e2) = Mul (expandExprRecursive kb e1) (expandExprRecursive kb e2)
 expandExprRecursive kb (Div e1 e2) = Div (expandExprRecursive kb e1) (expandExprRecursive kb e2)
 expandExprRecursive kb (Pow e n) = Pow (expandExprRecursive kb e) n
+expandExprRecursive kb (Sqrt e) = Sqrt (expandExprRecursive kb e)
 expandExprRecursive kb (Dist2 p1 p2) =
   let x1 = expandExprRecursive kb (Var ("x"++p1))
       y1 = expandExprRecursive kb (Var ("y"++p1))

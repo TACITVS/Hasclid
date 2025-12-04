@@ -1,0 +1,41 @@
+-- Test bidirectional perpendicularity propagation
+:set-timeout 10
+
+-- Test 1: Forward direction (AB vertical -> CD horizontal)
+:reset
+:point A 0 0
+:point B 0 S
+:point C 0 0
+:point D x y
+:assume (= (perpendicular A B C D) 0)
+-- AB is vertical (xA = xB = 0), so CD should be horizontal (yC = yD)
+-- This should deduce: yD = yC = 0
+-- So D is at (x, 0)
+(= (Var "yD") (Const 0))
+
+-- Test 2: Reverse direction (CD vertical -> AB horizontal) - THE NEW FIX
+:reset
+:point A x1 y1
+:point B x2 y2
+:point C S 0
+:point D S S
+:assume (= (perpendicular A B C D) 0)
+-- CD is vertical (xC = xD = S), so AB should be horizontal (yA = yB)
+-- This should deduce: yB = yA
+(= (Var "yB") (Var "yA"))
+
+-- Test 3: Our original problematic case
+:reset
+:point A 0 0
+:point B S 0
+:point C S S
+:point D x y
+:assume (= (dist2 C D) (^ S 2))
+:assume (= (perpendicular B C C D) 0)
+-- BC is vertical (xB = xC = S), so CD should be horizontal (yC = yD)
+-- This gives yD = S
+-- Then dist²(C,D) = S² gives: (x-S)² + 0 = S², so x = 0 or 2S
+-- Finally check if dist²(D,A) = S²
+(= (dist2 D A) (^ S 2))
+
+:quit

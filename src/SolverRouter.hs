@@ -30,15 +30,23 @@ module SolverRouter
     -- * Result Types
   , AutoSolveResult(..)
   , formatAutoSolveResult
+  , SolverOptions(..)
+  , defaultSolverOptions
   ) where
 
 import Expr
 import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..), formatGeoResult)
 import Wu (wuProve, wuProveWithTrace, WuTrace, formatWuTrace)
-import Prover (proveTheoryWithOptions, ProofTrace, formatProofTrace, buchberger)
-import CADLift (evaluateInequalityCAD)
+import Prover (proveTheoryWithOptions, ProofTrace, formatProofTrace, buchberger, buildSubMap, toPolySub, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome)
+import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
+import CADLift (proveFormulaCAD)
+import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..))
+import SqrtElim (eliminateSqrt)
 import qualified Data.Set as S
+import qualified Data.Map.Strict as M
+import Data.List (delete)
+import Data.Maybe (mapMaybe, isJust)
 
 -- =============================================
 -- Data Types
@@ -63,6 +71,13 @@ data AutoSolveResult = AutoSolveResult
   , detailedTrace :: Maybe String    -- Optional detailed trace
   } deriving (Show, Eq)
 
+data SolverOptions = SolverOptions
+  { intOptions :: IntSolveOptions
+  } deriving (Show, Eq)
+
+defaultSolverOptions :: SolverOptions
+defaultSolverOptions = SolverOptions { intOptions = defaultIntSolveOptions }
+
 -- =============================================
 -- Main Automatic Solving Functions
 -- =============================================
@@ -77,62 +92,175 @@ data AutoSolveResult = AutoSolveResult
 -- PHASE 2: Algebraic Solvers (the "hammers")
 --   If GeoSolver returns GeoUnknown, fall back to Wu/Gröbner/CAD
 --   These use polynomial manipulation - slower but more general
-autoSolve :: Theory -> Formula -> AutoSolveResult
-autoSolve theory goal =
+autoSolve :: SolverOptions -> Theory -> Formula -> AutoSolveResult
+autoSolve opts theory goal =
   let
     -- Analyze the problem structure
     profile = analyzeProblem theory goal
   in
-    -- PHASE 1: Try fast geometric constraint propagation first
-    case solveGeoWithTrace theory goal of
-      GeoProved reason steps ->
-        -- Success! GeoSolver proved it via constraint propagation
-        AutoSolveResult
-          { selectedSolver = UseGeoSolver
-          , solverReason = "Fast geometric constraint propagation (PHASE 1)"
-          , problemProfile = profile
-          , isProved = True
-          , proofReason = reason
-          , detailedTrace = Just (unlines steps)
-          }
+    case goal of
+      Exists qs inner
+        | all (\q -> qvType q == QuantInt) qs
+        , not (any containsQuantifier theory) ->
+            let intNames = map qvName qs
+                theoryInt = map (promoteIntVars intNames) theory
+                innerInt = promoteIntVars intNames inner
+                outcome = intSat (intOptions opts) (theoryInt ++ [innerInt])
+                proved = intResult outcome == Just True
+                reason = case intResult outcome of
+                           Just True  -> "Integer existential proved satisfiable. " ++ reasonOutcome outcome True
+                           Just False -> "Integer existential is unsatisfiable. " ++ reasonOutcome outcome False
+                           Nothing    -> "Integer existential parsed but solver is incomplete for this goal."
+            in AutoSolveResult
+                 { selectedSolver = UseGroebner
+                 , solverReason = "Integer existential handled by integer solver"
+                 , problemProfile = profile
+                 , isProved = proved
+                 , proofReason = reason
+                 , detailedTrace = Nothing
+                 }
+      Forall qs inner
+        | all (\q -> qvType q == QuantInt) qs
+        , not (any containsQuantifier theory) ->
+            let intNames = map qvName qs
+                theoryInt = map (promoteIntVars intNames) theory
+                goalInt = promoteIntVars intNames goal
+                (proved, reason, _, _) = proveTheoryWithOptions buchberger Nothing theoryInt goalInt
+            in AutoSolveResult
+                 { selectedSolver = UseGroebner
+                 , solverReason = "Integer universal handled by integer solver (negation refutation)"
+                 , problemProfile = profile
+                 , isProved = proved
+                 , proofReason = reason
+                 , detailedTrace = Nothing
+                 }
+      Exists qs inner
+        | all (\q -> qvType q == QuantReal) qs
+        , not (any containsQuantifier theory) ->
+            let (proved, reason, _, _) = proveTheoryWithOptions buchberger Nothing theory goal
+            in AutoSolveResult
+                 { selectedSolver = UseCAD
+                 , solverReason = "Real existential handled by CAD satisfiability"
+                 , problemProfile = profile
+                 , isProved = proved
+                 , proofReason = reason
+                 , detailedTrace = Nothing
+                 }
+      Forall qs inner
+        | all (\q -> qvType q == QuantReal) qs
+        , all (\q -> isJust (qvLower q) && isJust (qvUpper q)) qs
+        , not (any containsQuantifier theory) ->
+            let (proved, reason, _, _) = proveTheoryWithOptions buchberger Nothing theory goal
+            in AutoSolveResult
+                 { selectedSolver = UseGroebner
+                 , solverReason = "Bounded real universal handled by linear interval check"
+                 , problemProfile = profile
+                 , isProved = proved
+                 , proofReason = reason
+                 , detailedTrace = Nothing
+                 }
+      -- Unbounded or partially bounded real universals via CAD refutation
+      Forall qs inner
+        | all (\q -> qvType q == QuantReal) qs
+        , not (any containsQuantifier theory) ->
+            let (proved, reason, _, _) = proveTheoryWithOptions buchberger Nothing theory goal
+            in AutoSolveResult
+                 { selectedSolver = UseCAD
+                 , solverReason = "Real universal handled by CAD refutation"
+                 , problemProfile = profile
+                 , isProved = proved
+                 , proofReason = reason
+                 , detailedTrace = Nothing
+                 }
+      _ | containsQuantifier goal || any containsQuantifier theory ->
+            let (proved, reason, trace) = executeSolver UseCAD opts theory goal
+            in AutoSolveResult
+              { selectedSolver = UseCAD
+              , solverReason = "Quantified formula routed to CAD (Full QE support)"
+              , problemProfile = profile
+              , isProved = proved
+              , proofReason = reason
+              , detailedTrace = trace
+              }
+      _ ->
+        -- PHASE 1: Try fast geometric constraint propagation first
+        case solveGeoWithTrace theory goal of
+          GeoProved reason steps ->
+            -- Success! GeoSolver proved it via constraint propagation
+            AutoSolveResult
+              { selectedSolver = UseGeoSolver
+              , solverReason = "Fast geometric constraint propagation (PHASE 1)"
+              , problemProfile = profile
+              , isProved = True
+              , proofReason = reason
+              , detailedTrace = Just (unlines steps)
+              }
 
-      GeoDisproved reason steps ->
-        -- Success! GeoSolver disproved it via constraint propagation
-        AutoSolveResult
-          { selectedSolver = UseGeoSolver
-          , solverReason = "Fast geometric constraint propagation (PHASE 1)"
-          , problemProfile = profile
-          , isProved = False
-          , proofReason = reason
-          , detailedTrace = Just (unlines steps)
-          }
+          GeoDisproved reason steps ->
+            -- Success! GeoSolver disproved it via constraint propagation
+            AutoSolveResult
+              { selectedSolver = UseGeoSolver
+              , solverReason = "Fast geometric constraint propagation (PHASE 1)"
+              , problemProfile = profile
+              , isProved = False
+              , proofReason = reason
+              , detailedTrace = Just (unlines steps)
+              }
 
-      GeoUnknown reason ->
-        -- GeoSolver insufficient, fall back to PHASE 2 (algebraic solvers)
-        let
-          -- Select appropriate algebraic solver
-          solver = selectAlgebraicSolver profile goal
+          GeoUnknown reason ->
+            -- GeoSolver insufficient, fall back to PHASE 2 (algebraic solvers)
+            let
+              -- Select appropriate algebraic solver
+              solver = selectAlgebraicSolver profile goal
 
-          -- Get explanation for choice
-          solverReason' = "Geometric propagation insufficient. Fallback to PHASE 2: " ++
-                         explainSolverChoice solver profile
+              -- Get explanation for choice
+              solverReason' = "Geometric propagation insufficient. Fallback to PHASE 2: " ++
+                             explainSolverChoice solver profile
 
-          -- Execute the chosen algebraic solver
-          (proved, proofMsg, trace) = executeSolver solver theory goal
-        in
-          AutoSolveResult
-            { selectedSolver = solver
-            , solverReason = solverReason'
-            , problemProfile = profile
-            , isProved = proved
-            , proofReason = proofMsg
-            , detailedTrace = trace
-            }
+              -- Execute the chosen algebraic solver
+              (proved, proofMsg, trace) = executeSolver solver opts theory goal
+            in
+              AutoSolveResult
+                { selectedSolver = solver
+                , solverReason = solverReason'
+                , problemProfile = profile
+                , isProved = proved
+                , proofReason = proofMsg
+                , detailedTrace = trace
+                }
+
+-- Promote bound variable names to IntVar inside a formula (and expressions)
+promoteIntVars :: [String] -> Formula -> Formula
+promoteIntVars names f = goF names f
+  where
+    goF ns (Eq l r) = Eq (goE ns l) (goE ns r)
+    goF ns (Ge l r) = Ge (goE ns l) (goE ns r)
+    goF ns (Gt l r) = Gt (goE ns l) (goE ns r)
+    goF ns (Forall qs f') =
+      let ns' = foldr (delete . qvName) ns qs
+      in Forall qs (goF ns' f')
+    goF ns (Exists qs f') =
+      let ns' = foldr (delete . qvName) ns qs
+      in Exists qs (goF ns' f')
+
+    goE ns (Var v) | v `elem` ns = IntVar v
+    goE _  e@(IntVar _) = e
+    goE _  e@(IntConst _) = e
+    goE _  e@(Const _) = e
+    goE ns (Add a b) = Add (goE ns a) (goE ns b)
+    goE ns (Sub a b) = Sub (goE ns a) (goE ns b)
+    goE ns (Mul a b) = Mul (goE ns a) (goE ns b)
+    goE ns (Div a b) = Div (goE ns a) (goE ns b)
+    goE ns (Pow e n) = Pow (goE ns e) n
+    goE ns (Sqrt e) = Sqrt (goE ns e)
+    goE ns (Determinant rows) = Determinant (map (map (goE ns)) rows)
+    goE ns (Circle p c r) = Circle p c (goE ns r)
+    goE _  other = other
 
 -- | Automatic solve with verbose trace information
-autoSolveWithTrace :: Theory -> Formula -> Bool -> AutoSolveResult
-autoSolveWithTrace theory goal verbose =
-  let result = autoSolve theory goal
+autoSolveWithTrace :: SolverOptions -> Theory -> Formula -> Bool -> AutoSolveResult
+autoSolveWithTrace opts theory goal verbose =
+  let result = autoSolve opts theory goal
   in result
 
 -- =============================================
@@ -143,13 +271,25 @@ autoSolveWithTrace theory goal verbose =
 -- This is called only if GeoSolver returns GeoUnknown in PHASE 1
 selectAlgebraicSolver :: ProblemProfile -> Formula -> SolverChoice
 selectAlgebraicSolver profile goal
+  -- If sqrt appears, force CAD so we can use polynomialization + CAD
+  | containsSqrtFormula goal = UseCAD
+  -- If integers appear, try integer evaluator first (handled in executeSolver); keep router permissive
+  | containsIntFormula goal = UseGroebner
   -- RULE 1: Unsupported formula types
   | not (isEquality goal) && not (isInequality goal) = Unsolvable
 
   -- RULE 2: Too complex (avoid hanging) - Relaxed for Algebraic Equality
   | estimatedComplexity profile >= VeryHigh && not (isEquality goal) = Unsolvable
 
-  -- RULE 3: Pure geometric problems → Wu's method
+  -- RULE 3: Pure geometric problems → prefer Groebner for small/simple equalities
+  -- Heuristic: small variable/constraint counts benefit from direct algebraic proof
+  | problemType profile == Geometric
+  , isEquality goal
+  , numVariables profile <= 30
+  , numConstraints profile <= 30 = UseGroebner
+  -- Geometric inequalities: route to CAD (avoid Wu)
+  | problemType profile == Geometric
+  , isInequality goal = UseCAD
   | problemType profile == Geometric = UseWu
 
   -- RULE 4: Inequalities with 1-2 variables → CAD
@@ -175,12 +315,16 @@ selectAlgebraicSolver profile goal
 -- | Check if formula is an equality
 isEquality :: Formula -> Bool
 isEquality (Eq _ _) = True
+isEquality (Forall _ f) = isEquality f
+isEquality (Exists _ f) = isEquality f
 isEquality _ = False
 
 -- | Check if formula is an inequality
 isInequality :: Formula -> Bool
 isInequality (Ge _ _) = True
 isInequality (Gt _ _) = True
+isInequality (Forall _ f) = isInequality f
+isInequality (Exists _ f) = isInequality f
 isInequality _ = False
 
 -- | Check if variables suggest geometric origin (coordinate names like xA, yB, etc.)
@@ -191,51 +335,200 @@ hasGeometricVars profile =
     isGeometricVar ('x':_) = True
     isGeometricVar ('y':_) = True
     isGeometricVar ('z':_) = True
-    isGeometricVar _ = False
+isGeometricVar _ = False
 
+-- =============================================
+-- Numeric angle fast-path
+-- =============================================
+
+maybeEvalNumericAngleEquality :: Theory -> Expr -> Expr -> Maybe (Bool, String)
+maybeEvalNumericAngleEquality theory l r =
+  case (l, r) of
+    (AngleEq2D a b c d e f, Const _) -> evalAngle False a b c d e f
+    (AngleEq2DAbs a b c d e f, Const _) -> evalAngle True a b c d e f
+    _ -> Nothing
+  where
+    lookupCoord p axis = M.lookup (axis ++ p) coordMap
+    coordMap = M.fromList [ (v, c) | Eq (Var v) (Const c) <- theory ]
+
+    evalAngle allowAbs a b c d e f = do
+      ax <- lookupCoord a "x"; ay <- lookupCoord a "y"
+      bx <- lookupCoord b "x"; by <- lookupCoord b "y"
+      cx <- lookupCoord c "x"; cy <- lookupCoord c "y"
+      dx <- lookupCoord d "x"; dy <- lookupCoord d "y"
+      ex <- lookupCoord e "x"; ey <- lookupCoord e "y"
+      fx <- lookupCoord f "x"; fy <- lookupCoord f "y"
+
+      let vx (x1,y1) (x0,y0) = (x1 - x0, y1 - y0)
+          dot (x1,y1) (x2,y2) = x1*x2 + y1*y2
+          cross (x1,y1) (x2,y2) = x1*y2 - y1*x2
+          norm2 (x1,y1) = x1*x1 + y1*y1
+
+          u1 = vx (bx,by) (ax,ay); v1 = vx (cx,cy) (bx,by)
+          u2 = vx (ex,ey) (dx,dy); v2 = vx (fx,fy) (ex,ey)
+
+          dot1 = dot u1 v1; dot2 = dot u2 v2
+          l1   = norm2 u1 * norm2 v1
+          l2   = norm2 u2 * norm2 v2
+          cross1 = cross u1 v1
+          cross2 = cross u2 v2
+
+          cosDiff = dot1 * l2 - dot2 * l1
+      if l1 == 0 || l2 == 0
+        then Just (False, "Degenerate angle (zero length vector)")
+        else if allowAbs
+          then
+            let sinAbsDiff = cross1*cross1 * l2*l2 - cross2*cross2 * l1*l1
+            in if cosDiff == 0 && sinAbsDiff == 0
+               then Just (True, "Angle equality holds numerically (abs) after substitution")
+               else Just (False, "Angle equality fails numerically (abs) after substitution")
+          else
+            let sinDiff = cross1 * l2 - cross2 * l1
+            in if cosDiff == 0 && sinDiff == 0
+               then Just (True, "Angle equality holds numerically after substitution")
+               else Just (False, "Angle equality fails numerically after substitution")
+
+-- CAD-based sqrt elimination path
 -- =============================================
 -- Solver Execution
 -- =============================================
 
 -- | Execute the selected solver
 -- Returns: (is_proved, reason, optional_trace)
-executeSolver :: SolverChoice -> Theory -> Formula -> (Bool, String, Maybe String)
+executeSolver :: SolverChoice -> SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
+executeSolver solver opts theory goal =
+  let hasSqrt = containsSqrtFormula goal || any containsSqrtFormula theory
+      hasInt = containsIntFormula goal || any containsIntFormula theory
+  in case solver of
+       UseWu ->
+         if hasInt
+         then runInt opts theory goal
+         else
+         if hasSqrt
+         then runCadSqrt theory goal
+         else
+         case goal of
+           Eq _ _ ->
+             let (proved, reason) = wuProve theory goal
+                 trace = wuProveWithTrace theory goal
+             in (proved, reason, Just (formatWuTrace trace))
+           _ -> (False, "Wu's method only supports equality goals", Nothing)
 
-executeSolver UseWu theory goal =
-  case goal of
-    Eq _ _ ->
-      let (proved, reason) = wuProve theory goal
-          trace = wuProveWithTrace theory goal
-      in (proved, reason, Just (formatWuTrace trace))
-    _ -> (False, "Wu's method only supports equality goals", Nothing)
+       UseGroebner ->
+         if hasInt
+         then runInt opts theory goal
+         else
+         if hasSqrt
+         then runCadSqrt theory goal
+         else
+         case goal of
+           Eq l r ->
+             case maybeEvalNumericAngleEquality theory l r of
+               Just (res, msg) -> (res, msg, Nothing)
+               Nothing ->
+                 let subM = buildSubMap theory
+                     diffPoly = subPoly (toPolySub subM l) (toPolySub subM r)
+                     isConstPoly (Poly m) = all (\(Monomial vars, _) -> M.null vars) (M.toList m)
+                     constValue (Poly m) = sum (M.elems m)
+                in if isConstPoly diffPoly
+                   then let c = constValue diffPoly
+                        in if c == 0
+                           then (True, "Equality holds after numeric substitution (constant 0)", Nothing)
+                           else (False, "Constants not equal after substitution (" ++ show c ++ ")", Nothing)
+                   else
+                     let (proved, reason, trace, _) = proveTheoryWithOptions buchberger Nothing theory goal
+                      in (proved, reason, Just (formatProofTrace trace))
+           _ -> (False, "Gröbner basis method only supports equality goals", Nothing)
 
-executeSolver UseGroebner theory goal =
-  case goal of
-    Eq _ _ ->
-      let (proved, reason, trace, _) = proveTheoryWithOptions buchberger Nothing theory goal
-      in (proved, reason, Just (formatProofTrace trace))
-    _ -> (False, "Gröbner basis method only supports equality goals", Nothing)
+       UseCAD ->
+         if hasInt
+         then runInt opts theory goal
+         else
+         if hasSqrt
+         then runCadSqrt theory goal
+         else
+         if containsQuantifier goal || any containsQuantifier theory
+         then
+            let proved = solveQuantifiedFormulaCAD theory goal
+                msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
+            in (proved, msg, Nothing)
+         else
+         case goal of
+           Ge l r -> executeCADInequality theory l r False
+           Gt l r -> executeCADInequality theory l r True
+           _ -> (False, "CAD only supports inequality goals (>, >=)", Nothing)
 
-executeSolver UseCAD theory goal =
-  case goal of
-    Ge l r -> executeCADInequality theory l r False
-    Gt l r -> executeCADInequality theory l r True
-    _ -> (False, "CAD only supports inequality goals (>, >=)", Nothing)
-
-executeSolver Unsolvable _ _ =
-  (False, "Problem is too complex or type not supported by automatic solver", Nothing)
+       Unsolvable ->
+         (False, "Problem is too complex or type not supported by automatic solver", Nothing)
 
 -- | Execute CAD for an inequality
 executeCADInequality :: Theory -> Expr -> Expr -> Bool -> (Bool, String, Maybe String)
-executeCADInequality theory lhs rhs _isStrict =
-  -- Extract variables (simplified - full CAD needs more work)
-  let vars = extractVariablesFromExpr lhs ++ extractVariablesFromExpr rhs
-      uniqueVars = S.toList $ S.fromList vars
-  in if length uniqueVars > 2
-     then (False, "CAD limited to 1-2 variables (3D+ causes exponential blowup)", Nothing)
+executeCADInequality theory lhs rhs isStrict =
+  let hasSqrt = containsSqrtExpr lhs || containsSqrtExpr rhs || any containsSqrtFormula theory
+  in if hasSqrt
+     then runCadSqrt theory (Ge lhs rhs)
      else
-       -- For now, return unsupported - full CAD integration needs more work
-       (False, "CAD inequality proving not yet fully integrated with router", Nothing)
+       let allowZero = not isStrict
+           subM = buildSubMap theory
+           diffPoly = subPoly (toPolySub subM lhs) (toPolySub subM rhs)
+       in
+         -- Fast path for numeric contradictions
+         (case diffPoly of
+            Poly m | null m -> (True, "Inequality holds (difference is constant 0)", Nothing)
+            Poly m | M.size m == 1 ->
+              case M.toList m of
+                -- Check if it's ACTUALLY a constant (monomial with no variables)
+                [(Monomial vars, c)] | M.null vars ->
+                  if isStrict && c > 0
+                  then (True, "Constant > 0", Nothing)
+                  else if allowZero && c >= 0
+                  then (True, "Constant >= 0", Nothing)
+                  else (False, "Constant inequality fails", Nothing)
+                -- Not a constant, fall through to general case
+                _ ->
+                  case toUnivariate diffPoly of
+                    Just (_, coeffs) ->
+                      let res = checkPositivityEnhanced diffPoly allowZero
+                          zeroRoots = any (== 0) coeffs
+                          ok = if allowZero && zeroRoots then True else isPositive res
+                          msg = if allowZero && zeroRoots
+                                then "Allowing zero root: polynomial is non-negative with roots at 0"
+                                else explanation res
+                      in (ok, msg, Nothing)
+                    Nothing ->
+                      -- Extract variables from the POLYNOMIAL (after substitution), not the expression
+                      let vars = S.toList (extractPolyVars diffPoly)
+                      in if length vars <= 4  -- Extended from 2 to 4 for triangle inequality
+                         then
+                           let constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
+                               holds = evaluateInequalityCAD constraints diffPoly vars
+                               msg = if holds
+                                     then "CAD check (" ++ show (length vars) ++ "D) succeeded"
+                                     else "CAD check (" ++ show (length vars) ++ "D) found countercell"
+                           in (holds, msg, Nothing)
+                         else (False, "Inequality not proved (multivariate CAD with " ++ show (length vars) ++ " vars not supported yet)", Nothing)
+            _ ->
+              case toUnivariate diffPoly of
+                Just (_, coeffs) ->
+                  let res = checkPositivityEnhanced diffPoly allowZero
+                      zeroRoots = any (== 0) coeffs
+                      ok = if allowZero && zeroRoots then True else isPositive res
+                      msg = if allowZero && zeroRoots
+                            then "Allowing zero root: polynomial is non-negative with roots at 0"
+                            else explanation res
+                  in (ok, msg, Nothing)
+                Nothing ->
+                  -- Extract variables from the POLYNOMIAL (after substitution), not the expression
+                  let vars = S.toList (extractPolyVars diffPoly)
+                  in if length vars <= 4  -- Extended from 2 to 4
+                     then
+                       let constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
+                           holds = evaluateInequalityCAD constraints diffPoly vars
+                           msg = if holds
+                                 then "CAD check (" ++ show (length vars) ++ "D) succeeded"
+                                 else "CAD check (" ++ show (length vars) ++ "D) found countercell"
+                       in (holds, msg, Nothing)
+                     else (False, "Inequality not proved (multivariate CAD with " ++ show (length vars) ++ " vars not supported yet)", Nothing))
 
 -- | Extract variable names from an expression
 extractVariablesFromExpr :: Expr -> [String]
@@ -248,6 +541,57 @@ extractVariablesFromExpr (Div e1 e2) = extractVariablesFromExpr e1 ++ extractVar
 extractVariablesFromExpr (Pow e _) = extractVariablesFromExpr e
 extractVariablesFromExpr _ = []
 
+-- | Local variable extractor for inequalities
+extractVars :: Expr -> [String]
+extractVars (Var v) = [v]
+extractVars (Const _) = []
+extractVars (Add a b) = extractVars a ++ extractVars b
+extractVars (Sub a b) = extractVars a ++ extractVars b
+extractVars (Mul a b) = extractVars a ++ extractVars b
+extractVars (Div a b) = extractVars a ++ extractVars b
+extractVars (Pow e _) = extractVars e
+extractVars (Sqrt e) = extractVars e
+extractVars (IntVar v) = [v]
+extractVars (IntConst _) = []
+extractVars (Dist2 p1 p2) = ["x"++p1,"y"++p1,"z"++p1,"x"++p2,"y"++p2,"z"++p2]
+extractVars (Dot a b c d) = concatMap (\p -> ["x"++p,"y"++p,"z"++p]) [a,b,c,d]
+extractVars (Collinear a b c) = concatMap (\p -> ["x"++p,"y"++p]) [a,b,c]
+extractVars (Circle p c r) = ["x"++p,"y"++p,"z"++p,"x"++c,"y"++c,"z"++c] ++ extractVars r
+extractVars (Midpoint a b m) = concatMap (\p -> ["x"++p,"y"++p,"z"++p]) [a,b,m]
+extractVars (Perpendicular a b c d) = concatMap (\p -> ["x"++p,"y"++p,"z"++p]) [a,b,c,d]
+extractVars (Parallel a b c d) = concatMap (\p -> ["x"++p,"y"++p,"z"++p]) [a,b,c,d]
+extractVars (AngleEq2D a b c d e f) = concatMap (\p -> ["x"++p,"y"++p]) [a,b,c,d,e,f]
+extractVars (Determinant rows) = concatMap extractVars (concat rows)
+
+-- | Extract variables from a polynomial (actual free variables after substitution)
+extractPolyVars :: Poly -> S.Set String
+extractPolyVars (Poly m) =
+  S.fromList $ concatMap (\(Monomial vars) -> M.keys vars) (M.keys m)
+
+-- CAD-based sqrt elimination path
+runCadSqrt :: Theory -> Formula -> (Bool, String, Maybe String)
+runCadSqrt theory goal =
+  let (th', goal') = eliminateSqrt theory goal
+      proved = proveFormulaCAD th' goal'
+      msg = if proved
+            then "Proved via CAD with sqrt elimination"
+            else "Not proved via CAD with sqrt elimination"
+  in (proved, msg, Nothing)
+
+-- Integer fast-path
+runInt :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
+runInt opts theory goal =
+  let outcome = intSolve (intOptions opts) theory goal
+  in case intResult outcome of
+       Just True  -> (True, reasonOutcome outcome True, Nothing)
+       Just False -> (False, reasonOutcome outcome False, Nothing)
+       Nothing    ->
+         let base = "Integer domain parsed but solver is incomplete for this goal (non-linear or insufficient data)."
+             extra = if intBruteCandidate outcome
+                     then " A bounded brute-force search is available; enable it with :bruteforce on."
+                     else ""
+         in (False, base ++ extra, Nothing)
+
 -- =============================================
 -- Explanation and Formatting
 -- =============================================
@@ -257,7 +601,6 @@ explainSolverChoice :: SolverChoice -> ProblemProfile -> String
 explainSolverChoice UseGeoSolver profile =
   "Geometric Constraint Propagation: " ++
   "Fast-path geometric reasoner using constraint propagation (milliseconds), not polynomial algebra"
-
 explainSolverChoice UseWu profile =
   "Selected Wu's Method: " ++
   (case problemType profile of

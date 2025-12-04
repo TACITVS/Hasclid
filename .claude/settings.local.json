@@ -11,7 +11,13 @@
       "Bash(export LANG=en_US.UTF-8)",
       "Bash(cabal build:*)",
       "Bash(ghc:*)",
-      "Bash(./test_sturm_roots.exe:*)"
+      "Bash(./test_sturm_roots.exe:*)",
+      "Bash(cmd.exe /c \"type test_timeout_minimal.euclid && echo. && echo [FILE END]\")",
+      "Bash(pkill:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd.exe /c \"cabal run prover < test_triangle_symbolic.euclid\")"
     ],
     "deny": [],
     "ask": []

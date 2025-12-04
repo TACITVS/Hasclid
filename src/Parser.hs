@@ -197,6 +197,26 @@ exprFromSExpr (List (Atom op : args)) = case op of
     _ -> Left $ ParseError (WrongArity "^" 2 (length args))
                   "Power requires base and natural number exponent"
 
+  "int" -> case args of
+    [Atom name] -> Right $ IntVar name
+    _ -> Left $ ParseError (WrongArity "int" 1 (length args)) "Usage: (int x)"
+
+  "int-var" -> case args of
+    [Atom name] -> Right $ IntVar name
+    _ -> Left $ ParseError (WrongArity "int-var" 1 (length args)) "Usage: (int-var x)"
+
+  "int-const" -> case args of
+    [Atom n] | all (\c -> isDigit c || c == '-') n -> Right $ IntConst (read n)
+    [Atom n] -> Left $ ParseError (InvalidNumber n) "Malformed integer constant"
+    _ -> Left $ ParseError (WrongArity "int-const" 1 (length args)) "Usage: (int-const 5)"
+
+  "sqrt" -> case args of
+    [a] -> do
+      e <- exprFromSExpr a
+      Right $ Sqrt e
+    _ -> Left $ ParseError (WrongArity "sqrt" 1 (length args))
+                  "sqrt requires exactly 1 argument"
+
   "dist2" -> case args of
     [Atom p1, Atom p2] -> Right $ Dist2 p1 p2
     _ -> Left $ ParseError (WrongArity "dist2" 2 (length args))
@@ -234,6 +254,41 @@ exprFromSExpr (List (Atom op : args)) = case op of
     _ -> Left $ ParseError (WrongArity "parallel" 4 (length args))
                   "Usage: (parallel A B C D) - AB ∥ CD"
 
+  "angle-eq" -> case args of
+    [Atom a, Atom b, Atom c, Atom d, Atom e, Atom f] -> Right $ AngleEq2D a b c d e f
+    _ -> Left $ ParseError (WrongArity "angle-eq" 6 (length args))
+                  "Usage: (angle-eq A B C D E F) - asserts ∠ABC = ∠DEF in 2D"
+
+  -- Angle equality sugar as an expression (useful when nested under =)
+  "angle=" -> case args of
+    [Atom a, Atom b, Atom c, Atom d, Atom e, Atom f] -> Right $ AngleEq2D a b c d e f
+    _ -> Left $ ParseError (WrongArity "angle=" 6 (length args))
+                  "Usage: (angle= A B C D E F) - asserts ∠ABC = ∠DEF in 2D"
+
+  "angle-eq-abs" -> case args of
+    [Atom a, Atom b, Atom c, Atom d, Atom e, Atom f] -> Right $ AngleEq2DAbs a b c d e f
+    _ -> Left $ ParseError (WrongArity "angle-eq-abs" 6 (length args))
+                  "Usage: (angle-eq-abs A B C D E F) - asserts ∠ABC ≡ ∠DEF up to reflection in 2D"
+
+  "angle=abs" -> case args of
+    [Atom a, Atom b, Atom c, Atom d, Atom e, Atom f] -> Right $ AngleEq2DAbs a b c d e f
+    _ -> Left $ ParseError (WrongArity "angle=abs" 6 (length args))
+                  "Usage: (angle=abs A B C D E F) - asserts ∠ABC ≡ ∠DEF up to reflection in 2D"
+
+  "det" -> do
+      -- Usage: (det e1 e2 e3 e4 ...) - flattens a square matrix
+      -- Calculate dimension
+      let len = length args
+      let n = floor (sqrt (fromIntegral len) :: Double)
+      if n * n /= len 
+      then Left $ ParseError (InvalidSyntax "matrix must be square") 
+                     ("det expects square number of arguments (1, 4, 9, 16...), got " ++ show len)
+      else do
+          elements <- mapM exprFromSExpr args
+          -- Chunk into rows
+          let rows = chunk n elements
+          Right $ Determinant rows
+
   "x" -> case args of
     [Atom p] -> Right $ Var ("x" ++ p)
     _ -> Left $ ParseError (WrongArity "x" 1 (length args)) "Usage: (x Point)"
@@ -264,40 +319,11 @@ parseFormulaWithMacros :: MacroMap -> String -> Either ProverError Formula
 parseFormulaWithMacros macros input = do
   let tokens = tokenizePrefix input
   (sexpr, rest) <- parseSExpr tokens
-  
   let expanded = expandMacros macros sexpr
-
-  case expanded of
-    List [Atom "=", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
-      if null rest
-        then Right $ Eq l r
-        else Left $ ParseError (ExtraTokens rest)
-                       ("Extra tokens after formula: " ++ show rest)
-
-    List [Atom ">=", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
-      if null rest
-        then Right $ Ge l r
-        else Left $ ParseError (ExtraTokens rest)
-                       ("Extra tokens after formula: " ++ show rest)
-
-    List [Atom ">", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
-      if null rest
-        then Right $ Gt l r
-        else Left $ ParseError (ExtraTokens rest)
-                       ("Extra tokens after formula: " ++ show rest)
-
-    List [Atom op, _, _] | op `elem` ["=", ">=", ">"] ->
-      Left $ ParseError (ExtraTokens rest)
-                ("Extra tokens after formula: " ++ show rest)
-
-    _ -> Left $ ParseError (InvalidSyntax "not a formula")
-                  "Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs)"
+  formula <- formulaFromSExpr macros expanded
+  if null rest
+     then Right formula
+     else Left $ ParseError (ExtraTokens rest) ("Extra tokens after formula: " ++ show rest)
 
 -- Legacy wrapper for compatibility
 parseFormulaPrefix :: String -> Either ProverError Formula
@@ -308,28 +334,87 @@ parseFormulaWithRestAndMacros :: MacroMap -> String -> Either ProverError (Formu
 parseFormulaWithRestAndMacros macros input = do
   let tokens = tokenizePrefix input
   (sexpr, rest) <- parseSExpr tokens
-  
   let expanded = expandMacros macros sexpr
-
-  case expanded of
-    List [Atom "=", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
-      Right (Eq l r, rest)
-
-    List [Atom ">=", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
-      Right (Ge l r, rest)
-
-    List [Atom ">", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
-      Right (Gt l r, rest)
-
-    _ -> Left $ ParseError (InvalidSyntax "not a formula")
-                  "Expected format: (= lhs rhs) or (>= lhs rhs) or (> lhs rhs)"
+  formula <- formulaFromSExpr macros expanded
+  Right (formula, rest)
 
 -- Legacy wrapper
 parseFormulaWithRest :: String -> Either ProverError (Formula, [String])
 parseFormulaWithRest = parseFormulaWithRestAndMacros M.empty
+
+-- =============================================
+-- Formula parsing helpers (support quantifiers)
+-- =============================================
+
+formulaFromSExpr :: MacroMap -> SExpr -> Either ProverError Formula
+formulaFromSExpr macros sexpr =
+  case sexpr of
+    List (Atom "angle=abs" : args) ->
+      case args of
+        [Atom a, Atom b, Atom c, Atom d, Atom e, Atom f] -> Right $ Eq (AngleEq2DAbs a b c d e f) (Const 0)
+        _ -> Left $ ParseError (WrongArity "angle=abs" 6 (length args)) "Usage: (angle=abs A B C D E F)"
+
+    List (Atom "angle=" : args) ->
+      case args of
+        [Atom a, Atom b, Atom c, Atom d, Atom e, Atom f] -> Right $ Eq (AngleEq2D a b c d e f) (Const 0)
+        _ -> Left $ ParseError (WrongArity "angle=" 6 (length args)) "Usage: (angle= A B C D E F)"
+
+    List [Atom "=", lhs, rhs] -> do
+      l <- exprFromSExpr lhs
+      r <- exprFromSExpr rhs
+      Right $ Eq l r
+
+    List [Atom ">=", lhs, rhs] -> do
+      l <- exprFromSExpr lhs
+      r <- exprFromSExpr rhs
+      Right $ Ge l r
+
+    List [Atom ">", lhs, rhs] -> do
+      l <- exprFromSExpr lhs
+      r <- exprFromSExpr rhs
+      Right $ Gt l r
+
+    List [Atom "forall", binderBlock, body] -> do
+      qs <- parseBinderBlock binderBlock
+      inner <- formulaFromSExpr macros body
+      Right $ Forall qs inner
+
+    List [Atom "exists", binderBlock, body] -> do
+      qs <- parseBinderBlock binderBlock
+      inner <- formulaFromSExpr macros body
+      Right $ Exists qs inner
+
+    List [Atom op, _, _] | op `elem` ["=", ">=", ">"] ->
+      Left $ ParseError (InvalidSyntax "not a formula") "Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs)"
+
+    _ -> Left $ ParseError (InvalidSyntax "not a formula")
+                  "Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR a quantifier (forall/exists)"
+
+parseQuantVar :: SExpr -> Either ProverError QuantVar
+parseQuantVar (Atom v) = Right $ QuantVar v QuantReal Nothing Nothing
+parseQuantVar (List [Atom v]) = Right $ QuantVar v QuantReal Nothing Nothing
+parseQuantVar (List [Atom v, lo, hi]) = do
+  loE <- exprFromSExpr lo
+  hiE <- exprFromSExpr hi
+  Right $ QuantVar v QuantReal (Just loE) (Just hiE)
+parseQuantVar (List [Atom "int", Atom v]) = Right $ QuantVar v QuantInt Nothing Nothing
+parseQuantVar (List [Atom "int", Atom v, lo, hi]) = do
+  loE <- exprFromSExpr lo
+  hiE <- exprFromSExpr hi
+  Right $ QuantVar v QuantInt (Just loE) (Just hiE)
+parseQuantVar (List [Atom "real", Atom v]) = Right $ QuantVar v QuantReal Nothing Nothing
+parseQuantVar (List [Atom "real", Atom v, lo, hi]) = do
+  loE <- exprFromSExpr lo
+  hiE <- exprFromSExpr hi
+  Right $ QuantVar v QuantReal (Just loE) (Just hiE)
+parseQuantVar bad =
+  Left $ ParseError (InvalidSyntax "quantifier binder") ("Invalid binder: " ++ show bad ++ ". Expected name or (int name) or (name lo hi).")
+
+parseBinderBlock :: SExpr -> Either ProverError [QuantVar]
+parseBinderBlock (List binders) = mapM parseQuantVar binders
+parseBinderBlock single = mapM parseQuantVar [single]
+
+-- Helper: Chunk list into sublists of size n
+chunk :: Int -> [a] -> [[a]]
+chunk _ [] = []
+chunk n xs = take n xs : chunk n (drop n xs)

@@ -149,6 +149,7 @@ analyzeFormula formula = analyzeProblem [] formula
 -- | Classify the type of problem
 classifyProblem :: Theory -> Formula -> GeometricFeatures -> ProblemType
 classifyProblem theory goal geoFeatures
+  | any containsQuantifier (goal : theory) = Unknown
   -- Single inequality goal, no equations
   | null theory && isSingleInequality goal = SinglePositivity
 
@@ -168,10 +169,14 @@ classifyProblem theory goal geoFeatures
   | otherwise = Unknown
   where
     isEquality (Eq _ _) = True
+    isEquality (Forall _ f) = isEquality f
+    isEquality (Exists _ f) = isEquality f
     isEquality _ = False
 
     isInequality (Ge _ _) = True
     isInequality (Gt _ _) = True
+    isInequality (Forall _ f) = isInequality f
+    isInequality (Exists _ f) = isInequality f
     isInequality _ = False
 
     isSingleInequality (Ge _ _) = True
@@ -278,23 +283,36 @@ isSymbolicParam _ = False
 -- | Extract variables from a formula
 extractVarsFromFormula :: Formula -> [String]
 extractVarsFromFormula formula =
-  nub $ concatMap extractVarsFromExpr (extractExprsFromFormula formula)
+  case formula of
+    Forall qs f ->
+      let bound = map qvName qs
+      in filter (`notElem` bound) (extractVarsFromFormula f)
+    Exists qs f ->
+      let bound = map qvName qs
+      in filter (`notElem` bound) (extractVarsFromFormula f)
+    _ ->
+      nub $ concatMap extractVarsFromExpr (extractExprsFromFormula formula)
 
 -- | Extract all expressions from a formula
 extractExprsFromFormula :: Formula -> [Expr]
 extractExprsFromFormula (Eq l r) = [l, r]
 extractExprsFromFormula (Ge l r) = [l, r]
 extractExprsFromFormula (Gt l r) = [l, r]
+extractExprsFromFormula (Forall _ f) = extractExprsFromFormula f
+extractExprsFromFormula (Exists _ f) = extractExprsFromFormula f
 
 -- | Extract all variable names from an expression
 extractVarsFromExpr :: Expr -> [String]
 extractVarsFromExpr (Var v) = [v]
 extractVarsFromExpr (Const _) = []
+extractVarsFromExpr (IntVar v) = [v]
+extractVarsFromExpr (IntConst _) = []
 extractVarsFromExpr (Add e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
 extractVarsFromExpr (Sub e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
 extractVarsFromExpr (Mul e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
 extractVarsFromExpr (Div e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
 extractVarsFromExpr (Pow e _) = extractVarsFromExpr e
+extractVarsFromExpr (Sqrt e) = extractVarsFromExpr e
 extractVarsFromExpr (Dist2 p1 p2) = [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y"]
 extractVarsFromExpr (Collinear p1 p2 p3) =
   [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y", p3 ++ "x", p3 ++ "y"]
@@ -310,6 +328,13 @@ extractVarsFromExpr (Perpendicular p1 p2 p3 p4) =
 extractVarsFromExpr (Parallel p1 p2 p3 p4) =
   [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y",
    p3 ++ "x", p3 ++ "y", p4 ++ "x", p4 ++ "y"]
+extractVarsFromExpr (AngleEq2D a b c d e f) =
+  [a ++ "x", a ++ "y", b ++ "x", b ++ "y", c ++ "x", c ++ "y",
+   d ++ "x", d ++ "y", e ++ "x", e ++ "y", f ++ "x", f ++ "y"]
+extractVarsFromExpr (AngleEq2DAbs a b c d e f) =
+  [a ++ "x", a ++ "y", b ++ "x", b ++ "y", c ++ "x", c ++ "y",
+   d ++ "x", d ++ "y", e ++ "x", e ++ "y", f ++ "x", f ++ "y"]
+extractVarsFromExpr (Determinant rows) = concatMap extractVarsFromExpr (concat rows)
 
 -- =============================================
 -- Polynomial Analysis Utilities
@@ -331,11 +356,14 @@ estimateMaxDegree theory goal =
 estimateExprDegree :: Expr -> Int
 estimateExprDegree (Var _) = 1
 estimateExprDegree (Const _) = 0
+estimateExprDegree (IntVar _) = 1
+estimateExprDegree (IntConst _) = 0
 estimateExprDegree (Add e1 e2) = max (estimateExprDegree e1) (estimateExprDegree e2)
 estimateExprDegree (Sub e1 e2) = max (estimateExprDegree e1) (estimateExprDegree e2)
 estimateExprDegree (Mul e1 e2) = estimateExprDegree e1 + estimateExprDegree e2
 estimateExprDegree (Div e1 e2) = estimateExprDegree e1 + estimateExprDegree e2
 estimateExprDegree (Pow e n) = fromIntegral n * estimateExprDegree e
+estimateExprDegree (Sqrt e) = max 1 (estimateExprDegree e)
 estimateExprDegree (Dist2 _ _) = 2  -- (x1-x2)^2 + (y1-y2)^2
 estimateExprDegree (Collinear _ _ _) = 2
 estimateExprDegree (Dot _ _ _ _) = 2
@@ -343,3 +371,11 @@ estimateExprDegree (Circle _ _ _) = 2
 estimateExprDegree (Midpoint _ _ _) = 1
 estimateExprDegree (Perpendicular _ _ _ _) = 2
 estimateExprDegree (Parallel _ _ _ _) = 2
+-- Angle equality polynomial reaches degree up to 12 (cosDiff/sinDiff degree 6, then squared)
+estimateExprDegree (AngleEq2D _ _ _ _ _ _) = 12
+estimateExprDegree (AngleEq2DAbs _ _ _ _ _ _) = 12
+estimateExprDegree (Determinant rows) =
+  let rowDegrees = map (map estimateExprDegree) rows
+      -- crude upper bound: sum of max degrees per row (Laplace expansion worst case)
+      maxRow = maximum (0 : map maximum rowDegrees)
+  in maxRow * length rows
