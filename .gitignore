@@ -20,3 +20,6 @@ cabal.project.local
 
 # Local helper scripts
 push_refactor.bat
+
+# Local scratch/dev artifacts
+scratch/
