@@ -127,6 +127,73 @@ partitionTheory (f:fs) =
        Eq _ _       -> (subs, f:constrs)
        _            -> (subs, constrs)
 
+-- Shared Groebner fallback used by both cached and custom Buchberger flows.
+groebnerFallback
+  :: ([Poly] -> [Poly])
+  -> Maybe GroebnerCache
+  -> Theory
+  -> Formula
+  -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+groebnerFallback customBuchberger maybeCache theory formula =
+  let
+    (substAssumptions, constraintAssumptions) = partitionTheory theory
+    subM = buildSubMap substAssumptions
+
+    substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
+    constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
+
+    idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
+                      | Eq l r <- constraintAssumptions ]
+
+    (basis, updatedCache) =
+      if null idealGenerators
+      then ([], maybeCache)
+      else case maybeCache of
+             Nothing -> (customBuchberger idealGenerators, Nothing)
+             Just cache ->
+               let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
+               in case maybeCached of
+                    Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
+                    Nothing ->
+                      let computed = customBuchberger idealGenerators
+                          cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
+                      in (computed, Just cacheAfterInsert)
+
+    basisStep = if null idealGenerators then [] else [ComputedGroebnerBasis (length basis)]
+    (pL, pR) = case formula of
+                 Eq l r -> (toPolySub subM l, toPolySub subM r)
+                 Ge l r -> (toPolySub subM l, toPolySub subM r)
+                 Gt l r -> (toPolySub subM l, toPolySub subM r)
+                 _      -> (polyZero, polyZero)
+
+    difference = subPoly pL pR
+    normalForm = reduce difference basis
+    reductionStep = [ReducedToNormalForm difference normalForm]
+    allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
+  in case formula of
+       Eq _ _ ->
+         let result = normalForm == polyZero
+             msg = if result
+                   then "Equality Holds (Groebner Normal Form is 0)"
+                   else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
+             trace = ProofTrace allSteps theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       Ge _ _ ->
+         let (result, msg) = checkPositivity normalForm True
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       Gt _ _ ->
+         let (result, msg) = checkPositivity normalForm False
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       _ ->
+         (False, "Goal not supported by available solvers.", ProofTrace allSteps theory (length basis), updatedCache)
+
 -- | Prove a formula with optional cache support
 -- Returns: (isProved, reason, trace, updatedCache)
 proveTheoryWithCache :: Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
@@ -235,74 +302,7 @@ proveTheoryWithCache maybeCache theory formula =
           let proved = solveQuantifiedFormulaCAD theory formula
               msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
           in (proved, msg, baseTrace, maybeCache)
-      | otherwise =
-          let
-            (substAssumptions, constraintAssumptions) = partitionTheory theory
-            subM = buildSubMap substAssumptions
-
-            -- Track substitutions used
-            substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
-
-            -- Track constraint assumptions
-            constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
-
-            idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
-                              | Eq l r <- constraintAssumptions ]
-
-            -- Compute basis with cache
-            (basis, updatedCache) =
-              if null idealGenerators
-              then ([], maybeCache)
-              else case maybeCache of
-                     Nothing -> (buchberger idealGenerators, Nothing)
-                     Just cache ->
-                       let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
-                       in case maybeCached of
-                            Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
-                            Nothing ->
-                              let computed = buchberger idealGenerators
-                                  cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
-                              in (computed, Just cacheAfterInsert)
-
-            basisStep = if null idealGenerators
-                        then []
-                        else [ComputedGroebnerBasis (length basis)]
-
-            (pL, pR) = case formula of
-                         Eq l r -> (toPolySub subM l, toPolySub subM r)
-                         Ge l r -> (toPolySub subM l, toPolySub subM r)
-                         Gt l r -> (toPolySub subM l, toPolySub subM r)
-
-            difference = subPoly pL pR
-            normalForm = reduce difference basis
-
-            reductionStep = [ReducedToNormalForm difference normalForm]
-
-            -- Build trace
-            allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
-          in case formula of
-               Eq _ _ ->
-                 let result = normalForm == polyZero
-                     msg = if result
-                           then "Equality Holds (Groebner Normal Form is 0)"
-                           else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
-                     trace = ProofTrace allSteps theory (length basis)
-                 in (result, msg, trace, updatedCache)
-
-               Ge _ _ ->
-                 let (result, msg) = checkPositivity normalForm True
-                     positivityStep = [CheckedPositivity msg]
-                     trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-                 in (result, msg, trace, updatedCache)
-
-               Gt _ _ ->
-                 let (result, msg) = checkPositivity normalForm False
-                     positivityStep = [CheckedPositivity msg]
-                     trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-                 in (result, msg, trace, updatedCache)
-
-               _ ->
-                 (False, "Goal not supported by available solvers.", baseTrace, maybeCache)
+      | otherwise = groebnerFallback buchberger maybeCache theory formula
 
 -- | Prove a formula with custom Buchberger function and optional cache support
 -- Returns: (isProved, reason, trace, updatedCache)
@@ -341,60 +341,7 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
                 msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
             in (proved, msg, baseTrace', maybeCache)
         else
-          let
-            (substAssumptions, constraintAssumptions) = partitionTheory theory
-            subM = buildSubMap substAssumptions
-
-            substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
-            constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
-
-            idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
-                              | Eq l r <- constraintAssumptions ]
-
-            (basis, updatedCache) =
-              if null idealGenerators
-              then ([], maybeCache)
-              else case maybeCache of
-                     Nothing -> (customBuchberger idealGenerators, Nothing)
-                     Just cache ->
-                       let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
-                       in case maybeCached of
-                            Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
-                            Nothing ->
-                              let computed = customBuchberger idealGenerators
-                                  cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
-                              in (computed, Just cacheAfterInsert)
-
-            basisStep = if null idealGenerators then [] else [ComputedGroebnerBasis (length basis)]
-            (pL, pR) = case formula of
-                         Eq l r -> (toPolySub subM l, toPolySub subM r)
-                         Ge l r -> (toPolySub subM l, toPolySub subM r)
-                         Gt l r -> (toPolySub subM l, toPolySub subM r)
-
-            difference = subPoly pL pR
-            normalForm = reduce difference basis
-            reductionStep = [ReducedToNormalForm difference normalForm]
-            allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
-          in case formula of
-               Eq _ _ ->
-                 let result = normalForm == polyZero
-                     msg = if result
-                           then "Equality Holds (Groebner Normal Form is 0)"
-                           else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
-                     trace = ProofTrace allSteps theory (length basis)
-                 in (result, msg, trace, updatedCache)
-
-               Ge _ _ ->
-                 let (result, msg) = checkPositivity normalForm True
-                     positivityStep = [CheckedPositivity msg]
-                     trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-                 in (result, msg, trace, updatedCache)
-
-               Gt _ _ ->
-                 let (result, msg) = checkPositivity normalForm False
-                     positivityStep = [CheckedPositivity msg]
-                     trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-                 in (result, msg, trace, updatedCache)
+          groebnerFallback customBuchberger maybeCache theory formula
   in
     case formula of
       Forall qs inner
