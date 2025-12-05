@@ -1,0 +1,502 @@
+==================================================
+   Hasclid v9.0 - Multi-Solver System
+   Intelligent routing: Wu/Grobner/CAD + Router
+   Type :help for commands.
+==================================================
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> Assumed: Eq (Var "x") (Const ((-1) % 1))
+
+Euclid> Assumed: Eq (Var "y") (Const (2 % 1))
+
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Mixed
+  Variables: 2
+  Constraints: 2
+  Max Degree: 2
+  Complexity: Low
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Real algebraic geometry with inequalities
+
+Result: NOT PROVED
+  Constant inequality fails
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> Assumed: Eq (Var "x") (Const ((-10) % 1))
+
+Euclid> Assumed: Eq (Var "y") (Const (1 % 1))
+
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Mixed
+  Variables: 2
+  Constraints: 2
+  Max Degree: 2
+  Complexity: Low
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Real algebraic geometry with inequalities
+
+Result: NOT PROVED
+  Constant inequality fails
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Allowing zero root: polynomial is non-negative with roots at 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 1
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Constant >= 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> Defined 2D Point A at (0, 0)
+
+Euclid> Defined 2D Point B at (3, 4)
+
+Euclid> Defined 2D Point C at (6, 0)
+
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 15
+  Constraints: 9
+  Max Degree: 2
+  Complexity: High
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Real algebraic geometry with inequalities
+
+Result: PROVED
+  Constant >= 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 1
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Sturm's theorem: 0 real roots, leading coeff > 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 1
+  Constraints: 0
+  Max Degree: 1
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Constant > 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 1
+  Constraints: 0
+  Max Degree: 1
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: NOT PROVED
+  Has 1 real root(s) in [((-2) % 1,2 % 1)]
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: NOT PROVED
+  CAD check (2D) found countercell
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 1
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: NOT PROVED
+  Has 2 real root(s) in [((-2) % 1,0 % 1),(0 % 1,2 % 1)]
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Constant > 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 0
+  Constraints: 0
+  Max Degree: 0
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Inequality holds (difference is constant 0)
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 0
+  Constraints: 0
+  Max Degree: 0
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Constant > 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 0
+  Constraints: 0
+  Max Degree: 0
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: NOT PROVED
+  Constant inequality fails
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 1
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Constant >= 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Sturm's theorem: 0 real roots, leading coeff > 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  Allowing zero root: polynomial is non-negative with roots at 0
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> === AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+Euclid> 
+Euclid> Active Theory reset (Lemmas preserved, Cache cleared).
+
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+Euclid> 
+[End of input]

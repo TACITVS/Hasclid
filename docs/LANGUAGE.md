@@ -160,6 +160,7 @@ dist2 : Point × Point → Expr
 | `*` | n-ary | `(* 2 x y)` | Product: 2·x·y |
 | `/` | 2 | `(/ 10 3)` | Division: 10/3 |
 | `^` | 2 | `(^ x 3)` | Power: x³ |
+| `x`, `y`, `z` | 1 | `(x A)` | Coordinate x of point A |
 
 **Note:** Exponent must be a natural number constant.
 
@@ -388,6 +389,21 @@ Creates point with `z = 0`.
 - **Constants:** `:point A 0 0`
 - **Rationals:** `:point B 1/2 3/4`
 - **Variables:** `:point C x y` (symbolic)
+
+#### Define Macro
+```lisp
+:macro <name> <param1> <param2> ... = <body>
+```
+
+Defines a reusable macro that expands during parsing.
+
+**Example:**
+```lisp
+:macro sq x = (^ x 2)
+:macro dist_sq A B = (+ (sq (- (x A) (x B))) (sq (- (y A) (y B))))
+```
+
+**Note:** You can access point coordinates using `(x P)`, `(y P)`, `(z P)`.
 
 #### Add Assumption
 ```lisp

@@ -24,6 +24,7 @@ executable prover
     main-is:          Main.hs
     hs-source-dirs:   src
     other-modules:
+        Core.GB
         BuchbergerOpt
         CAD
         CADLift
@@ -37,12 +38,46 @@ executable prover
         ProblemAnalyzer
         Prover
         SolverRouter
+        SqrtElim
         Sturm
         TermOrder
         Validation
         Wu
     build-depends:
         base >= 4.16 && < 5,
-        containers ^>=0.6.7
+        containers ^>=0.6.7,
+        mtl ^>=2.3
     default-language: GHC2021
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
+test-suite prover-test
+    type: exitcode-stdio-1.0
+    main-is: Spec.hs
+    hs-source-dirs: test, src
+    other-modules:
+        Core.GB
+        BuchbergerOpt
+        CAD
+        CADLift
+        Cache
+        CounterExample
+        Error
+        Expr
+        GeoSolver
+        Parser
+        Positivity
+        ProblemAnalyzer
+        Prover
+        SolverRouter
+        SqrtElim
+        Sturm
+        TermOrder
+        Validation
+        Wu
+    build-depends:
+        base >= 4.16 && < 5,
+        containers ^>=0.6.7,
+        mtl ^>=2.3,
+        QuickCheck ^>=2.14
+    default-language: GHC2021
+    ghc-options: -Wall -Wno-unused-imports -Wno-incomplete-patterns -Wno-name-shadowing

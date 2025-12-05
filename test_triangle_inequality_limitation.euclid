@@ -1,0 +1,75 @@
+;; =============================================================================
+;; Triangle Inequality Testing - Demonstrating Current Limitations
+;; =============================================================================
+;;
+;; The ACTUAL triangle inequality is:
+;;   dist(A,B) + dist(B,C) >= dist(A,C)
+;;   OR: sqrt(dist2(A,B)) + sqrt(dist2(B,C)) >= sqrt(dist2(A,C))
+;;
+;; However, Hasclid does NOT support sqrt operations, so we cannot express this!
+;;
+;; What we CAN test is the SQUARED version:
+;;   dist2(A,B) + dist2(B,C) >= dist2(A,C)
+;;
+;; BUT THIS IS NOT THE SAME as the triangle inequality!
+;; It is FALSE for collinear points.
+;; =============================================================================
+
+;; -----------------------------------------------------------------------------
+;; Test 1: Concrete collinear points - squared version should be REJECTED
+;; -----------------------------------------------------------------------------
+:point A 0 0
+:point B 1 0
+:point C 2 0
+
+;; For collinear points: A=(0,0), B=(1,0), C=(2,0)
+;; dist2(A,B) = 1, dist2(B,C) = 1, dist2(A,C) = 4
+;; Sum of squared: 1 + 1 = 2 < 4 ✗
+;; So this should NOT be proved:
+(>= (+ (dist2 A B) (dist2 B C)) (dist2 A C))
+;; Expected: NOT PROVED (counterexample found)
+
+;; -----------------------------------------------------------------------------
+;; Test 2: Non-collinear triangle - squared version might still be false!
+;; -----------------------------------------------------------------------------
+:point P 0 0
+:point Q 3 0
+:point R 0 4
+
+;; For right triangle: P=(0,0), Q=(3,0), R=(0,4)
+;; dist2(P,Q) = 9, dist2(Q,R) = 25, dist2(P,R) = 16
+;; Sum of squared: 9 + 25 = 34 > 16 ✓
+;; This happens to be true for this triangle
+(>= (+ (dist2 P Q) (dist2 Q R)) (dist2 P R))
+;; Expected: Might be PROVED (true for this specific case)
+
+;; -----------------------------------------------------------------------------
+;; Test 3: Symbolic 2D triangle - squared version
+;; -----------------------------------------------------------------------------
+:point A1
+:point B1
+:point C1
+
+;; This is asking: For ALL triangles, is dist2(A,B) + dist2(B,C) >= dist2(A,C)?
+;; Answer: NO! (collinear counterexample)
+(>= (+ (dist2 A1 B1) (dist2 B1 C1)) (dist2 A1 C1))
+;; Expected: NOT PROVED (correctly rejects invalid inequality)
+
+;; =============================================================================
+;; CONCLUSION:
+;; =============================================================================
+;;
+;; 1. Hasclid correctly REJECTS the squared distance inequality for symbolic points
+;;    (because it's mathematically false)
+;;
+;; 2. To prove the ACTUAL triangle inequality, we would need:
+;;    a) sqrt operation in the parser
+;;    b) Support for sqrt in the expression system
+;;    c) CAD or another solver that can handle sqrt constraints
+;;
+;; 3. Alternative approaches:
+;;    a) Add sqrt as a primitive operation
+;;    b) Use the squared form but add non-collinearity constraint
+;;    c) Reformulate using squared inequality (different theorem)
+;;
+;; =============================================================================

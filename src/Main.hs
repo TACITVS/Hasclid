@@ -2,28 +2,33 @@
 
 module Main where
 
-import Expr (Formula(Eq, Ge, Gt), Expr(..), prettyExpr, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
-import Parser (parseFormulaPrefix, parseFormulaWithRest)
-import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger)
-import BuchbergerOpt (SelectionStrategy(..), buchbergerOptimized, buchbergerWithStrategy)
+import Expr (Formula(Eq, Ge, Gt), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
+import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
+import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger, IntSolveOptions(..))
+import BuchbergerOpt (SelectionStrategy(..), buchbergerWithStrategy)
 import CounterExample (findCounterExample, formatCounterExample)
 import CAD (discriminant, toRecursive)
 import CADLift (cadDecompose, CADCell(..), formatCADCells, evaluateInequalityCAD)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Wu (wuProve, wuProveWithTrace, formatWuTrace)
-import SolverRouter (autoSolve, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..))
+import SolverRouter (autoSolve, autoSolveWithTrace, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions)
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
 import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder)
 
-import System.IO (hFlush, stdout)
+import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice)
 import Control.Monad (foldM)
 import Data.List (isPrefixOf)
 import Data.Ratio ((%))
-import Data.Char (isDigit)
+import Data.Char (isDigit, toLower)
 import qualified Data.Map.Strict as M
 import qualified Control.Exception as CE
+import System.Timeout (timeout)
+import Control.Monad.Except (ExceptT, runExceptT)
+import Control.Monad.Reader (ReaderT, runReaderT, ask)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad (unless)
 
 -- =============================================
 -- 1. ENTRY POINT
@@ -31,13 +36,13 @@ import qualified Control.Exception as CE
 
 main :: IO ()
 main = do
-  putStr "\ESC[2J\ESC[H"
-  putStrLn "=================================================="
-  putStrLn "   Hasclid v9.1 - Hybrid Geometric Reasoner"
-  putStrLn "   Fast geometric constraint propagation + Wu/Grobner/CAD"
+  putStr "==================================================\n"
+  putStrLn "   Hasclid v9.0 - Multi-Solver System"
+  putStrLn "   Intelligent routing: Wu/Grobner/CAD + Router"
   putStrLn "   Type :help for commands."
   putStrLn "=================================================="
-  repl initialState
+  let env = defaultEnv
+  repl env (initialState env)
 
 -- =============================================
 -- 2. REPL State
@@ -53,11 +58,32 @@ data REPLState = REPLState
   , termOrder :: TermOrder
   , useOptimizedBuchberger :: Bool
   , selectionStrategy :: SelectionStrategy
+  , macros :: MacroMap
+  , solverTimeout :: Int  -- Timeout in seconds (default 30)
+  , lastTimeoutSeconds :: Maybe Int -- Tracks last timeout to allow automatic retry escalation
+  , solverOptions :: SolverOptions
   }
 
-initialState :: REPLState
-initialState = REPLState [] [] [] False True emptyCache defaultTermOrder False NormalStrategy
-  -- verbose off, autoSimplify on, empty cache, GrevLex, optimization off, NormalStrategy
+data REPLEnv = REPLEnv
+  { envTermOrder :: TermOrder
+  , envUseOptimized :: Bool
+  , envSelectionStrategy :: SelectionStrategy
+  , envSolverOptions :: SolverOptions
+  } deriving (Show, Eq)
+
+defaultEnv :: REPLEnv
+defaultEnv = REPLEnv
+  { envTermOrder = defaultTermOrder
+  , envUseOptimized = False
+  , envSelectionStrategy = NormalStrategy
+  , envSolverOptions = defaultSolverOptions
+  }
+
+type REPLM = ReaderT REPLEnv (ExceptT ProverError IO)
+
+initialState :: REPLEnv -> REPLState
+initialState env =
+  REPLState [] [] [] False True emptyCache (envTermOrder env) (envUseOptimized env) (envSelectionStrategy env) M.empty 30 Nothing (envSolverOptions env)
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -66,11 +92,28 @@ prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..
     showFormula (Ge l r) = prettyExpr l ++ " >= " ++ prettyExpr r
     showFormula (Gt l r) = prettyExpr l ++ " > " ++ prettyExpr r
 
+formatHistory :: [String] -> String
+formatHistory h =
+  "Session History:\n" ++ unlines (zipWith (\i s -> show i ++ ". " ++ s) [1 :: Int ..] (reverse h))
+
 -- =============================================
 -- 3. Helpers
 -- =============================================
 
--- Lemma File I/O
+-- Select Gröbner routine and solver options based on current REPL flags
+currentSolverOptions :: REPLEnv -> REPLState -> SolverOptions
+currentSolverOptions env st =
+  (solverOptions st)
+    { useOptimizedGroebner = useOptimizedBuchberger st || envUseOptimized env
+    , selectionStrategyOpt = selectionStrategy st
+    }
+
+chooseBuchberger :: REPLEnv -> REPLState -> ([Poly] -> [Poly])
+chooseBuchberger env st =
+  if useOptimizedBuchberger st || envUseOptimized env
+     then buchbergerWithStrategy (selectionStrategy st)
+     else buchberger
+
 serializeLemma :: Formula -> String
 serializeLemma (Eq l r) = "(= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 serializeLemma (Ge l r) = "(>= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
@@ -103,7 +146,7 @@ loadLemmasFromFile filename = do
 
 parseCoord :: String -> Expr
 parseCoord s
-  | all (\c -> isDigit c || c == '-' || c == '/') s && any isDigit s = 
+  | all (\c -> isDigit c || c == '-' || c == '/') s && any isDigit s =
       let rat = if '/' `elem` s
                 then let (n, rest) = span (/= '/') s
                      in read n % read (drop 1 rest)
@@ -121,445 +164,390 @@ stripComment (c:cs) = c : stripComment cs
 tryIO :: IO a -> IO (Either IOError a)
 tryIO action = (Right <$> action) `CE.catch` (\e -> return (Left e))
 
+runWithTimeout :: Int -> IO a -> IO (Maybe a)
+runWithTimeout seconds computation = do
+  let microseconds = seconds * 1000000
+  timeout microseconds computation
+
 -- =============================================
 -- 4. Command Processor
 -- =============================================
 
-processLine :: REPLState -> String -> IO (REPLState, String)
-processLine state rawInput = do
+processLine :: REPLEnv -> REPLState -> String -> IO (REPLState, String)
+processLine env st input = do
+  res <- runExceptT (runReaderT (processLineM st input) env)
+  case res of
+    Left err -> pure (st, formatError err)
+    Right r -> pure r
+
+processLineM :: REPLState -> String -> REPLM (REPLState, String)
+processLineM state rawInput = do
   let input = stripComment rawInput
-  let newHist = if null input || ":history" `isPrefixOf` input 
-                then history state 
+  let newHist = if null input || ":history" `isPrefixOf` input
+                then history state
                 else input : history state
   let stateWithHist = state { history = newHist }
 
-  if null (filter (/= ' ') input) then return (state, "")
-  else case words input of
-  
-    (":clean":_) -> do
-        putStr "\ESC[2J\ESC[H"
-        hFlush stdout
-        return (stateWithHist, "")
-        
-    (":cls":_) -> do 
-        putStr "\ESC[2J\ESC[H"
-        hFlush stdout
-        return (stateWithHist, "")
+  if null (filter (/= ' ') input)
+    then pure (state, "")
+    else handleCommand state stateWithHist newHist input
 
-    (":history":_) -> do
-        let h = reverse (history state)
-        let formatted = unlines $ zipWith (\i s -> show i ++ ". " ++ s) [1..] h
-        return (state, "Session History:\n" ++ formatted)
+handleCommand :: REPLState -> REPLState -> [String] -> String -> REPLM (REPLState, String)
+handleCommand state stateWithHist newHist input = do
+  env <- ask
+  let envAwareInitial = initialState env
+  case words input of
+    (":clean":_) -> pure (stateWithHist, "[screen clear skipped]")
+    (":cls":_)   -> pure (stateWithHist, "[screen clear skipped]")
 
-    (":reset":_) -> return (stateWithHist { theory = [], groebnerCache = clearCache (groebnerCache state) }, "Active Theory reset (Lemmas preserved, Cache cleared).")
-    (":clear":_) -> return (initialState { history = newHist }, "Full System Reset.")
+    (":history":_) ->
+      pure (state, formatHistory (history state))
+
+    (":reset":_) ->
+      pure (stateWithHist { theory = [], groebnerCache = clearCache (groebnerCache state) }
+           , "Active Theory reset (Lemmas preserved, Cache cleared).")
+    (":soft-reset":_) ->
+      pure (stateWithHist { theory = [] }
+           , "Active Theory reset (Lemmas preserved, Cache preserved).")
+    (":clear":_) ->
+      pure (envAwareInitial { history = newHist }, "Full System Reset.")
 
     (":verbose":_) -> do
-        let newVerbose = not (verbose state)
-        let msg = if newVerbose
-                  then "Verbose mode ON: Will show detailed proof explanations"
-                  else "Verbose mode OFF: Will show only proof results"
-        return (stateWithHist { verbose = newVerbose }, msg)
+      let newVerbose = not (verbose state)
+          msg = if newVerbose
+                then "Verbose mode ON: Will show detailed proof explanations"
+                else "Verbose mode OFF: Will show only proof results"
+      pure (stateWithHist { verbose = newVerbose }, msg)
 
     (":auto-simplify":_) -> do
-        let newAutoSimplify = not (autoSimplify state)
-        let msg = if newAutoSimplify
-                  then "Auto-simplification ON: Expressions will be simplified automatically"
-                  else "Auto-simplification OFF: Expressions will be shown in raw form"
-        return (stateWithHist { autoSimplify = newAutoSimplify }, msg)
+      let newAutoSimplify = not (autoSimplify state)
+          msg = if newAutoSimplify
+                then "Auto-simplification ON: Expressions will be simplified automatically"
+                else "Auto-simplification OFF: Expressions will be shown in raw form"
+      pure (stateWithHist { autoSimplify = newAutoSimplify }, msg)
 
-    (":list":_)  -> do
-        let tStr = if null (theory state) then "  (None)" else prettyTheory (theory state)
-        let lStr = if null (lemmas state) then "  (None)" else prettyTheory (lemmas state)
-        return (stateWithHist, "Active Assumptions:\n" ++ tStr ++ "\nProven Lemmas:\n" ++ lStr)
+    (":bruteforce":onOff:_) -> do
+      let newFlag = map toLower onOff == "on"
+          opts = solverOptions stateWithHist
+          newOpts = opts { intOptions = (intOptions opts) { allowBruteForce = newFlag } }
+          msg = if newFlag
+                  then "Bounded brute-force search for integer goals: ON"
+                  else "Bounded brute-force search for integer goals: OFF"
+      pure (stateWithHist { solverOptions = newOpts }, msg)
 
-    (":validate":_) -> do
-        let warnings = validateTheory (theory state)
-        return (stateWithHist, formatWarnings warnings)
+    (":set-timeout":timeStr:_) ->
+      if all isDigit timeStr
+      then
+        let seconds = read timeStr :: Int
+        in if seconds < 1
+           then pure (stateWithHist, "Timeout must be at least 1 second")
+           else pure (stateWithHist { solverTimeout = seconds, lastTimeoutSeconds = Nothing }
+                     , "Solver timeout set to: " ++ show seconds ++ " seconds")
+      else pure (stateWithHist, "Usage: :set-timeout <seconds> (e.g., :set-timeout 60)")
 
-    (":cache-stats":_) -> do
-        let stats = getCacheStats (groebnerCache state)
-        return (stateWithHist, formatCacheStats stats)
+    (":show-timeout":_) -> pure (stateWithHist, "Current solver timeout: " ++ show (solverTimeout state) ++ " seconds")
 
-    (":cache-clear":_) -> do
-        let newCache = clearCache (groebnerCache state)
-        return (stateWithHist { groebnerCache = newCache }, "Cache cleared.")
+    (":cache-stats":_) ->
+      pure (stateWithHist, formatCacheStats (getCacheStats (groebnerCache state)))
 
-    (":set-order":orderStr:_) -> do
-        case parseTermOrder orderStr of
-          Nothing -> return (stateWithHist, "Invalid term order. Use: lex, grlex, or grevlex")
-          Just newOrder -> do
-            let newCache = clearCache (groebnerCache state)  -- Clear cache when order changes
-            let msg = "Term order set to: " ++ showTermOrder newOrder ++ "\n(Cache cleared)"
-            return (stateWithHist { termOrder = newOrder, groebnerCache = newCache }, msg)
+    (":clear-cache":_) ->
+      pure (stateWithHist { groebnerCache = emptyCache }, "Groebner cache cleared.")
 
-    (":show-order":_) -> do
-        let current = showTermOrder (termOrder state)
-        return (stateWithHist, "Current term ordering: " ++ current)
+    (":set-order":orderStr:_) ->
+      case parseTermOrder orderStr of
+        Just order -> pure (stateWithHist { termOrder = order }, "Term ordering set to: " ++ showTermOrder order)
+        Nothing    -> pure (stateWithHist, "Invalid term ordering. Supported: grevlex, lex, gradedlex.")
 
-    (":optimize":onOff:_) -> do
-        case onOff of
-          "on"  -> return (stateWithHist { useOptimizedBuchberger = True },
-                          "Optimized Buchberger enabled (2-5x faster with criteria)")
-          "off" -> return (stateWithHist { useOptimizedBuchberger = False },
-                          "Optimized Buchberger disabled (using standard algorithm)")
-          _     -> return (stateWithHist, "Usage: :optimize on|off")
+    (":show-order":_) ->
+      pure (stateWithHist, "Current term ordering: " ++ showTermOrder (termOrder state))
 
-    (":strategy":stratStr:_) -> do
-        let parseStrategy s = case map toLowerChar s of
-              "normal"  -> Just NormalStrategy
-              "sugar"   -> Just SugarStrategy
-              "minimal" -> Just MinimalStrategy
-              _         -> Nothing
-            toLowerChar c | c >= 'A' && c <= 'Z' = toEnum (fromEnum c + 32)
-                          | otherwise = c
-        case parseStrategy stratStr of
-          Nothing -> return (stateWithHist, "Invalid strategy. Use: normal, sugar, or minimal")
-          Just newStrat -> return (stateWithHist { selectionStrategy = newStrat },
-                                   "Selection strategy set to: " ++ show newStrat)
+    (":optimize":onOff:_) ->
+      let newFlag = map toLower onOff == "on"
+          updatedOpts = (solverOptions stateWithHist) { useOptimizedGroebner = newFlag
+                                                     , selectionStrategyOpt = selectionStrategy stateWithHist }
+      in pure (stateWithHist { useOptimizedBuchberger = newFlag
+                             , solverOptions = updatedOpts }
+             , "Buchberger optimization " ++ if newFlag then "ON" else "OFF")
 
-    (":show-buchberger":_) -> do
-        let optStatus = if useOptimizedBuchberger state then "ON (optimized)" else "OFF (standard)"
-        let strategyStr = show (selectionStrategy state)
-        return (stateWithHist, unlines [
-            "Buchberger Configuration:",
-            "  Optimization: " ++ optStatus,
-            "  Strategy: " ++ strategyStr
-          ])
+    (":set-strategy":name:_) ->
+      case map toLower name of
+        "normal" -> 
+          let newOpts = (solverOptions stateWithHist) { selectionStrategyOpt = NormalStrategy }
+          in pure (stateWithHist { selectionStrategy = NormalStrategy, solverOptions = newOpts }, "Selection strategy set to Normal")
+        "sugar"  ->
+          let newOpts = (solverOptions stateWithHist) { selectionStrategyOpt = SugarStrategy }
+          in pure (stateWithHist { selectionStrategy = SugarStrategy, solverOptions = newOpts }, "Selection strategy set to Sugar")
+        "minimal" ->
+          let newOpts = (solverOptions stateWithHist) { selectionStrategyOpt = MinimalStrategy }
+          in pure (stateWithHist { selectionStrategy = MinimalStrategy, solverOptions = newOpts }, "Selection strategy set to Minimal")
+        _        -> pure (stateWithHist, "Unknown strategy. Options: normal | sugar | minimal")
 
-    (":help":_)  -> return (stateWithHist, unlines [
-        "--- Euclid Geometric Prover Commands ---",
-        "",
-        "Geometry Basics:",
-        "  :point A x y z          Define 3D point (or x y for 2D)",
-        "  :assume (= xA 0)        Add assumption",
-        "  :validate               Check for degenerate configurations",
-        "",
-        "Geometric Constraints:",
-        "  (dist2 A B)             Squared distance between points",
-        "  (midpoint A B M)        M is midpoint of AB",
-        "  (perpendicular A B C D) AB ⊥ CD (perpendicular)",
-        "  (parallel A B C D)      AB ∥ CD (parallel)",
-        "  (collinear A B C)       A, B, C are collinear",
-        "  (dot A B C D)           Dot product of vectors AB and CD",
-        "  (circle P C r)          Point P on circle with center C and radius r",
-        "",
-        "Logic & Proving:",
-        "  (= expr1 expr2)         Prove equality (uses Gröbner basis)",
-        "  :auto (= expr1 expr2)   Auto-select best solver (RECOMMENDED)",
-        "  :wu (= expr1 expr2)     Prove using Wu's Method (faster for geometry)",
-        "  :lemma (= a b)          Prove and store theorem",
-        "  :find-counterexample (= a b)  Find counter-example for failed proof",
-        "  :verbose                Toggle detailed proof explanations",
-        "  :auto-simplify          Toggle automatic expression simplification",
-        "  :simplify (expr)        Manually simplify an expression",
-        "",
-        "Lemma Libraries:",
-        "  :save-lemmas file.lemmas  Save proven lemmas to file",
-        "  :load-lemmas file.lemmas  Load lemmas from file",
-        "  :clear-lemmas             Clear all stored lemmas",
-        "",
-        "Advanced (CAD for Inequalities):",
-        "  :project expr var       Compute CAD Shadow (Discriminant)",
-        "  :cad x [y [z]]          Cylindrical Algebraic Decomposition",
-        "  :solve (> p 0) x        Solve inequality (1D)",
-        "  :solve (> p 0) x y      Solve inequality (2D Lifting)",
-        "",
-        "Caching & Performance:",
-        "  :cache-stats            Show cache statistics",
-        "  :cache-clear            Clear Gröbner basis cache",
-        "",
-        "Term Ordering (affects Gröbner basis performance):",
-        "  :set-order lex          Use lexicographic ordering",
-        "  :set-order grlex        Use graded lexicographic ordering",
-        "  :set-order grevlex      Use graded reverse lex (default, fastest)",
-        "  :show-order             Show current term ordering",
-        "",
-        "Buchberger Optimization (2-5x speedup with criteria):",
-        "  :optimize on            Enable optimized Buchberger algorithm",
-        "  :optimize off           Use standard Buchberger (default)",
-        "  :strategy normal        Use normal selection strategy",
-        "  :strategy sugar         Use sugar selection strategy",
-        "  :strategy minimal       Use minimal degree strategy",
-        "  :show-buchberger        Show current optimization settings",
-        "",
-        "Utilities:",
-        "  :load file.euclid       Run script",
-        "  :list, :history, :clean, :reset, :verbose, :auto-simplify, :validate, :q"
-        ])
+    (":list":_) -> do
+      let th = theory state
+      let formatted = prettyTheory th
+      pure (stateWithHist, "Active Theory:\n" ++ formatted)
 
-    -- COMMAND: :solve <Formula> <Var1> [Var2]
-    (":solve":rest) -> do
-       let inputStr = unwords rest
-
-       case parseFormulaWithRest inputStr of
-         Left err -> return (stateWithHist, formatError err)
-         Right (formula, vars) -> do
-           
-           if null vars then return (stateWithHist, "Usage: :solve (formula) x [y]")
-           else do
-             -- Extract polynomial
-             let (poly, isGt) = case formula of
-                                  Gt l r -> (toPolySub (buildSubMap (theory state)) (Sub l r), True)
-                                  Ge l r -> (toPolySub (buildSubMap (theory state)) (Sub l r), True)
-                                  Eq l r -> (toPolySub (buildSubMap (theory state)) (Sub l r), False)
-                                  -- FIXED: Removed redundant pattern match
-
-             case vars of
-                 -- 1D CASE
-                 [v] -> do
-                     let recPoly = toRecursive poly v
-                     let coeffs = map (\p -> case toUnivariate p of Just (_, [c]) -> c; Just (_, []) -> 0; _ -> 0) recPoly
-                     let samples = samplePoints coeffs
-                     let solutions = filter (\x -> let val = evalPoly coeffs x in if isGt then val > 0 else val == 0) samples
-                     return (stateWithHist, "1D Solutions (" ++ v ++ "):\n" ++ show solutions)
-
-                 -- 2D CASE (Lifting)
-                 [vx, vy] -> do
-                     -- 1. Project x onto y (Discriminant)
-                     let shadow = discriminant poly vx
-                     
-                     -- 2. Solve for y samples (Base Phase)
-                     let Just (_, shadowCoeffs) = toUnivariate shadow
-                     let ySamples = samplePoints shadowCoeffs
-                     
-                     -- 3. Lift: Check x for each y sample
-                     let results = flip map ySamples $ \yVal -> do
-                             let yPoly = polyFromConst yVal
-                             let subMap = M.singleton vy yPoly
-                             let xPoly = evaluatePoly subMap poly
-                             
-                             let Just (_, xCoeffs) = toUnivariate xPoly
-                             let xSamples = samplePoints xCoeffs
-                             
-                             let validX = filter (\x -> let val = evalPoly xCoeffs x in if isGt then val > 0 else val == 0) xSamples
-                             
-                             if null validX then Nothing else Just (yVal, validX)
-                             
-                     let validRegions = filter (\x -> case x of Nothing -> False; _ -> True) results
-                     
-                     return (stateWithHist, "2D CAD Solution Regions (y, [valid x samples]):\n" ++ show validRegions)
-
-                 _ -> return (stateWithHist, "Only 1D and 2D solving supported currently.")
-
-    (":lemma":_) ->
-        let str = drop 7 input
-        in case parseFormulaPrefix str of
-             Left err -> return (stateWithHist, formatError err)
-             Right formula -> do
-               let fullContext = theory state ++ lemmas state
-               let buchbergerFunc = if useOptimizedBuchberger state
-                                    then buchbergerWithStrategy (selectionStrategy state)
-                                    else buchberger
-               let (isProved, reason, trace, newCache) = proveTheoryWithOptions buchbergerFunc (Just (groebnerCache state)) fullContext formula
-               if isProved
-                 then do
-                   let msg = "LEMMA ESTABLISHED: " ++ reason ++ "\n(Saved)" ++
-                             (if verbose state then "\n\n" ++ formatProofTrace trace else "")
-                   let updatedState = stateWithHist { lemmas = formula : lemmas state,
-                                                       groebnerCache = maybe (groebnerCache state) id newCache }
-                   return (updatedState, msg)
-                 else return (stateWithHist, "LEMMA FAILED: " ++ reason)
-
-    (":find-counterexample":_) ->
-        let str = drop 20 input
-        in case parseFormulaPrefix str of
-             Left err -> return (stateWithHist, formatError err)
-             Right formula -> do
-               let fullContext = theory state ++ lemmas state
-               case findCounterExample fullContext formula of
-                 Just ce -> return (stateWithHist, formatCounterExample ce)
-                 Nothing -> return (stateWithHist, "No counter-example found with simple value sampling.\nThis does NOT mean the formula is true - try a proof instead.")
+    (":list-lemmas":_) -> do
+      let formatted = prettyTheory (lemmas state)
+      pure (stateWithHist, "Stored Lemmas:\n" ++ formatted)
 
     (":save-lemmas":filename:_) -> do
-        if null (lemmas state)
-          then return (stateWithHist, "No lemmas to save.")
-          else do
-            saveLemmasToFile filename (lemmas state)
-            return (stateWithHist, "Saved " ++ show (length (lemmas state)) ++ " lemmas to " ++ filename)
-
-    (":save-lemmas":_) -> return (stateWithHist, "Usage: :save-lemmas filename.lemmas")
+      liftIO $ saveLemmasToFile filename (lemmas state)
+      pure (stateWithHist, "Lemmas saved to " ++ filename)
 
     (":load-lemmas":filename:_) -> do
-        result <- loadLemmasFromFile filename
-        case result of
-          Left err -> return (stateWithHist, "Error loading lemmas: " ++ err)
-          Right newLemmas -> do
-            let combined = newLemmas ++ lemmas state
-            return (stateWithHist { lemmas = combined },
-                    "Loaded " ++ show (length newLemmas) ++ " lemmas from " ++ filename ++
-                    "\nTotal lemmas: " ++ show (length combined))
+      loadResult <- liftIO $ loadLemmasFromFile filename
+      case loadResult of
+        Left err -> pure (stateWithHist, err)
+        Right lemmasLoaded -> pure (stateWithHist { lemmas = lemmasLoaded }, "Lemmas loaded from " ++ filename)
 
-    (":load-lemmas":_) -> return (stateWithHist, "Usage: :load-lemmas filename.lemmas")
-
-    (":clear-lemmas":_) -> do
-        let count = length (lemmas state)
-        if count == 0
-          then return (stateWithHist, "No lemmas to clear.")
-          else return (stateWithHist { lemmas = [] }, "Cleared " ++ show count ++ " lemmas.")
-
-    (":simplify":_) ->
-        let str = drop 10 input
-        in if null (filter (/= ' ') str)
-           then return (stateWithHist, "Usage: :simplify (expression)")
-           else do
-             let parseInput = "(= " ++ str ++ " 0)"
-             case parseFormulaPrefix parseInput of
-               Left err -> return (stateWithHist, formatError err)
-               Right (Eq e _) -> do
-                 let simplified = simplifyExpr e
-                 let poly = toPolySub (buildSubMap (theory state)) simplified
-                 return (stateWithHist,
-                         "Original:    " ++ prettyExpr e ++ "\n" ++
-                         "Simplified:  " ++ prettyExpr simplified ++ "\n" ++
-                         "As Polynomial: " ++ prettyPolyNice poly)
-               _ -> return (stateWithHist, "Parse Error: Could not parse expression")
-
-    (":project":args) -> do
-         if null args
-           then return (stateWithHist, "Usage: :project (expression) var")
-           else do
-             let varStr = last args
-             let exprParts = init args
-             if null exprParts
-               then return (stateWithHist, "Usage: :project (expression) var")
-               else do
-                 let exprStr = unwords exprParts
-                 let parseInput = "(= " ++ exprStr ++ " 0)"
-                 case parseFormulaPrefix parseInput of
-                   Right (Eq e _) -> do
-                       let poly = toPolySub (buildSubMap (theory state ++ lemmas state)) e
-                       let shadow = discriminant poly varStr
-                       return (stateWithHist, "Projection (Discriminant w.r.t " ++ varStr ++ "):\n" ++ prettyPoly shadow)
-                   Left err -> return (stateWithHist, formatError err)
-                   _ -> return (stateWithHist, "Projection Failed: Unknown logic error.")
-
-    (":cad":vars) -> do
-         if null vars
-           then return (stateWithHist, "Usage: :cad x [y [z]] - Decompose space using CAD")
-           else do
-             let fullContext = theory state ++ lemmas state
-             let subM = buildSubMap fullContext
-             let constraintPolys = [ toPolySub subM (Sub l r) | Eq l r <- fullContext ]
-             let cells = cadDecompose constraintPolys vars
-             let output = "CAD Decomposition (" ++ show (length cells) ++ " cells):\n\n" ++
-                          formatCADCells cells
-             return (stateWithHist, output)
-
-    (":wu":_) ->
-        let str = drop 4 input
-        in case parseFormulaPrefix str of
-             Left err -> return (stateWithHist, formatError err)
-             Right formula -> do
-               case formula of
-                 Eq _ _ -> do
-                   let fullContext = theory state ++ lemmas state
-                   let trace = wuProveWithTrace fullContext formula
-                   let (isProved, reason) = wuProve fullContext formula
-                   if isProved
-                     then do
-                       let msg = "WU'S METHOD: PROVED\n" ++ reason ++
-                                 (if verbose state then "\n\n" ++ formatWuTrace trace else "")
-                       return (stateWithHist, msg)
-                     else do
-                       let msg = "WU'S METHOD: NOT PROVED\n" ++ reason ++
-                                 (if verbose state then "\n\n" ++ formatWuTrace trace else "")
-                       return (stateWithHist, msg)
-                 _ -> return (stateWithHist, "ERROR: Wu's method only supports equality goals (not inequalities)\nUsage: :wu (= expr1 expr2)")
-
-    (":auto":_) ->
-        let str = drop 6 input
-        in case parseFormulaPrefix str of
-             Left err -> return (stateWithHist, formatError err)
-             Right formula -> do
-               let fullContext = theory state ++ lemmas state
-               let result = autoSolve fullContext formula
-               let msg = formatAutoSolveResult result (verbose state)
-               return (stateWithHist, msg)
+    (":help":_) -> pure (stateWithHist, unlines
+      [ "Commands:"
+      , "  :reset                  Reset theory (clear assumptions)"
+      , "  :soft-reset             Reset theory (keep cache/lemmas)"
+      , "  :clear                  Full reset"
+      , "  :list                   Show current theory"
+      , "  :list-lemmas            Show stored lemmas"
+      , "  :save-lemmas <file>     Save lemmas to file"
+      , "  :load-lemmas <file>     Load lemmas from file"
+      , "  :verbose                Toggle verbose mode"
+      , "  :auto-simplify          Toggle automatic expression simplification"
+      , "  :bruteforce on|off      Toggle bounded brute-force fallback for integer goals"
+      , "  :set-timeout <seconds>  Set solver timeout (default: 30)"
+      , "  :show-timeout           Show current timeout setting"
+      , "  :set-order <order>      Set term ordering (grevlex|lex|gradedlex)"
+      , "  :show-order             Show current term ordering"
+      , "  :optimize on|off        Toggle Buchberger optimization"
+      , "  :set-strategy name      Set selection strategy (normal|sugar|minimal)"
+      , "  :cache-stats            Show Groebner cache statistics"
+      , "  :clear-cache            Clear Groebner cache"
+      , "  :point A x y [z]        Define a point"
+      , "  :assume (= lhs rhs)     Add assumption"
+      , "  :lemma (= lhs rhs)      Save a lemma"
+      , "  :prove (= lhs rhs)      Prove equality"
+      , "  :wu (= lhs rhs)         Wu's method"
+      , "  :auto (= lhs rhs)       Automatic solver"
+      , "  :solve <file>           Solve each formula in file"
+      , "  :load <file>            Load and execute commands from file"
+      , "  :history                Show session history"
+      , "  :quit/:q                Exit"
+      ])
 
     (":point":name:xStr:yStr:zStr:_) -> do
-         let exprX = parseCoord xStr
-         let exprY = parseCoord yStr
-         let exprZ = parseCoord zStr
-         let asmX = Eq (Var ("x" ++ name)) exprX
-         let asmY = Eq (Var ("y" ++ name)) exprY
-         let asmZ = Eq (Var ("z" ++ name)) exprZ
-         return (stateWithHist { theory = asmX : asmY : asmZ : theory state }, 
-                 "Defined 3D Point " ++ name ++ " at (" ++ xStr ++ ", " ++ yStr ++ ", " ++ zStr ++ ")")
-    
+      let exprX = parseCoord xStr
+          exprY = parseCoord yStr
+          exprZ = parseCoord zStr
+          asmX = Eq (Var ("x" ++ name)) exprX
+          asmY = Eq (Var ("y" ++ name)) exprY
+          asmZ = Eq (Var ("z" ++ name)) exprZ
+      pure (stateWithHist { theory = asmX : asmY : asmZ : theory state }
+           , "Defined 3D Point " ++ name ++ " at (" ++ xStr ++ ", " ++ yStr ++ ", " ++ zStr ++ ")")
+
     (":point":name:xStr:yStr:_) -> do
-         let exprX = parseCoord xStr
-         let exprY = parseCoord yStr
-         let exprZ = Const 0
-         let asmX = Eq (Var ("x" ++ name)) exprX
-         let asmY = Eq (Var ("y" ++ name)) exprY
-         let asmZ = Eq (Var ("z" ++ name)) exprZ
-         return (stateWithHist { theory = asmX : asmY : asmZ : theory state }, 
-                 "Defined 2D Point " ++ name ++ " at (" ++ xStr ++ ", " ++ yStr ++ ")")
-    
-    (":point":_) -> return (stateWithHist, "Usage: :point A x y z  OR  :point A x y")
+      let exprX = parseCoord xStr
+          exprY = parseCoord yStr
+          exprZ = Const 0
+          asmX = Eq (Var ("x" ++ name)) exprX
+          asmY = Eq (Var ("y" ++ name)) exprY
+          asmZ = Eq (Var ("z" ++ name)) exprZ
+      pure (stateWithHist { theory = asmX : asmY : asmZ : theory state }
+           , "Defined 2D Point " ++ name ++ " at (" ++ xStr ++ ", " ++ yStr ++ ")")
+
+    (":point":_) -> pure (stateWithHist, "Usage: :point A x y z  OR  :point A x y")
 
     (":assume":_) ->
-        let str = drop 8 input
-        in case parseFormulaPrefix str of
-             Right f -> return (stateWithHist { theory = f : theory state }, "Assumed: " ++ show f)
-             Left err -> return (stateWithHist, formatError err)
+      let str = drop 8 input
+      in case parseFormulaWithMacros (macros state) str of
+           Right f -> pure (stateWithHist { theory = f : theory state }, "Assumed: " ++ prettyFormula f)
+           Left err -> pure (stateWithHist, formatError err)
+
+    (":lemma":_) ->
+      let str = drop 7 input
+      in case parseFormulaWithMacros (macros state) str of
+           Right f -> pure (stateWithHist { lemmas = f : lemmas state }, "Lemma saved: " ++ prettyFormula f)
+           Left err -> pure (stateWithHist, formatError err)
+
+    (":prove":_) ->
+      let str = drop 7 input
+      in case parseFormulaWithMacros (macros state) str of
+           Left err -> pure (stateWithHist, formatError err)
+           Right formula -> do
+             let current = solverTimeout state
+                 groebnerFn = chooseBuchberger env stateWithHist
+             maybeResult <- liftIO $ runWithTimeout current $ do
+               let fullContext = theory state ++ lemmas state
+               let (proved, reason, trace, cache') = proveTheoryWithOptions groebnerFn (Just (groebnerCache state)) fullContext formula
+               let msg = (if proved then "RESULT: PROVED\n" else "RESULT: NOT PROVED\n")
+                         ++ reason ++
+                         (if verbose state then "\n\n" ++ formatProofTrace trace else "")
+               _ <- CE.evaluate (length msg)
+               return (stateWithHist { groebnerCache = maybe (groebnerCache state) id cache' }, msg)
+             
+             case maybeResult of
+               Just res -> pure res
+               Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+
+    (":wu":_) ->
+      let str = drop 4 input
+      in case parseFormulaWithMacros (macros state) str of
+           Left err -> return (stateWithHist, formatError err)
+           Right formula -> case formula of
+             Eq _ _ -> do
+               let current = solverTimeout state
+               maybeResult <- liftIO $ runWithTimeout current $ do
+                 let fullContext = theory state ++ lemmas state
+                 let (isProved, reason) = wuProve fullContext formula
+                 let trace = wuProveWithTrace fullContext formula
+                 let msg = if isProved
+                           then "WU'S METHOD: PROVED\n" ++ reason ++ (if verbose state then "\n\n" ++ formatWuTrace trace else "")
+                           else "WU'S METHOD: NOT PROVED\n" ++ reason ++ (if verbose state then "\n\n" ++ formatWuTrace trace else "")
+                 _ <- CE.evaluate (length msg)
+                 return (stateWithHist, msg)
+               
+               case maybeResult of
+                 Just res -> pure res
+                 Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+             _ -> pure (stateWithHist, "ERROR: Wu's method only supports equality goals (not inequalities)\nUsage: :wu (= expr1 expr2)")
+
+    (":auto":_) ->
+      let str = drop 6 input
+      in case parseFormulaWithMacros (macros state) str of
+           Left err -> pure (stateWithHist, formatError err)
+           Right formula ->
+             let fullContext = theory state ++ lemmas state
+                 opts = currentSolverOptions env stateWithHist
+                 current = solverTimeout state
+             in do
+               maybeResult <- liftIO $ runWithTimeout current $ CE.evaluate (autoSolve opts fullContext formula)
+               case maybeResult of
+                 Nothing -> do
+                   let bumped = max (current + 1) (current * 2)
+                   liftIO $ putStrLn ("[TIMEOUT] Proof attempt exceeded " ++ show current ++ " seconds. Retrying automatically with " ++ show bumped ++ "s... (use :set-timeout to override)")
+                   retry <- liftIO $ runWithTimeout bumped $ CE.evaluate (autoSolve opts fullContext formula)
+                   case retry of
+                     Nothing ->
+                       let failMsg = "[TIMEOUT] Second attempt also timed out at " ++ show bumped ++ "s. Simplify the problem or increase timeout manually."
+                       in pure (stateWithHist { solverTimeout = bumped, lastTimeoutSeconds = Just current }, failMsg)
+                     Just result2 ->
+                       let resMsg = formatAutoSolveResult result2 (verbose state) ++
+                                    "\n(Note: timeout auto-increased from " ++ show current ++ "s to " ++ show bumped ++ "s after a previous timeout.)"
+                       in pure (stateWithHist { solverTimeout = bumped, lastTimeoutSeconds = Just current }, resMsg)
+                 Just result ->
+                   let msg = formatAutoSolveResult result (verbose state)
+                   in pure (stateWithHist, msg)
+
+    (":solve":filename:_) -> do
+      content <- liftIO $ readFile filename
+      let formulas = lines content
+      results <- liftIO $ mapM (processFormulaLine env stateWithHist) formulas
+      let msgs = unlines results
+      pure (stateWithHist, msgs)
 
     (":load":filename:_) -> do
-        content <- readFile filename
-        let linesOfFile = lines content
-        (finalState, _) <- foldM (\(st, _) line -> do
-                                     (newSt, msg) <- processLine st line
-                                     if null msg then return () else putStrLn ("[" ++ filename ++ "] " ++ msg)
-                                     return (newSt, "")
-                                 ) (stateWithHist, "") linesOfFile
-        return (finalState, "File loaded: " ++ filename)
+      content <- liftIO $ readFile filename
+      st' <- liftIO $ processScriptStreaming env stateWithHist content
+      pure (st', "File loaded: " ++ filename)
 
-    _ ->
-        case parseFormulaPrefix input of
-          Left err -> return (stateWithHist, formatError err)
-          Right formula -> do
-            let fullContext = theory state ++ lemmas state
-            -- USE ROUTER BY DEFAULT for intelligent solver selection
-            let result = autoSolve fullContext formula
-            let proved = isProved result
-            let reason = proofReason result
-            -- Display router's result
-            if proved
-               then do
-                 let msg = "RESULT: PROVED\n" ++
-                          "Solver: " ++ show (selectedSolver result) ++ "\n" ++
-                          "Reason: " ++ reason ++
-                          (if verbose state
-                           then "\n\n" ++ formatAutoSolveResult result True
-                           else "")
-                 return (stateWithHist, msg)
-               else do
-                 -- Try to find counter-example when proof fails
-                 let counterExampleMsg = case findCounterExample fullContext formula of
-                       Just ce -> "\n\n" ++ formatCounterExample ce
-                       Nothing -> "\n\nNo counter-example found with simple sampling.\nUse :find-counterexample to try more values."
-                 return (stateWithHist, "RESULT: NOT PROVED\n" ++
-                                       "Solver: " ++ show (selectedSolver result) ++ "\n" ++
-                                       "Reason: " ++ reason ++ counterExampleMsg)
+    (":q":_) -> pure (stateWithHist, "Goodbye.")
+    (":quit":_) -> pure (stateWithHist, "Goodbye.")
+
+    -- If it is not a command, try to parse as a formula and auto-solve
+    _ -> case parseFormulaWithMacros (macros state) input of
+           Right formula ->
+             let fullContext = theory state ++ lemmas state
+                 current = solverTimeout state
+             in do
+               maybeResult <- liftIO $ runWithTimeout current $ CE.evaluate (autoSolve (currentSolverOptions env state) fullContext formula)
+               case maybeResult of
+                 Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                 Just result ->
+                   let msg = formatAutoSolveResult result (verbose state)
+                   in pure (stateWithHist, msg)
+           Left err -> pure (stateWithHist, formatError err)
 
 -- =============================================
 -- 5. REPL Loop
 -- =============================================
 
-repl :: REPLState -> IO ()
-repl state = do
-  putStr "Euclid> "
+repl :: REPLEnv -> REPLState -> IO ()
+repl env state = do
+  isTerminal <- hIsTerminalDevice stdin
+  if isTerminal then putStr "Euclid> " else return ()
   hFlush stdout
-  input <- getLine
-  if input `elem` ["exit", "quit", ":q"] then putStrLn "Goodbye."
-  else do
-    result <- tryIO (processLine state input)
-    case result of
-      Left err -> do
-        putStrLn $ "Error: " ++ show err
-        repl state
-      Right (newState, msg) -> do
-        if null msg then return () else putStrLn msg
-        putStrLn ""
-        repl newState
+  isEOF <- hIsEOF stdin
+  if isEOF
+    then putStrLn "\n[End of input]"
+    else do
+      eof <- CE.try getLine :: IO (Either CE.IOException String)
+      case eof of
+        Left _ -> putStrLn "\n[End of input]"
+        Right input -> do
+          if not isTerminal then putStrLn ("> " ++ input) else return ()
+          if input `elem` ["exit", "quit", ":q"]
+            then putStrLn "Goodbye."
+            else do
+              result <- tryIO (processLine env state input)
+              case result of
+                Left err -> do
+                  putStrLn $ "Error: " ++ show err
+                  repl env state
+                Right (newState, msg) -> do
+                  unless (null msg) (putStrLn msg)
+                  putStrLn ""
+                  repl env newState
+      `CE.catch` (\e -> do
+          let err = show (e :: CE.SomeException)
+          putStrLn $ "\n!!! CRITICAL ERROR !!!"
+          putStrLn $ "The system encountered an unexpected error: " ++ err
+          putStrLn "The REPL state has been preserved. You may continue, but investigate the last command."
+          putStrLn ""
+          repl env state)
+
+-- =============================================
+-- 6. Helpers for :solve
+-- =============================================
+
+processFormulaLine :: REPLEnv -> REPLState -> String -> IO String
+processFormulaLine env state line =
+  let trimmed = dropWhile (== ' ') line
+  in if null trimmed || isCommentLine trimmed
+       then return ""
+       else case parseFormulaPrefix trimmed of
+              Left err -> return $ formatError err
+              Right formula -> do
+                let fullContext = theory state ++ lemmas state
+                let result = autoSolve (currentSolverOptions env state) fullContext formula
+                return (formatAutoSolveResult result (verbose state))
+
+-- Streaming script processing: prints each result as it is produced
+processScriptStreaming :: REPLEnv -> REPLState -> String -> IO REPLState
+processScriptStreaming env state content = do
+  let cmds = lines content
+  foldM step state cmds
+  where
+    step st cmd = do
+      let trimmed = dropWhile (== ' ') cmd
+      (st', msg) <- case trimmed of
+                      "" -> return (st, "")
+                      _ | isCommentLine trimmed -> return (st, trimmed)
+                      (c:_) | c /= ':' -> do
+                        putStrLn ("> " ++ trimmed)
+                        -- Treat as formula line: auto-solve with timeout
+                        case parseFormulaPrefix trimmed of
+                          Right formula -> do
+                            let fullContext = theory st ++ lemmas st
+                                current = solverTimeout st
+                            maybeRes <- runWithTimeout current $ CE.evaluate (autoSolve (currentSolverOptions env st) fullContext formula)
+                            case maybeRes of
+                              Nothing -> return (st, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                              Just res -> return (st, formatAutoSolveResult res (verbose st))
+                          Left err -> return (st, formatError err)
+                      _ -> do
+                        putStrLn ("> " ++ trimmed)
+                        processLine env st cmd
+      if null msg then return () else putStrLn msg
+      return st'
+
+isCommentLine :: String -> Bool
+isCommentLine l =
+  ("--" `isPrefixOf` l) || ("//" `isPrefixOf` l) || ("#" `isPrefixOf` l) || (";" `isPrefixOf` l)

@@ -1,0 +1,42 @@
+-- Stress scenarios for integer solver (LP tightening + Cooper elimination)
+
+:reset
+-- Modulus unsat: 2x + 1 = 0 has no integer solution
+(= (+ (* 2 (int x)) (int-const 1)) (int-const 0))
+
+:reset
+-- Unique solution: 3x - 6 = 0
+(= (+ (* 3 (int x)) (int-const -6)) (int-const 0))
+
+:reset
+-- Bounded inequalities with a tight intersection
+:assume (>= (int x) (int-const 0))
+:assume (>= (int y) (int-const 0))
+:assume (>= (int-const 5) (int x))
+:assume (>= (int-const 4) (int y))
+(>= (+ (int x) (int y)) (int-const 9))
+
+:reset
+-- Mixed modulus + bounds (Cooper-style tightening)
+:assume (>= (int x) (int-const 0))
+:assume (>= (int-const 10) (int x))
+:assume (= (+ (* 4 (int x)) (int-const 2)) (int-const 0))
+(>= (int x) (int-const 1))
+
+:reset
+-- Two-variable elimination with small bounds
+:assume (>= (int x) (int-const 0))
+:assume (>= (int y) (int-const 0))
+:assume (>= (int-const 3) (int x))
+:assume (>= (int-const 3) (int y))
+:assume (= (+ (* 2 (int x)) (int y)) (int-const 7))
+(>= (int x) (int-const 2))
+
+:reset
+-- Detect infeasibility after combined bounds
+:assume (>= (int x) (int-const 0))
+:assume (>= (int-const 1) (int x))
+:assume (>= (int-const 0) (int y))
+:assume (>= (int-const 1) (int y))
+:assume (>= (+ (int x) (int y)) (int-const 3))
+(= (int-const 0) (int-const 0))

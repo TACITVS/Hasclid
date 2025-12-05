@@ -1,0 +1,8 @@
+:reset
+:point A 0 0
+:point B 4 0
+:point C 4 3
+:point D 0 3
+:assume (= (perpendicular A B B C) 0)
+:assume (= (perpendicular B C C D) 0)
+(= (perpendicular C D D A) 0)
