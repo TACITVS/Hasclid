@@ -12,10 +12,8 @@ module Validation
 
 import Expr
 import Prover (buildSubMap, toPolySub)
-import Error (ProverError(..), ValidationErrorType(..))
 import qualified Data.Map.Strict as M
 import Data.List (nub, tails)
-import Data.Ratio (numerator, denominator)
 
 -- =============================================
 -- Validation Warning Types

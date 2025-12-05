@@ -6,10 +6,9 @@ module CounterExample
   , formatCounterExample
   ) where
 
-import Expr (Formula(..), Expr(..), Poly(..), Monomial(..), Theory, polyFromConst, prettyRational, containsSqrtFormula)
-import Prover (buildSubMap, toPolySub, evaluatePoly)
+import Expr (Formula(..), Expr(..), Poly(..), Monomial(..), Theory, polyFromConst, prettyRational, containsSqrtFormula, buildSubMap, toPolySub)
 import qualified Data.Map.Strict as M
-import Data.Ratio ((%), numerator, denominator)
+import Data.Ratio ((%))
 import Data.List (nub)
 
 -- =============================================
@@ -125,7 +124,7 @@ generateStrategicAssignments vars =
       allOnes = M.fromList [(v, 1) | v <- vars]
 
       -- Pattern 3: Sequential (1, 2, 3, ...)
-      sequential = M.fromList (zip vars (map fromIntegral [1..]))
+      sequential = M.fromList (zip vars (map fromIntegral [1 .. length vars]))
 
       -- Pattern 4: Alternating 0, 1, 0, 1, ...
       alternating = M.fromList (zip vars (cycle [0, 1]))

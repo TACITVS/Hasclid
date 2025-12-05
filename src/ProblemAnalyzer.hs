@@ -32,8 +32,6 @@ module ProblemAnalyzer
   ) where
 
 import Expr
-import qualified Data.Map.Strict as M
-import qualified Data.Set as S
 import Data.List (nub)
 
 -- =============================================

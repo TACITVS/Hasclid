@@ -18,8 +18,8 @@ module CADLift
   ) where
 
 import Expr
-import CAD (discriminant, toRecursive, resultant, completeProjection)
-import Sturm (isolateRoots, samplePoints, evalPoly)
+import CAD (completeProjection)
+import Sturm (isolateRoots)
 import qualified Data.Map.Strict as M
 import Data.List (nub, sort, sortBy, partition)
 import Data.Ord (comparing)
@@ -136,7 +136,7 @@ liftCell :: [Poly] -> String -> (CADCell, SignAssignment) -> [(CADCell, SignAssi
 liftCell polys var (lowerCell, lowerSigns) =
   let
       -- Substitute lower cell's sample point into polynomials
-      substituted = [ evaluatePoly (samplePoint lowerCell) p | p <- polys ]
+      substituted = [ evaluatePolyRational(samplePoint lowerCell) p | p <- polys ]
 
       -- Find critical values (roots) in current variable.
       -- IMPORTANT: Track WHICH polynomial generated the root!
@@ -293,7 +293,7 @@ generateSamplesClassified sorted@(first:_) =
 -- | Determine sign of polynomial at a point
 determineSign :: Poly -> M.Map String Rational -> Sign
 determineSign p assignment =
-  let evaluated = evaluatePoly assignment p
+  let evaluated = evaluatePolyRational assignment p
   in case polyToRational evaluated of
        Just r | r > 0 -> Positive
               | r < 0 -> Negative
@@ -506,8 +506,8 @@ polyToRational (Poly m)
   | otherwise = Nothing
 
 -- | Evaluate polynomial at a point (PARTIAL EVALUATION)
-evaluatePoly :: M.Map String Rational -> Poly -> Poly
-evaluatePoly assignment (Poly m) =
+evaluatePolyRational :: M.Map String Rational -> Poly -> Poly
+evaluatePolyRational assignment (Poly m) =
   let
       -- Partial evaluation: substitute only assigned variables
       evalMonomial (Monomial vars) coeff =
@@ -637,7 +637,7 @@ checkBounds :: QuantVar -> EvaluationTree -> Bool
 checkBounds q tree =
     let pt = case tree of EvalNode c _ -> samplePoint c; EvalLeaf c _ -> samplePoint c
         valQ = M.lookup (qvName q) pt
-        eval e = polyToRational (evaluatePoly pt (exprToPoly e))
+        eval e = polyToRational (evaluatePolyRational pt (exprToPoly e))
     in case valQ of
          Nothing -> True -- Should not happen if tree is correct
          Just val ->

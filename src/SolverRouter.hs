@@ -39,17 +39,18 @@ module SolverRouter
 
 import Expr
 import ProblemAnalyzer
-import GeoSolver (solveGeoWithTrace, GeoResult(..), formatGeoResult)
-import Wu (wuProve, wuProveWithTrace, WuTrace, formatWuTrace)
-import Prover (proveTheoryWithOptions, ProofTrace, formatProofTrace, buchberger, buildSubMap, toPolySub, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive)
+import GeoSolver (solveGeoWithTrace, GeoResult(..))
+import Wu (wuProve, wuProveWithTrace, formatWuTrace, proveExistentialWu)
+import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive)
 import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
 import CADLift (proveFormulaCAD)
 import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..))
 import SqrtElim (eliminateSqrt)
+import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import Data.List (delete)
-import Data.Maybe (mapMaybe, isJust)
+import Data.Maybe (isJust)
 
 -- =============================================
 -- Data Types
@@ -60,7 +61,7 @@ data SolverChoice
   = UseGeoSolver    -- Geometric constraint propagation (FASTEST - Phase 1)
   | UseWu           -- Wu's method (fast for geometry)
   | UseGroebner     -- Gröbner basis (general purpose)
-  | UseConstructiveGroebner -- Constructive existence for equations (Elimination)
+  | UseConstructiveWu -- Constructive existence using Wu's Method (Triangularization)
   | UseCAD          -- CAD (for inequalities, limited to 1D-2D)
   | Unsolvable      -- Problem too complex or type not supported
   deriving (Show, Eq)
@@ -77,10 +78,23 @@ data AutoSolveResult = AutoSolveResult
 
 data SolverOptions = SolverOptions
   { intOptions :: IntSolveOptions
+  , useOptimizedGroebner :: Bool
+  , selectionStrategyOpt :: SelectionStrategy
   } deriving (Show, Eq)
 
 defaultSolverOptions :: SolverOptions
-defaultSolverOptions = SolverOptions { intOptions = defaultIntSolveOptions }
+defaultSolverOptions = SolverOptions
+  { intOptions = defaultIntSolveOptions
+  , useOptimizedGroebner = False
+  , selectionStrategyOpt = NormalStrategy
+  }
+
+-- | Pick the Gröbner routine based on solver options
+selectGroebner :: SolverOptions -> ([Poly] -> [Poly])
+selectGroebner opts =
+  if useOptimizedGroebner opts
+     then buchbergerWithStrategy (selectionStrategyOpt opts)
+     else buchberger
 
 -- =============================================
 -- Main Automatic Solving Functions
@@ -101,6 +115,7 @@ autoSolve opts theory goal =
   let
     -- Analyze the problem structure
     profile = analyzeProblem theory goal
+    groebner = selectGroebner opts
   in
     case goal of
       Exists qs inner
@@ -123,13 +138,13 @@ autoSolve opts theory goal =
                  , proofReason = reason
                  , detailedTrace = Nothing
                  }
-      Forall qs inner
+      Forall qs _
         | all (\q -> qvType q == QuantInt) qs
         , not (any containsQuantifier theory) ->
             let intNames = map qvName qs
                 theoryInt = map (promoteIntVars intNames) theory
                 goalInt = promoteIntVars intNames goal
-                (proved, reason, _, _) = proveTheoryWithOptions buchberger Nothing theoryInt goalInt
+                (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theoryInt goalInt
             in AutoSolveResult
                  { selectedSolver = UseGroebner
                  , solverReason = "Integer universal handled by integer solver (negation refutation)"
@@ -138,10 +153,10 @@ autoSolve opts theory goal =
                  , proofReason = reason
                  , detailedTrace = Nothing
                  }
-      Exists qs inner
+      Exists qs _
         | all (\q -> qvType q == QuantReal) qs
         , not (any containsQuantifier theory) ->
-            let (proved, reason, _, _) = proveTheoryWithOptions buchberger Nothing theory goal
+            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory goal
             in AutoSolveResult
                  { selectedSolver = UseCAD
                  , solverReason = "Real existential handled by CAD satisfiability"
@@ -150,11 +165,11 @@ autoSolve opts theory goal =
                  , proofReason = reason
                  , detailedTrace = Nothing
                  }
-      Forall qs inner
+      Forall qs _
         | all (\q -> qvType q == QuantReal) qs
         , all (\q -> isJust (qvLower q) && isJust (qvUpper q)) qs
         , not (any containsQuantifier theory) ->
-            let (proved, reason, _, _) = proveTheoryWithOptions buchberger Nothing theory goal
+            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory goal
             in AutoSolveResult
                  { selectedSolver = UseGroebner
                  , solverReason = "Bounded real universal handled by linear interval check"
@@ -164,10 +179,10 @@ autoSolve opts theory goal =
                  , detailedTrace = Nothing
                  }
       -- Unbounded or partially bounded real universals via CAD refutation
-      Forall qs inner
+      Forall qs _
         | all (\q -> qvType q == QuantReal) qs
         , not (any containsQuantifier theory) ->
-            let (proved, reason, _, _) = proveTheoryWithOptions buchberger Nothing theory goal
+            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory goal
             in AutoSolveResult
                  { selectedSolver = UseCAD
                  , solverReason = "Real universal handled by CAD refutation"
@@ -211,27 +226,20 @@ autoSolve opts theory goal =
               , detailedTrace = Just (unlines steps)
               }
 
-          GeoUnknown reason ->
+          GeoUnknown _ ->
             -- GeoSolver insufficient, fall back to PHASE 2 (algebraic solvers)
             let
-              -- Select appropriate algebraic solver
               solver = selectAlgebraicSolver profile goal
-
-              -- Get explanation for choice
-              solverReason' = "Geometric propagation insufficient. Fallback to PHASE 2: " ++
-                             explainSolverChoice solver profile
-
-              -- Execute the chosen algebraic solver
+              solverReason' = "Geometric propagation insufficient. Fallback to PHASE 2: " ++ explainSolverChoice solver profile
               (proved, proofMsg, trace) = executeSolver solver opts theory goal
-            in
-              AutoSolveResult
-                { selectedSolver = solver
-                , solverReason = solverReason'
-                , problemProfile = profile
-                , isProved = proved
-                , proofReason = proofMsg
-                , detailedTrace = trace
-                }
+            in AutoSolveResult
+                 { selectedSolver = solver
+                 , solverReason = solverReason'
+                 , problemProfile = profile
+                 , isProved = proved
+                 , proofReason = proofMsg
+                 , detailedTrace = trace
+                 }
 
 -- Promote bound variable names to IntVar inside a formula (and expressions)
 promoteIntVars :: [String] -> Formula -> Formula
@@ -240,6 +248,9 @@ promoteIntVars names f = goF names f
     goF ns (Eq l r) = Eq (goE ns l) (goE ns r)
     goF ns (Ge l r) = Ge (goE ns l) (goE ns r)
     goF ns (Gt l r) = Gt (goE ns l) (goE ns r)
+    goF ns (And a b) = And (goF ns a) (goF ns b)
+    goF ns (Or a b) = Or (goF ns a) (goF ns b)
+    goF ns (Not x) = Not (goF ns x)
     goF ns (Forall qs f') =
       let ns' = foldr (delete . qvName) ns qs
       in Forall qs (goF ns' f')
@@ -263,9 +274,8 @@ promoteIntVars names f = goF names f
 
 -- | Automatic solve with verbose trace information
 autoSolveWithTrace :: SolverOptions -> Theory -> Formula -> Bool -> AutoSolveResult
-autoSolveWithTrace opts theory goal verbose =
-  let result = autoSolve opts theory goal
-  in result
+autoSolveWithTrace opts theory goal _ =
+  autoSolve opts theory goal
 
 -- =============================================
 -- Solver Selection Logic
@@ -280,8 +290,8 @@ selectAlgebraicSolver profile goal
   -- If integers appear, try integer evaluator first (handled in executeSolver); keep router permissive
   | containsIntFormula goal = UseGroebner
   
-  -- RULE 0: Existential Equalities -> Constructive Gröbner (Elimination)
-  | isExistentialEquality goal = UseConstructiveGroebner
+  -- RULE 0: Existential Equalities -> Constructive Wu (Triangularization)
+  | isExistentialEquality goal = UseConstructiveWu
 
   -- RULE 1: Unsupported formula types
   | not (isEquality goal) && not (isInequality goal) = Unsolvable
@@ -354,7 +364,7 @@ hasGeometricVars profile =
     isGeometricVar ('x':_) = True
     isGeometricVar ('y':_) = True
     isGeometricVar ('z':_) = True
-isGeometricVar _ = False
+    isGeometricVar _ = False
 
 -- =============================================
 -- Numeric angle fast-path
@@ -418,6 +428,7 @@ executeSolver :: SolverChoice -> SolverOptions -> Theory -> Formula -> (Bool, St
 executeSolver solver opts theory goal =
   let hasSqrt = containsSqrtFormula goal || any containsSqrtFormula theory
       hasInt = containsIntFormula goal || any containsIntFormula theory
+      groebner = selectGroebner opts
   in case solver of
        UseWu ->
          if hasInt
@@ -455,13 +466,13 @@ executeSolver solver opts theory goal =
                            then (True, "Equality holds after numeric substitution (constant 0)", Nothing)
                            else (False, "Constants not equal after substitution (" ++ show c ++ ")", Nothing)
                    else
-                     let (proved, reason, trace, _) = proveTheoryWithOptions buchberger Nothing theory goal
-                      in (proved, reason, Just (formatProofTrace trace))
+                     let (proved, reason, trace, _) = proveTheoryWithOptions groebner Nothing theory goal
+                     in (proved, reason, Just (formatProofTrace trace))
            _ -> (False, "Gröbner basis method only supports equality goals", Nothing)
 
-       UseConstructiveGroebner ->
-         let (proved, reason, trace) = proveExistentialConstructive theory goal
-         in (proved, reason, Just (formatProofTrace trace))
+       UseConstructiveWu ->
+         let (proved, reason, trace) = proveExistentialWu theory goal
+         in (proved, reason, Just (formatWuTrace trace))
 
        UseCAD ->
          if hasInt
@@ -553,38 +564,6 @@ executeCADInequality theory lhs rhs isStrict =
                        in (holds, msg, Nothing)
                      else (False, "Inequality not proved (multivariate CAD with " ++ show (length vars) ++ " vars not supported yet)", Nothing))
 
--- | Extract variable names from an expression
-extractVariablesFromExpr :: Expr -> [String]
-extractVariablesFromExpr (Var v) = [v]
-extractVariablesFromExpr (Const _) = []
-extractVariablesFromExpr (Add e1 e2) = extractVariablesFromExpr e1 ++ extractVariablesFromExpr e2
-extractVariablesFromExpr (Sub e1 e2) = extractVariablesFromExpr e1 ++ extractVariablesFromExpr e2
-extractVariablesFromExpr (Mul e1 e2) = extractVariablesFromExpr e1 ++ extractVariablesFromExpr e2
-extractVariablesFromExpr (Div e1 e2) = extractVariablesFromExpr e1 ++ extractVariablesFromExpr e2
-extractVariablesFromExpr (Pow e _) = extractVariablesFromExpr e
-extractVariablesFromExpr _ = []
-
--- | Local variable extractor for inequalities
-extractVars :: Expr -> [String]
-extractVars (Var v) = [v]
-extractVars (Const _) = []
-extractVars (Add a b) = extractVars a ++ extractVars b
-extractVars (Sub a b) = extractVars a ++ extractVars b
-extractVars (Mul a b) = extractVars a ++ extractVars b
-extractVars (Div a b) = extractVars a ++ extractVars b
-extractVars (Pow e _) = extractVars e
-extractVars (Sqrt e) = extractVars e
-extractVars (IntVar v) = [v]
-extractVars (IntConst _) = []
-extractVars (Dist2 p1 p2) = ["x"++p1,"y"++p1,"z"++p1,"x"++p2,"y"++p2,"z"++p2]
-extractVars (Dot a b c d) = concatMap (\p -> ["x"++p,"y"++p,"z"++p]) [a,b,c,d]
-extractVars (Collinear a b c) = concatMap (\p -> ["x"++p,"y"++p]) [a,b,c]
-extractVars (Circle p c r) = ["x"++p,"y"++p,"z"++p,"x"++c,"y"++c,"z"++c] ++ extractVars r
-extractVars (Midpoint a b m) = concatMap (\p -> ["x"++p,"y"++p,"z"++p]) [a,b,m]
-extractVars (Perpendicular a b c d) = concatMap (\p -> ["x"++p,"y"++p,"z"++p]) [a,b,c,d]
-extractVars (Parallel a b c d) = concatMap (\p -> ["x"++p,"y"++p,"z"++p]) [a,b,c,d]
-extractVars (AngleEq2D a b c d e f) = concatMap (\p -> ["x"++p,"y"++p]) [a,b,c,d,e,f]
-extractVars (Determinant rows) = concatMap extractVars (concat rows)
 
 -- | Extract variables from a polynomial (actual free variables after substitution)
 extractPolyVars :: Poly -> S.Set String
@@ -621,7 +600,7 @@ runInt opts theory goal =
 
 -- | Explain why a particular solver was chosen
 explainSolverChoice :: SolverChoice -> ProblemProfile -> String
-explainSolverChoice UseGeoSolver profile =
+explainSolverChoice UseGeoSolver _ =
   "Geometric Constraint Propagation: " ++
   "Fast-path geometric reasoner using constraint propagation (milliseconds), not polynomial algebra"
 explainSolverChoice UseWu profile =
@@ -645,6 +624,8 @@ explainSolverChoice UseCAD profile =
      PureInequality -> "Inequality reasoning in " ++ show (numVariables profile) ++ " variable(s)"
      SinglePositivity -> "Positivity check for polynomial"
      _ -> "Real algebraic geometry with inequalities")
+explainSolverChoice UseConstructiveWu _ =
+  "Constructive Wu: existential/triangularization route chosen for geometry-style goals."
 
 explainSolverChoice Unsolvable profile =
   case estimatedComplexity profile of

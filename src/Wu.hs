@@ -28,6 +28,7 @@ module Wu
   ( -- * Main Wu Proof Function
     wuProve
   , wuProveWithTrace
+  , proveExistentialWu -- New function for existential checking
 
     -- * Characteristic Set Construction
   , CharSet
@@ -48,7 +49,6 @@ module Wu
   ) where
 
 import Expr
-import Prover (buildSubMap, toPolySub)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List (sortBy, nub)
@@ -350,9 +350,90 @@ checkDegeneracy degConds =
   , leadingCoeff cond /= polyFromConst 1  -- Only warn for non-trivial conditions
   ]
 
--- =============================================
--- Trace Formatting (for verbose mode)
--- =============================================
+-- | Check existential goal using Wu's Method (Triangularization)
+-- Checks if the system of equations defined by the existential body + theory is consistent.
+-- Renames existential variables to be "main" variables.
+proveExistentialWu :: Theory -> Formula -> (Bool, String, WuTrace)
+proveExistentialWu theory goal =
+  case goal of
+    Exists qs body ->
+      let
+        -- 1. Extract equations
+        eqsBranches = extractEqualitiesBranches body
+        
+        -- 2. Theory equations
+        theoryEqs = [ Sub l r | Eq l r <- theory ]
+        
+        -- 3. Variable renaming (qs > free vars)
+        existentialVars = map qvName qs
+        rename v | v `elem` existentialVars = "zz_" ++ v
+                 | otherwise = v
+        
+        renamePoly :: Poly -> Poly
+        renamePoly (Poly m) =
+            let renameMonomial (Monomial vars) = 
+                    Monomial (M.mapKeys rename vars)
+            in Poly (M.mapKeys renameMonomial m)
+
+        checkBranch eqs = 
+            let rawPolys = map (toPolySub M.empty) (eqs ++ theoryEqs)
+                renamedPolys = map renamePoly rawPolys
+                
+                -- Triangularize
+                (charSet, degConds) = buildCharSet renamedPolys
+                
+                -- Check consistency (is constant non-zero in CS?)
+                isInconsistent = any isConstantNonZero charSet
+            in (not isInconsistent, charSet, degConds)
+
+        -- 4. Check consistency of EACH branch
+        results = map checkBranch eqsBranches
+        anyConsistent = any (\(c,_,_) -> c) results
+        
+        -- 5. Trace (take first consistent or first if none)
+        (consistent, bestCS, bestConds) = 
+            case filter (\(c,_,_) -> c) results of
+                (r:_) -> r
+                [] -> head results
+        
+        reason = if anyConsistent
+                 then "System is triangularizable (consistent). Solution exists generically."
+                 else "System is inconsistent (characteristic set contains constant). No solution."
+                 
+        -- Dummy trace object for compatibility
+        trace = WuTrace
+          { inputTheory = theory
+          , inputGoal = goal
+          , hypothesisPolys = [] -- We abstracted this
+          , conclusionPoly = polyZero
+          , characteristicSet = bestCS
+          , degeneracyConditions = bestConds
+          , finalRemainder = polyZero
+          , reductionSteps = []
+          , isProved = anyConsistent
+          , proofReason = reason
+          }
+      in (anyConsistent, reason, trace)
+    _ -> (False, "Wu existence only supports Exists quantification.", emptyTrace)
+
+-- Helper (duplicated from Prover.hs to avoid cycle, or move to Expr)
+extractEqualitiesBranches :: Formula -> [[Expr]]
+extractEqualitiesBranches (Eq l r) = [[Sub l r]]
+extractEqualitiesBranches (And f1 f2) = 
+    [ e1 ++ e2 | e1 <- extractEqualitiesBranches f1, e2 <- extractEqualitiesBranches f2 ]
+extractEqualitiesBranches (Or f1 f2) = 
+    extractEqualitiesBranches f1 ++ extractEqualitiesBranches f2
+extractEqualitiesBranches (Exists _ f) = extractEqualitiesBranches f
+extractEqualitiesBranches _ = [[]] 
+
+isConstantNonZero :: Poly -> Bool
+isConstantNonZero (Poly m) =
+  case M.toList m of
+    [(Monomial vars, c)] | M.null vars -> c /= 0
+    _ -> False
+
+emptyTrace :: WuTrace
+emptyTrace = WuTrace [] (Eq (Const 0) (Const 0)) [] polyZero [] [] polyZero [] False ""
 
 -- | Format Wu's method trace for display
 formatWuTrace :: WuTrace -> String

@@ -2,11 +2,10 @@
 
 module Expr where
 
-import Data.List (intercalate, sortBy, dropWhileEnd, nub)
+import Data.List (intercalate, sortBy, nub)
 import qualified Data.Map.Strict as M
 import Numeric.Natural (Natural)
 import Data.Ratio ((%), numerator, denominator)
-import Data.Maybe (mapMaybe)
 
 -- =============================================
 -- Symbolic Expressions (AST)
@@ -119,7 +118,23 @@ prettyFormula (Exists qs f) =
 -- Polynomial Engine
 -- =============================================
 
-newtype Monomial = Monomial (M.Map String Natural) deriving (Eq, Ord, Show)
+newtype Monomial = Monomial (M.Map String Natural) deriving (Eq, Show)
+
+-- | Lexicographic Term Order (Variable name based: z > y > x > ... > a)
+-- Compares variables in descending order.
+instance Ord Monomial where
+  compare (Monomial m1) (Monomial m2) =
+    let vars = sortBy (flip compare) (nub (M.keys m1 ++ M.keys m2))
+    in go vars
+    where
+      go [] = EQ
+      go (v:vs) =
+        let e1 = M.findWithDefault 0 v m1
+            e2 = M.findWithDefault 0 v m2
+        in case compare e1 e2 of
+             EQ -> go vs
+             other -> other
+
 newtype Poly = Poly (M.Map Monomial Rational) deriving (Eq, Ord, Show)
 
 monomialOne :: Monomial
@@ -198,7 +213,7 @@ prettyPolyNice (Poly m)
       in formatTerms terms
   where
     -- Sort terms by total degree (descending), then lexicographically
-    sortTerms = sortBy (\(c1, m1) (c2, m2) ->
+    sortTerms = sortBy (\(_, m1) (_, m2) ->
       let deg1 = totalDegree m1
           deg2 = totalDegree m2
       in compare deg2 deg1 <> compare m2 m1)
@@ -334,7 +349,7 @@ simplifyExpr (Div e1 e2) =
        _ | s1 == s2 -> Const 1              -- e / e = 1
        _ -> Div s1 s2
 
-simplifyExpr (Pow e 0) = Const 1            -- e^0 = 1
+simplifyExpr (Pow _ 0) = Const 1            -- e^0 = 1
 simplifyExpr (Pow e 1) = simplifyExpr e     -- e^1 = e
 simplifyExpr (Pow e n) = 
   let s = simplifyExpr e 
@@ -498,7 +513,7 @@ fromUnivariate :: String -> [Rational] -> Poly
 fromUnivariate v coeffs = 
   foldl polyAdd polyZero
     [ polyMul (polyFromConst c) (polyPow (polyFromVar v) (fromIntegral i)) 
-    | (i, c) <- zip [0..] coeffs, c /= 0 ]
+    | (i, c) <- zip [0 :: Integer ..] coeffs, c /= 0 ]
 
 -- =============================================
 -- Conversion: Expr -> Poly
@@ -646,9 +661,8 @@ toPoly (Determinant rows) = detPoly rows
         let n = length firstRow
             terms = [ let element = firstRow !! colIndex
                           subMatrix = [ removeAt colIndex row | row <- restRows ]
-                          sign = if even colIndex then 1 else -1
                           term = polyMul (toPoly element) (detPoly subMatrix)
-                      in if sign == 1 then term else polyNeg term
+                      in if even colIndex then term else polyNeg term
                     | colIndex <- [0..n-1] ]
         in foldl polyAdd polyZero terms
 
@@ -755,3 +769,29 @@ containsIntFormula (Forall qs f) =
   any (\q -> qvType q == QuantInt) qs || containsIntFormula f
 containsIntFormula (Exists qs f) =
   any (\q -> qvType q == QuantInt) qs || containsIntFormula f
+
+-- =============================================
+-- Polynomial Evaluation & Substitution
+-- =============================================
+
+buildSubMap :: Theory -> M.Map String Poly
+buildSubMap theory = M.fromList [ (v, toPoly e) | Eq (Var v) e <- theory ]
+
+evaluatePoly :: M.Map String Poly -> Poly -> Poly
+evaluatePoly subM (Poly m) =
+  let
+      evalMono :: Monomial -> Rational -> Poly
+      evalMono (Monomial vars) coeff =
+        let
+          termExpanded = M.foldlWithKey (\accPoly varname power ->
+              let basePoly = case M.lookup varname subM of
+                               Just p  -> evaluatePoly subM p
+                               Nothing -> polyFromVar varname
+              in polyMul accPoly (polyPow basePoly power)
+            ) (polyFromConst 1) vars
+        in polyMul (polyFromConst coeff) termExpanded
+      results = map (\(mono, coeff) -> evalMono mono coeff) (M.toList m)
+  in foldl polyAdd polyZero results
+
+toPolySub :: M.Map String Poly -> Expr -> Poly
+toPolySub subM expr = evaluatePoly subM (toPoly expr)
