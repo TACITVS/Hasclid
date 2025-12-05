@@ -14,6 +14,7 @@ import Foreign.C.Types
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
 import Foreign.Storable
+import Control.Monad (unless)
 import System.IO.Unsafe (unsafePerformIO)
 import Data.IORef
 import Data.List (isPrefixOf)
@@ -73,9 +74,6 @@ proverExecute cstr = do
       writeIORef globalTheory newTheory
       writeIORef globalLemmas newLemmas
       newCString output
-  where
-    unless True _ = return ()
-    unless False action = action
 
 -- =============================================
 -- Command Processing (adapted from Main.hs)
