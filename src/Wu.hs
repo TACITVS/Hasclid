@@ -391,10 +391,12 @@ proveExistentialWu theory goal =
         anyConsistent = any (\(c,_,_) -> c) results
         
         -- 5. Trace (take first consistent or first if none)
-        (consistent, bestCS, bestConds) = 
+        (_, bestCS, bestConds) =
             case filter (\(c,_,_) -> c) results of
-                (r:_) -> r
-                [] -> head results
+              (r:_) -> r
+              [] -> case results of
+                      (r:_) -> r
+                      []    -> (False, [], [])
         
         reason = if anyConsistent
                  then "System is triangularizable (consistent). Solution exists generically."
@@ -443,7 +445,7 @@ formatWuTrace trace = unlines $
   , "Hypothesis Polynomials:"
   ] ++
   [ "  " ++ show i ++ ". " ++ prettyPoly p
-  | (i, p) <- zip [1..] (hypothesisPolys trace)
+  | (i, p) <- zip [1 :: Int ..] (hypothesisPolys trace)
   ] ++
   [ ""
   , "Conclusion Polynomial:"
@@ -452,7 +454,7 @@ formatWuTrace trace = unlines $
   , "Characteristic Set (Triangular Form):"
   ] ++
   [ "  CS" ++ show i ++ ": " ++ prettyPoly p
-  | (i, p) <- zip [1..] (characteristicSet trace)
+  | (i, p) <- zip [1 :: Int ..] (characteristicSet trace)
   ] ++
   [ ""
   , "Pseudo-Division Steps:"

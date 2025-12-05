@@ -133,9 +133,9 @@ processCommand theory lemmas rawInput = do
 
       (":point":name:xStr:yStr:rest) -> do
         let (exprX, exprY, exprZ, dims) =
-              if null rest
-                then (parseCoord xStr, parseCoord yStr, Const 0, "2D")
-                else (parseCoord xStr, parseCoord yStr, parseCoord (head rest), "3D")
+              case rest of
+                (zStr:_) -> (parseCoord xStr, parseCoord yStr, parseCoord zStr, "3D")
+                []       -> (parseCoord xStr, parseCoord yStr, Const 0, "2D")
         let asmX = Eq (Var ("x" ++ name)) exprX
         let asmY = Eq (Var ("y" ++ name)) exprY
         let asmZ = Eq (Var ("z" ++ name)) exprZ
