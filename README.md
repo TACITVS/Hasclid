@@ -96,7 +96,8 @@ Start the REPL with `cabal run prover`.
 *   `:reset`: Clear all assumptions (keeps lemmas and cache).
 *   `:soft-reset`: Clear all assumptions (keeps lemmas, cache preserved).
 *   `:clear`: Full factory reset (clears everything).
-*   `:load <file>`: Run a `.euclid` script.
+*   `:load <file>`: Run a `.euclid` script (executes commands and formulas).
+*   `:solve <file>`: Solve each formula in the specified file (batch processing).
 *   `:save-lemmas <file>`: Save proven lemmas to a file.
 *   `:load-lemmas <file>`: Load lemmas from a file.
 
