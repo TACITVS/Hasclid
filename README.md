@@ -126,13 +126,48 @@ Start the REPL with `cabal run prover`.
 
 ## Codebase Structure
 
-*   **`src/Expr.hs`**: Core AST for expressions and the Multivariate Polynomial engine (arithmetic, sparse map representation).
-*   **`src/Prover.hs`**: The brain of Hasclid. Implements Buchberger's algorithm for Groebner Bases and orchestrates the logic for proving equalities and inequalities.
-*   **`src/Sturm.hs`**: Implements Sturm sequences for real root counting and interval isolation. Critical for the inequality solver.
-*   **`src/CAD.hs`**: Cylindrical Algebraic Decomposition tools. Implements recursive polynomials, pseudo-division, subresultants, and discriminants.
-*   **`src/Parser.hs`**: A robust S-Expression parser for the prefix notation used in the REPL.
-*   **`src/Main.hs`**: REPL loop, state management, and command dispatch.
-*   **`theorems/`**: A collection of `.euclid` scripts demonstrating proofs (e.g., Thales, Apollonius, Stewart's Theorem).
+### Core Modules
+
+*   **`src/Main.hs`**: REPL loop, state management, command dispatch, and timeout handling.
+*   **`src/Expr.hs`**: Core AST for expressions and formulas. Multivariate polynomial engine with sparse map representation and rational arithmetic.
+*   **`src/Parser.hs`**: Robust S-expression parser with macro support for the prefix notation language.
+*   **`src/Error.hs`**: Error types and formatting for user-friendly error messages.
+*   **`src/Validation.hs`**: Input validation and degeneracy checking (coincident points, zero-length segments).
+
+### Solvers & Proving Engines
+
+*   **`src/GeoSolver.hs`**: **Phase 1 fast-path solver.** Symbolic geometric constraint propagation with branching support.
+*   **`src/Prover.hs`**: **Phase 2 algebraic proving.** Gröbner basis computation, integer solver, quantifier handling, and proof tracing.
+*   **`src/Wu.hs`**: Wu's characteristic set method for geometric theorem proving. Includes triangularization and constructive existence proofs.
+*   **`src/SolverRouter.hs`**: Intelligent solver selection system. Analyzes problems and dispatches to optimal solver (GeoSolver → Wu/Gröbner/CAD).
+*   **`src/ProblemAnalyzer.hs`**: Problem classification engine. Extracts variables, estimates complexity, detects geometric features.
+*   **`src/Modular.hs`**: Modular arithmetic solver for probabilistic consistency checking over finite fields.
+*   **`src/CounterExample.hs`**: Counterexample and witness finding using strategic variable assignments.
+
+### Gröbner Basis Implementation
+
+*   **`src/Core/GB.hs`**: Optimized Gröbner basis core with S-polynomial computation and reduction.
+*   **`src/BuchbergerOpt.hs`**: Selection strategies for Buchberger's algorithm (normal, sugar, minimal).
+*   **`src/Cache.hs`**: Gröbner basis caching system to avoid recomputation.
+*   **`src/TermOrder.hs`**: Term ordering implementations (grevlex, lex, gradedlex) for polynomial rewriting.
+
+### CAD & Inequalities
+
+*   **`src/CAD.hs`**: Recursive polynomial representation, pseudo-division, discriminants, and resultants.
+*   **`src/CADLift.hs`**: CAD lifting phase with sign determination and quantifier elimination.
+*   **`src/Sturm.hs`**: Sturm sequence computation for real root counting and interval isolation.
+*   **`src/Positivity.hs`**: Multi-method positivity checking (Sturm, heuristics, SOS detection).
+
+### Utilities & Transformations
+
+*   **`src/Algebraic.hs`**: Algebraic number operations and symbolic square root handling.
+*   **`src/Linearizer.hs`**: Linearization utilities for constraint simplification.
+*   **`src/SqrtElim.hs`**: Square root elimination via polynomial substitution for CAD preprocessing.
+
+### Examples & Tests
+
+*   **`examples/`**: Collection of `.euclid` scripts demonstrating geometric theorems and stress tests.
+*   **`test/Spec.hs`**: Hspec test suite with QuickCheck properties for regression testing.
 
 ## Example Session
 
