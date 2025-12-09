@@ -183,6 +183,8 @@ prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..
     showFormula (Eq l r) = prettyExpr l ++ " = " ++ prettyExpr r
     showFormula (Ge l r) = prettyExpr l ++ " >= " ++ prettyExpr r
     showFormula (Gt l r) = prettyExpr l ++ " > " ++ prettyExpr r
+    showFormula (Le l r) = prettyExpr l ++ " <= " ++ prettyExpr r
+    showFormula (Lt l r) = prettyExpr l ++ " < " ++ prettyExpr r
 
 parseCoord :: String -> Expr
 parseCoord s

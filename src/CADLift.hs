@@ -535,6 +535,19 @@ evaluateFormula formula (cell, signs) =
       let diff = exprToPoly (Sub lhs rhs)
       in M.lookup diff signs == Just Positive
 
+    -- Less or equal: f <= g  ⟺  g >= f  ⟺  g - f >= 0
+    Le lhs rhs ->
+      let diff = exprToPoly (Sub rhs lhs)
+      in case M.lookup diff signs of
+           Just Positive -> True
+           Just Zero -> True
+           _ -> False
+
+    -- Less than: f < g  ⟺  g > f  ⟺  g - f > 0
+    Lt lhs rhs ->
+      let diff = exprToPoly (Sub rhs lhs)
+      in M.lookup diff signs == Just Positive
+
     And f1 f2 -> evaluateFormula f1 (cell, signs) && evaluateFormula f2 (cell, signs)
     Or f1 f2 -> evaluateFormula f1 (cell, signs) || evaluateFormula f2 (cell, signs)
     Not f -> not (evaluateFormula f (cell, signs))
@@ -600,6 +613,8 @@ formulaToPolys formula =
     Eq lhs rhs -> [exprToPoly (Sub lhs rhs)]
     Ge lhs rhs -> [exprToPoly (Sub lhs rhs)]
     Gt lhs rhs -> [exprToPoly (Sub lhs rhs)]
+    Le lhs rhs -> [exprToPoly (Sub rhs lhs)]  -- Flip: l <= r becomes r - l
+    Lt lhs rhs -> [exprToPoly (Sub rhs lhs)]  -- Flip: l < r becomes r - l
     And f1 f2 -> formulaToPolys f1 ++ formulaToPolys f2
     Or f1 f2 -> formulaToPolys f1 ++ formulaToPolys f2
     Not f -> formulaToPolys f

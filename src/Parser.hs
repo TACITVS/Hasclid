@@ -301,11 +301,15 @@ exprFromSExpr (List (Atom op : args)) = case op of
     _ -> Left $ ParseError (WrongArity "z" 1 (length args)) "Usage: (z Point)"
 
   "=" -> Left $ ParseError (InvalidSyntax "formula in expression context")
-                  "Formula logic (=, >=, >) found inside expression. Use at top level only."
+                  "Formula logic (=, >=, >, <=, <) found inside expression. Use at top level only."
   ">=" -> Left $ ParseError (InvalidSyntax "formula in expression context")
-                   "Formula logic (=, >=, >) found inside expression. Use at top level only."
+                   "Formula logic (=, >=, >, <=, <) found inside expression. Use at top level only."
   ">" -> Left $ ParseError (InvalidSyntax "formula in expression context")
-                  "Formula logic (=, >=, >) found inside expression. Use at top level only."
+                  "Formula logic (=, >=, >, <=, <) found inside expression. Use at top level only."
+  "<=" -> Left $ ParseError (InvalidSyntax "formula in expression context")
+                   "Formula logic (=, >=, >, <=, <) found inside expression. Use at top level only."
+  "<" -> Left $ ParseError (InvalidSyntax "formula in expression context")
+                  "Formula logic (=, >=, >, <=, <) found inside expression. Use at top level only."
 
   -- If unknown operator, it might be a macro that wasn't expanded (e.g. wrong arity)
   _ -> Left $ ParseError (UnknownOperator op) ("Unknown operator or macro: " ++ op)
@@ -373,6 +377,16 @@ formulaFromSExpr macros sexpr =
       r <- exprFromSExpr rhs
       Right $ Gt l r
 
+    List [Atom "<=", lhs, rhs] -> do
+      l <- exprFromSExpr lhs
+      r <- exprFromSExpr rhs
+      Right $ Le l r
+
+    List [Atom "<", lhs, rhs] -> do
+      l <- exprFromSExpr lhs
+      r <- exprFromSExpr rhs
+      Right $ Lt l r
+
     List (Atom "and" : args) -> do
       fs <- mapM (formulaFromSExpr macros) args
       case fs of
@@ -406,11 +420,11 @@ formulaFromSExpr macros sexpr =
       inner <- formulaFromSExpr macros body
       Right $ Exists qs inner
 
-    List [Atom op, _, _] | op `elem` ["=", ">=", ">"] ->
-      Left $ ParseError (InvalidSyntax "not a formula") "Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs)"
+    List [Atom op, _, _] | op `elem` ["=", ">=", ">", "<=", "<"] ->
+      Left $ ParseError (InvalidSyntax "not a formula") "Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs)"
 
     _ -> Left $ ParseError (InvalidSyntax "not a formula")
-                  "Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR a quantifier (forall/exists)"
+                  "Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)"
 
 parseQuantVar :: SExpr -> Either ProverError QuantVar
 parseQuantVar (Atom v) = Right $ QuantVar v QuantReal Nothing Nothing

@@ -50,9 +50,11 @@ data QuantVar = QuantVar
 
 -- | Logical formulas (now with quantifiers)
 data Formula
-  = Eq Expr Expr
-  | Ge Expr Expr
-  | Gt Expr Expr
+  = Eq Expr Expr    -- Equal (=)
+  | Ge Expr Expr    -- Greater or Equal (>=)
+  | Gt Expr Expr    -- Greater Than (>)
+  | Le Expr Expr    -- Less or Equal (<=)
+  | Lt Expr Expr    -- Less Than (<)
   | And Formula Formula
   | Or Formula Formula
   | Not Formula
@@ -106,6 +108,8 @@ prettyFormula :: Formula -> String
 prettyFormula (Eq l r) = "(= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 prettyFormula (Ge l r) = "(>= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 prettyFormula (Gt l r) = "(> " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
+prettyFormula (Le l r) = "(<= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
+prettyFormula (Lt l r) = "(< " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 prettyFormula (And f1 f2) = "(and " ++ prettyFormula f1 ++ " " ++ prettyFormula f2 ++ ")"
 prettyFormula (Or f1 f2) = "(or " ++ prettyFormula f1 ++ " " ++ prettyFormula f2 ++ ")"
 prettyFormula (Not f) = "(not " ++ prettyFormula f ++ ")"
@@ -705,6 +709,8 @@ substituteInts :: M.Map String Expr -> Formula -> Formula
 substituteInts sub (Eq l r) = Eq (substituteIntsExpr sub l) (substituteIntsExpr sub r)
 substituteInts sub (Ge l r) = Ge (substituteIntsExpr sub l) (substituteIntsExpr sub r)
 substituteInts sub (Gt l r) = Gt (substituteIntsExpr sub l) (substituteIntsExpr sub r)
+substituteInts sub (Le l r) = Le (substituteIntsExpr sub l) (substituteIntsExpr sub r)
+substituteInts sub (Lt l r) = Lt (substituteIntsExpr sub l) (substituteIntsExpr sub r)
 substituteInts sub (And f1 f2) = And (substituteInts sub f1) (substituteInts sub f2)
 substituteInts sub (Or f1 f2) = Or (substituteInts sub f1) (substituteInts sub f2)
 substituteInts sub (Not f) = Not (substituteInts sub f)
@@ -732,6 +738,8 @@ containsSqrtFormula :: Formula -> Bool
 containsSqrtFormula (Eq l r) = containsSqrtExpr l || containsSqrtExpr r
 containsSqrtFormula (Ge l r) = containsSqrtExpr l || containsSqrtExpr r
 containsSqrtFormula (Gt l r) = containsSqrtExpr l || containsSqrtExpr r
+containsSqrtFormula (Le l r) = containsSqrtExpr l || containsSqrtExpr r
+containsSqrtFormula (Lt l r) = containsSqrtExpr l || containsSqrtExpr r
 containsSqrtFormula (And f1 f2) = containsSqrtFormula f1 || containsSqrtFormula f2
 containsSqrtFormula (Or f1 f2) = containsSqrtFormula f1 || containsSqrtFormula f2
 containsSqrtFormula (Not f) = containsSqrtFormula f
@@ -762,6 +770,8 @@ containsIntFormula :: Formula -> Bool
 containsIntFormula (Eq l r) = containsIntExpr l || containsIntExpr r
 containsIntFormula (Ge l r) = containsIntExpr l || containsIntExpr r
 containsIntFormula (Gt l r) = containsIntExpr l || containsIntExpr r
+containsIntFormula (Le l r) = containsIntExpr l || containsIntExpr r
+containsIntFormula (Lt l r) = containsIntExpr l || containsIntExpr r
 containsIntFormula (And f1 f2) = containsIntFormula f1 || containsIntFormula f2
 containsIntFormula (Or f1 f2) = containsIntFormula f1 || containsIntFormula f2
 containsIntFormula (Not f) = containsIntFormula f

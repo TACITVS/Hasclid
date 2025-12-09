@@ -64,6 +64,8 @@ getFreeVariables theory formula =
                       Eq l r -> extractVars l ++ extractVars r
                       Ge l r -> extractVars l ++ extractVars r
                       Gt l r -> extractVars l ++ extractVars r
+                      Le l r -> extractVars l ++ extractVars r
+                      Lt l r -> extractVars l ++ extractVars r
 
       -- Free = formula vars - bound vars
       freeVars = nub $ filter (`notElem` boundVars) formulaVars
@@ -147,6 +149,8 @@ testAssignment subM formula assignment =
                      Eq l r -> (l, r)
                      Ge l r -> (l, r)
                      Gt l r -> (l, r)
+                     Le l r -> (r, l)  -- Flip for consistency
+                     Lt l r -> (r, l)  -- Flip for consistency
 
       lhsPoly = toPolySub fullSubM lhs
       rhsPoly = toPolySub fullSubM rhs

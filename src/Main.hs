@@ -2,7 +2,7 @@
 
 module Main where
 
-import Expr (Formula(Eq, Ge, Gt), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
+import Expr (Formula(Eq, Ge, Gt, Le, Lt), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
 import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
 import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger, IntSolveOptions(..))
 import BuchbergerOpt (SelectionStrategy(..), buchbergerWithStrategy)
@@ -91,6 +91,8 @@ prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..
     showFormula (Eq l r) = prettyExpr l ++ " = " ++ prettyExpr r
     showFormula (Ge l r) = prettyExpr l ++ " >= " ++ prettyExpr r
     showFormula (Gt l r) = prettyExpr l ++ " > " ++ prettyExpr r
+    showFormula (Le l r) = prettyExpr l ++ " <= " ++ prettyExpr r
+    showFormula (Lt l r) = prettyExpr l ++ " < " ++ prettyExpr r
 
 formatHistory :: [String] -> String
 formatHistory h =

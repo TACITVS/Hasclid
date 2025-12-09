@@ -248,6 +248,8 @@ promoteIntVars names f = goF names f
     goF ns (Eq l r) = Eq (goE ns l) (goE ns r)
     goF ns (Ge l r) = Ge (goE ns l) (goE ns r)
     goF ns (Gt l r) = Gt (goE ns l) (goE ns r)
+    goF ns (Le l r) = Le (goE ns l) (goE ns r)
+    goF ns (Lt l r) = Lt (goE ns l) (goE ns r)
     goF ns (And a b) = And (goF ns a) (goF ns b)
     goF ns (Or a b) = Or (goF ns a) (goF ns b)
     goF ns (Not x) = Not (goF ns x)
@@ -318,8 +320,8 @@ selectAlgebraicSolver profile goal
   | problemType profile == PureAlgebraic && hasSymbolicParams profile &&
     hasGeometricVars profile = UseWu
 
-  -- RULE 6: Single positivity check (p > 0) with few vars → CAD
-  | problemType profile == SinglePositivity && numVariables profile <= 2 = UseCAD
+  -- RULE 6: Single positivity check (p > 0) → CAD (no variable limit!)
+  | problemType profile == SinglePositivity = UseCAD
 
   -- RULE 7: Pure algebraic equations → Gröbner basis (general purpose)
   | problemType profile == PureAlgebraic = UseGroebner
@@ -490,7 +492,9 @@ executeSolver solver opts theory goal =
          case goal of
            Ge l r -> executeCADInequality theory l r False
            Gt l r -> executeCADInequality theory l r True
-           _ -> (False, "CAD only supports inequality goals (>, >=)", Nothing)
+           Le l r -> executeCADInequality theory r l False  -- Flip: l <= r becomes r >= l
+           Lt l r -> executeCADInequality theory r l True   -- Flip: l < r becomes r > l
+           _ -> (False, "CAD only supports inequality goals (>, >=, <, <=)", Nothing)
 
        Unsolvable ->
          (False, "Problem is too complex or type not supported by automatic solver", Nothing)

@@ -83,6 +83,8 @@ formatProofTrace trace = unlines $
     showFormula (Eq l r) = prettyExpr l ++ " = " ++ prettyExpr r
     showFormula (Ge l r) = prettyExpr l ++ " >= " ++ prettyExpr r
     showFormula (Gt l r) = prettyExpr l ++ " > " ++ prettyExpr r
+    showFormula (Le l r) = prettyExpr l ++ " <= " ++ prettyExpr r
+    showFormula (Lt l r) = prettyExpr l ++ " < " ++ prettyExpr r
     showFormula f        = prettyFormula f
 
     formatStep (UsedSubstitution v e) = "Used substitution: " ++ v ++ " -> " ++ prettyExpr e
@@ -164,6 +166,8 @@ groebnerFallback customBuchberger maybeCache theory formula =
                  Eq l r -> (toPolySub subM l, toPolySub subM r)
                  Ge l r -> (toPolySub subM l, toPolySub subM r)
                  Gt l r -> (toPolySub subM l, toPolySub subM r)
+                 Le l r -> (toPolySub subM r, toPolySub subM l)  -- Flip: l <= r becomes r >= l
+                 Lt l r -> (toPolySub subM r, toPolySub subM l)  -- Flip: l < r becomes r > l
                  _      -> (polyZero, polyZero)
 
     difference = subPoly pL pR
@@ -187,6 +191,18 @@ groebnerFallback customBuchberger maybeCache theory formula =
 
        Gt _ _ ->
          let (result, msg) = checkPositivity normalForm False
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       Le _ _ ->
+         let (result, msg) = checkPositivity normalForm True  -- l <= r becomes r >= l
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       Lt _ _ ->
+         let (result, msg) = checkPositivity normalForm False  -- l < r becomes r > l
              positivityStep = [CheckedPositivity msg]
              trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
          in (result, msg, trace, updatedCache)
@@ -1506,6 +1522,8 @@ cooperEliminate env theory goal =
     mentions v (Eq l r) = Map.member v (fst (fromMaybe (Map.empty,0) (intLinDiff l r)))
     mentions v (Ge l r) = Map.member v (fst (fromMaybe (Map.empty,0) (intLinDiff l r)))
     mentions v (Gt l r) = Map.member v (fst (fromMaybe (Map.empty,0) (intLinDiff l r)))
+    mentions v (Le l r) = Map.member v (fst (fromMaybe (Map.empty,0) (intLinDiff l r)))
+    mentions v (Lt l r) = Map.member v (fst (fromMaybe (Map.empty,0) (intLinDiff l r)))
 
     modulusFromEq v (Eq l r) =
       case intLinDiff l r of
@@ -1519,6 +1537,8 @@ cooperEliminate env theory goal =
       case f of
         Ge l r -> tightenIneq v envAcc l r False
         Gt l r -> tightenIneq v envAcc l r True
+        Le l r -> tightenIneq v envAcc r l False  -- Flip: l <= r becomes r >= l
+        Lt l r -> tightenIneq v envAcc r l True   -- Flip: l < r becomes r > l
         _ -> Right envAcc
 
     tightenIneq v envAcc l r strict =

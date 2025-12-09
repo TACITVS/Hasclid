@@ -173,12 +173,16 @@ classifyProblem theory goal geoFeatures
 
     isInequality (Ge _ _) = True
     isInequality (Gt _ _) = True
+    isInequality (Le _ _) = True
+    isInequality (Lt _ _) = True
     isInequality (Forall _ f) = isInequality f
     isInequality (Exists _ f) = isInequality f
     isInequality _ = False
 
     isSingleInequality (Ge _ _) = True
     isSingleInequality (Gt _ _) = True
+    isSingleInequality (Le _ _) = True
+    isSingleInequality (Lt _ _) = True
     isSingleInequality _ = False
 
     hasGeometricPrimitives gf =
@@ -296,6 +300,11 @@ extractExprsFromFormula :: Formula -> [Expr]
 extractExprsFromFormula (Eq l r) = [l, r]
 extractExprsFromFormula (Ge l r) = [l, r]
 extractExprsFromFormula (Gt l r) = [l, r]
+extractExprsFromFormula (Le l r) = [l, r]
+extractExprsFromFormula (Lt l r) = [l, r]
+extractExprsFromFormula (And f1 f2) = extractExprsFromFormula f1 ++ extractExprsFromFormula f2
+extractExprsFromFormula (Or f1 f2) = extractExprsFromFormula f1 ++ extractExprsFromFormula f2
+extractExprsFromFormula (Not f) = extractExprsFromFormula f
 extractExprsFromFormula (Forall _ f) = extractExprsFromFormula f
 extractExprsFromFormula (Exists _ f) = extractExprsFromFormula f
 
