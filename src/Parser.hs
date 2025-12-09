@@ -14,9 +14,8 @@ module Parser
 
 import Expr
 import Error
-import Data.Char (isDigit, isAlpha, isSpace)
+import Data.Char (isDigit)
 import Data.Ratio ((%))
-import Data.List (foldl')
 import qualified Data.Map.Strict as M
 
 -- =============================================
@@ -154,7 +153,7 @@ exprFromSExpr (Atom t)
   | all (\c -> isDigit c || c == '-' || c == '/') t =
       if '/' `elem` t
       then case span (/= '/') t of
-             (n, d) | null d || length d < 2 ->
+             (_, d) | null d || length d < 2 ->
                Left $ ParseError (InvalidNumber t) "Malformed rational number"
              (n, d) -> Right $ Const (read n % read (drop 1 d))
       else Right $ Const (fromInteger (read t) % 1)
@@ -192,7 +191,7 @@ exprFromSExpr (List (Atom op : args)) = case op of
     [a, Atom n] | all isDigit n -> do
       base <- exprFromSExpr a
       Right $ Pow base (read n)
-    [a, Atom n] -> Left $ ParseError (InvalidSyntax "exponent must be natural number")
+    [_, Atom n] -> Left $ ParseError (InvalidSyntax "exponent must be natural number")
                           ("Expected natural number exponent, got: " ++ n)
     _ -> Left $ ParseError (WrongArity "^" 2 (length args))
                   "Power requires base and natural number exponent"

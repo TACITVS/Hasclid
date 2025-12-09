@@ -1,6 +1,0 @@
-:reset
-:point A 0 0
-:point B 1 0
-:point C 0 1
-:point D 1 1
-(= (parallel A B C D) 0)

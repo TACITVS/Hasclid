@@ -25,7 +25,7 @@ module GeoSolver
 import Expr
 import qualified Data.Map.Strict as M
 import Data.List (nub)
-import Data.Maybe (mapMaybe, isJust, fromJust, listToMaybe)
+import Data.Maybe (mapMaybe)
 import Data.Ratio (numerator, denominator)
 
 -- =============================================
@@ -81,8 +81,10 @@ solveGeoWithTrace theory goal =
     then GeoUnknown "Contradictory assumptions (no valid branches)"
     else if hasCounterExample
          then 
-           let (Just (Just False, reason, _)) = findResult isFalse results
-           in GeoDisproved reason (steps1 ++ ["Found counter-example in branch: " ++ reason])
+           case findResult isFalse results of
+             Just (Just False, reason, _) ->
+               GeoDisproved reason (steps1 ++ ["Found counter-example in branch: " ++ reason])
+             _ -> GeoUnknown "Counter-example indicated but not retrievable"
          else if allProved
               then GeoProved "Geometric propagation (all branches hold)" steps1
               else GeoUnknown "Some branches indeterminate"
@@ -94,7 +96,7 @@ solveGeoWithTrace theory goal =
     isTrue (Just True, _, _) = True
     isTrue _ = False
     
-    findResult pred [] = Nothing
+    findResult _ [] = Nothing
     findResult pred (x:xs) = if pred x then Just x else findResult pred xs
 
 -- | Propagate until fixed point on all branches
@@ -333,7 +335,7 @@ propagateDistance kb p1 p2 distExpr =
 -- equation: term^2 = rhs
 -- returns: [sqrt(rhs), -sqrt(rhs)]
 solveQuadratic :: Expr -> Expr -> [Expr]
-solveQuadratic term rhs =
+solveQuadratic _ rhs =
   case symbolicSqrt rhs of
     Just root -> [root, Mul (Const (-1)) root]
     Nothing -> []

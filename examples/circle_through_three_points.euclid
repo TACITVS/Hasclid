@@ -1,0 +1,3 @@
+:set-timeout 120
+:reset
+:prove (forall (bx by cx cy) (exists (u v R) (or (= (- (* bx cy) (* by cx)) 0) (and (= (+ (* u u) (* v v)) R) (and (= (+ (^ (- bx u) 2) (^ (- by v) 2)) R) (= (+ (^ (- cx u) 2) (^ (- cy v) 2)) R))))))

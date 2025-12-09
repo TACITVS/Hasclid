@@ -4,12 +4,13 @@ module BuchbergerOpt
   ( SelectionStrategy(..)
   , buchbergerOptimized
   , buchbergerWithStrategy
+  , reduce
+  , sPoly
   ) where
 
 import Expr
-import Prover (subPoly, reduce, sPoly)
 import qualified Data.Map.Strict as M
-import Data.List (nub, sortBy, minimumBy)
+import Data.List (nub, minimumBy)
 import Data.Ord (comparing)
 import Numeric.Natural
 
@@ -54,7 +55,7 @@ criterion1 f g =
 --   - S(f,h) and S(g,h) have been reduced to 0
 -- Then S(f,g) will also reduce to 0
 criterion2 :: CriticalPair -> [Poly] -> [CriticalPair] -> Bool
-criterion2 pair basis processedPairs =
+criterion2 pair _ _ =
   -- Simplified version: check if LCM equals product (strong sufficient condition)
   case pairPolys pair of
     (f, g) ->
@@ -156,6 +157,57 @@ buchbergerOptimized :: [Poly] -> [Poly]
 buchbergerOptimized = buchbergerWithStrategy NormalStrategy
 
 -- Note: Helper functions (subPoly, reduce, sPoly) are imported from Prover.hs
+
+-- =============================================
+-- Polynomial Reduction & S-Poly (Moved from Prover.hs)
+-- =============================================
+
+-- 1. Multivariate Polynomial Reduction (Division)
+reduce :: Poly -> [Poly] -> Poly
+reduce p fs
+  | p == polyZero = polyZero
+  | otherwise = case findDivisor p fs of
+      Just (f, mQuot, cQuot) ->
+          let subTerm = polyMul (polyMul f (Poly (M.singleton mQuot 1))) (polyFromConst cQuot)
+          in reduce (polySub p subTerm) fs
+      Nothing ->
+          case getLeadingTerm p of
+            Just (ltM, ltC) ->
+              let rest = polySub p (Poly (M.singleton ltM ltC))
+                  reducedRest = reduce rest fs
+              in polyAdd (Poly (M.singleton ltM ltC)) reducedRest
+            Nothing -> p
+
+  where
+    findDivisor :: Poly -> [Poly] -> Maybe (Poly, Monomial, Rational)
+    findDivisor poly divisors =
+      case getLeadingTerm poly of
+        Nothing -> Nothing
+        Just (ltP, cP) ->
+            let candidates = [ (f, mDiv, cP / cF)
+                             | f <- divisors
+                             , Just (ltF, cF) <- [getLeadingTerm f]
+                             , Just mDiv <- [monomialDiv ltP ltF]
+                             ]
+            in case candidates of
+                 (c:_) -> Just c
+                 []    -> Nothing
+
+-- 2. S-Polynomial
+sPoly :: Poly -> Poly -> Poly
+sPoly f g =
+  case (getLeadingTerm f, getLeadingTerm g) of
+    (Just (ltF, cF), Just (ltG, cG)) ->
+      let lcmM = monomialLCM ltF ltG
+      in case (monomialDiv lcmM ltF, monomialDiv lcmM ltG) of
+           (Just mF, Just mG) ->
+             let factF = polyMul (Poly (M.singleton mF 1)) (polyFromConst (1 / cF))
+                 factG = polyMul (Poly (M.singleton mG 1)) (polyFromConst (1 / cG))
+                 term1 = polyMul factF f
+                 term2 = polyMul factG g
+             in polySub term1 term2
+           _ -> polyZero
+    _ -> polyZero
 
 -- =============================================
 -- Performance Notes

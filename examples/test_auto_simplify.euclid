@@ -1,0 +1,32 @@
+-- Test script for Automatic Expression Simplification
+-- Demonstrates the new :auto-simplify toggle command
+
+-- Test 1: With auto-simplification ON (default)
+:point A 0 0
+:point B 3 0
+
+-- This should show simplified output
+(= (+ (dist2 A B) 0) 9)
+
+-- Test 2: Turn OFF auto-simplification
+:auto-simplify
+
+-- Same proof but with raw expressions
+:point C 0 4
+(= (+ (dist2 A C) 0) 16)
+
+-- Test 3: Turn ON again
+:auto-simplify
+
+-- Should be simplified again
+(= (* 1 (dist2 B C)) 25)
+
+-- Test 4: More complex expression with simplification ON
+:point D 1 1
+:assume (= (+ (* 0 (dist2 A B)) (* 1 (dist2 C D))) (dist2 C D))
+(= (dist2 C D) 2)
+
+-- Test 5: Manual simplify should always work
+:simplify (+ (* 0 x) (* 1 y))
+
+:list

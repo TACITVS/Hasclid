@@ -1,7 +1,6 @@
 module Sturm where
 
-import Data.List (dropWhileEnd, sort)
-import Data.Ratio
+import Data.List (dropWhileEnd)
 
 -- | Univariate Polynomials are just [Rational] (c0 + c1*x + c2*x^2 ...)
 type UPoly = [Rational]
@@ -51,7 +50,7 @@ polyRem f g
 
 derivative :: UPoly -> UPoly
 derivative [] = []
-derivative (_:xs) = zipWith (*) (map fromIntegral [1..]) xs
+derivative (_:xs) = zipWith (*) (map fromIntegral [1 :: Integer ..]) xs
 
 evalPoly :: UPoly -> Rational -> Rational
 evalPoly p x = foldr (\c acc -> c + x * acc) 0 p

@@ -17,3 +17,9 @@ dist-newstyle/
 .cabal-project/
 cabal.project.local
 .claude/settings.local.json
+
+# Local helper scripts
+push_refactor.bat
+
+# Local scratch/dev artifacts
+scratch/

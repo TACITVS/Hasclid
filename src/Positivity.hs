@@ -8,9 +8,9 @@ module Positivity
   ) where
 
 import Expr
-import Sturm (countRealRoots, isolateRoots, samplePoints, evalPoly)
+import Sturm (countRealRoots, isolateRoots)
 import qualified Data.Map.Strict as M
-import Data.Ratio ((%), numerator, denominator)
+import Data.Ratio ((%))
 import Data.List (nub, sort)
 
 -- =============================================
@@ -65,9 +65,9 @@ checkPositivityEnhanced p allowZero =
 -- =============================================
 
 tryUnivariate :: Poly -> Bool -> Maybe PositivityResult
-tryUnivariate p allowZero =
+tryUnivariate p _allowZero =
   case toUnivariate p of
-    Just (var, coeffs) ->
+    Just (_, coeffs) ->
       let nRoots = countRealRoots coeffs
           lcVal = if null coeffs then 0 else last coeffs
           roots = isolateRoots coeffs
@@ -148,9 +148,11 @@ hasPositiveDefiniteMatrix :: Poly -> Bool
 hasPositiveDefiniteMatrix (Poly m) =
   -- Simplified: check diagonal dominance
   let terms = M.toList m
-      squareTerms = [ (v, c) | (Monomial vars, c) <- terms
-                             , M.size vars == 1
-                             , let [(v, 2)] = M.toList vars ]
+      squareTerms = [ (vName, c)
+                    | (Monomial vars, c) <- terms
+                    , M.size vars == 1
+                    , [(vName, 2)] <- [M.toList vars]
+                    ]
       crossTerms = [ c | (Monomial vars, c) <- terms, M.size vars == 2 ]
   in
       all ((> 0) . snd) squareTerms &&  -- All x², y², z² have positive coeffs
@@ -162,7 +164,7 @@ isWeightedSOS (Poly m) =
   let terms = M.toList m
   in
       not (null terms) &&
-      all (\(Monomial vars, coeff) -> coeff > 0) terms &&
+      all (\(Monomial _, coeff) -> coeff > 0) terms &&
       allEvenOrMixed terms
   where
     allEvenOrMixed ts = length (filter hasEvenExponents ts) > length ts `div` 2

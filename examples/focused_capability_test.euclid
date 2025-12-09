@@ -1,0 +1,76 @@
+-- ============================================================================
+-- FOCUSED CAPABILITY TEST - Testing Known Boundaries
+-- ============================================================================
+-- Quick test to identify exactly where Hasclid succeeds and fails
+-- ============================================================================
+
+-- TEST 1: Basic equality (SHOULD WORK)
+-- ============================================================================
+:point A 0 0
+:point B 3 0
+(= (dist2 A B) 9)
+:reset
+
+-- TEST 2: Symbolic parameter - concrete case (SHOULD WORK)
+-- ============================================================================
+:point A 0 0
+:point B S 0
+(= (dist2 A B) (^ S 2))
+:reset
+
+-- TEST 3: Multivariate inequality - trivial SOS (MIGHT WORK)
+-- ============================================================================
+(>= (+ (^ x 2) (^ y 2)) 0)
+:reset
+
+-- TEST 4: Triangle Inequality (KNOWN TO FAIL)
+-- ============================================================================
+:point A 0 0
+:point B 1 0
+:point C 1 1
+(>= (+ (dist2 A B) (dist2 B C)) (dist2 A C))
+:reset
+
+-- TEST 5: The square_3_lines problem (KNOWN TO HANG)
+-- Simplified version - test GeoSolver's symbolic handling
+-- ============================================================================
+:point A 0 0
+:point B S 0
+:point C S S
+:point D x y
+:assume (= (dist2 C D) (^ S 2))
+:assume (= (perpendicular B C C D) 0)
+(= (dist2 D A) (^ S 2))
+:reset
+
+-- TEST 6: Wu vs Gröbner on same problem
+-- ============================================================================
+:assume (= (* x x) 1)
+-- Gröbner (via default router):
+(= (* x (* x (* x x))) 1)
+:reset
+:assume (= (* x x) 1)
+-- Wu explicitly:
+:wu (= (* x (* x (* x x))) 1)
+:reset
+
+-- TEST 7: High-degree symbolic (STRESS TEST)
+-- ============================================================================
+:assume (= (^ x 10) 1)
+(= (* x (* x (* x (* x (* x (* x (* x (* x (* x x))))))))) 1)
+:reset
+
+-- TEST 8: Many constraints (COMPLEXITY TEST)
+-- ============================================================================
+:point P1 0 0
+:point P2 1 0
+:point P3 2 0
+:point P4 3 0
+:assume (= (collinear P1 P2 P3) 0)
+:assume (= (collinear P2 P3 P4) 0)
+(= (collinear P1 P3 P4) 0)
+:reset
+
+-- ============================================================================
+-- END OF FOCUSED TEST
+-- ============================================================================

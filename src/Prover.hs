@@ -24,13 +24,13 @@ module Prover
   ) where
 
 import Expr
-import Sturm (countRealRoots, isAlwaysPositive, sturmSequence, rootsInInterval, samplePoints, evalPoly)
+import Sturm (sturmSequence, rootsInInterval, samplePoints, evalPoly)
+import Core.GB (buchbergerOptimized, reduce, sPoly)
 import Positivity (checkPositivityEnhanced, PositivityResult(..), PositivityMethod(..), Confidence(..))
 import Cache (GroebnerCache, lookupBasis, insertBasis)
 import CADLift (proveFormulaCAD, satisfiableFormulaCAD, solveQuantifiedFormulaCAD)
 import SqrtElim (eliminateSqrt)
 import qualified Data.Map.Strict as M
-import qualified Data.Set as S
 import Data.List (nub, minimumBy, sort, findIndex)
 import qualified Data.List as L
 import Data.Ratio (numerator, denominator)
@@ -89,38 +89,17 @@ formatProofTrace trace = unlines $
     formatStep (UsedConstraint f) = "Applied constraint: " ++ prettyFormula f
     formatStep (UsedLemma f) = "Applied lemma: " ++ prettyFormula f
     formatStep (ComputedGroebnerBasis n) = "Computed Groebner basis (" ++ show n ++ " polynomials)"
-    formatStep (ReducedToNormalForm p1 p2) =
+    formatStep (ReducedToNormalForm _ p2) =
       if p2 == polyZero
       then "Reduced to normal form: 0 (PROOF COMPLETE)"
       else "Reduced to normal form: " ++ prettyPoly p2
     formatStep (CheckedPositivity method) = "Checked positivity using: " ++ method
 
 -- =============================================
--- Substitution Logic
+-- Substitution Logic (Now in Expr.hs)
 -- =============================================
 
-buildSubMap :: Theory -> M.Map String Poly
-buildSubMap theory = M.fromList [ (v, toPoly e) | Eq (Var v) e <- theory ]
-
-evaluatePoly :: M.Map String Poly -> Poly -> Poly
-evaluatePoly subM (Poly m) =
-  let
-      evalMono :: Monomial -> Rational -> Poly
-      evalMono (Monomial vars) coeff =
-        let
-          termExpanded = M.foldlWithKey (\accPoly varname power ->
-              let basePoly = case M.lookup varname subM of
-                               Just p  -> evaluatePoly subM p
-                               Nothing -> polyFromVar varname
-              in polyMul accPoly (polyPow basePoly power)
-            ) (polyFromConst 1) vars
-        in polyMul (polyFromConst coeff) termExpanded
-      results = map (\(mono, coeff) -> evalMono mono coeff) (M.toList m)
-  in foldl polyAdd polyZero results
-
-toPolySub :: M.Map String Poly -> Expr -> Poly
-toPolySub subM expr = evaluatePoly subM (toPoly expr)
-
+-- subPoly uses polyAdd/Neg
 subPoly :: Poly -> Poly -> Poly
 subPoly p1 p2 = polyAdd p1 (polyNeg p2)
 
@@ -128,63 +107,12 @@ subPoly p1 p2 = polyAdd p1 (polyNeg p2)
 -- GROEBNER BASIS ENGINE (Buchberger's Algorithm)
 -- =============================================
 
--- 1. Multivariate Polynomial Reduction (Division)
-reduce :: Poly -> [Poly] -> Poly
-reduce p fs
-  | p == polyZero = polyZero
-  | otherwise = case findDivisor p fs of
-      Just (f, mQuot, cQuot) ->
-          let subTerm = polyMul (polyMul f (Poly (M.singleton mQuot 1))) (polyFromConst cQuot)
-          in reduce (subPoly p subTerm) fs
-      Nothing ->
-          let Just (ltM, ltC) = getLeadingTerm p
-              rest = polySub p (Poly (M.singleton ltM ltC))
-              reducedRest = reduce rest fs
-          in polyAdd (Poly (M.singleton ltM ltC)) reducedRest
+-- 1. Multivariate Polynomial Reduction (Division) -> Imported from BuchbergerOpt
+-- 2. S-Polynomial -> Imported from BuchbergerOpt
 
-  where
-    findDivisor :: Poly -> [Poly] -> Maybe (Poly, Monomial, Rational)
-    findDivisor poly divisors =
-      case getLeadingTerm poly of
-        Nothing -> Nothing
-        Just (ltP, cP) ->
-            let candidates = [ (f, mDiv, cP / cF)
-                             | f <- divisors
-                             , let Just (ltF, cF) = getLeadingTerm f
-                             , Just mDiv <- [monomialDiv ltP ltF]
-                             ]
-            in case candidates of
-                 (c:_) -> Just c
-                 []    -> Nothing
-
--- 2. S-Polynomial
-sPoly :: Poly -> Poly -> Poly
-sPoly f g =
-  case (getLeadingTerm f, getLeadingTerm g) of
-    (Just (ltF, cF), Just (ltG, cG)) ->
-      let lcmM = monomialLCM ltF ltG
-          Just mF = monomialDiv lcmM ltF
-          Just mG = monomialDiv lcmM ltG
-
-          factF = polyMul (Poly (M.singleton mF 1)) (polyFromConst (1/cF))
-          factG = polyMul (Poly (M.singleton mG 1)) (polyFromConst (1/cG))
-
-          term1 = polyMul factF f
-          term2 = polyMul factG g
-      in subPoly term1 term2
-    _ -> polyZero
-
--- 3. Buchberger's Algorithm
+-- 3. Buchberger's Algorithm -> Uses Optimized Version
 buchberger :: [Poly] -> [Poly]
-buchberger polys = go (filter (/= polyZero) polys)
-  where
-    go basis =
-      let pairs = [ (f, g) | f <- basis, g <- basis, f /= g ]
-          remainders = [ reduce (sPoly f g) basis | (f, g) <- pairs ]
-          nonZeroRemainders = filter (/= polyZero) remainders
-      in if null nonZeroRemainders
-         then basis
-         else go (nub (basis ++ nonZeroRemainders))
+buchberger = buchbergerOptimized
 
 -- =============================================
 -- Logic & Proof Engine
@@ -198,6 +126,73 @@ partitionTheory (f:fs) =
        Eq (Var _) _ -> (f:subs, constrs)
        Eq _ _       -> (subs, f:constrs)
        _            -> (subs, constrs)
+
+-- Shared Groebner fallback used by both cached and custom Buchberger flows.
+groebnerFallback
+  :: ([Poly] -> [Poly])
+  -> Maybe GroebnerCache
+  -> Theory
+  -> Formula
+  -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+groebnerFallback customBuchberger maybeCache theory formula =
+  let
+    (substAssumptions, constraintAssumptions) = partitionTheory theory
+    subM = buildSubMap substAssumptions
+
+    substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
+    constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
+
+    idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
+                      | Eq l r <- constraintAssumptions ]
+
+    (basis, updatedCache) =
+      if null idealGenerators
+      then ([], maybeCache)
+      else case maybeCache of
+             Nothing -> (customBuchberger idealGenerators, Nothing)
+             Just cache ->
+               let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
+               in case maybeCached of
+                    Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
+                    Nothing ->
+                      let computed = customBuchberger idealGenerators
+                          cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
+                      in (computed, Just cacheAfterInsert)
+
+    basisStep = if null idealGenerators then [] else [ComputedGroebnerBasis (length basis)]
+    (pL, pR) = case formula of
+                 Eq l r -> (toPolySub subM l, toPolySub subM r)
+                 Ge l r -> (toPolySub subM l, toPolySub subM r)
+                 Gt l r -> (toPolySub subM l, toPolySub subM r)
+                 _      -> (polyZero, polyZero)
+
+    difference = subPoly pL pR
+    normalForm = reduce difference basis
+    reductionStep = [ReducedToNormalForm difference normalForm]
+    allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
+  in case formula of
+       Eq _ _ ->
+         let result = normalForm == polyZero
+             msg = if result
+                   then "Equality Holds (Groebner Normal Form is 0)"
+                   else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
+             trace = ProofTrace allSteps theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       Ge _ _ ->
+         let (result, msg) = checkPositivity normalForm True
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       Gt _ _ ->
+         let (result, msg) = checkPositivity normalForm False
+             positivityStep = [CheckedPositivity msg]
+             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+         in (result, msg, trace, updatedCache)
+
+       _ ->
+         (False, "Goal not supported by available solvers.", ProofTrace allSteps theory (length basis), updatedCache)
 
 -- | Prove a formula with optional cache support
 -- Returns: (isProved, reason, trace, updatedCache)
@@ -281,100 +276,33 @@ proveTheoryWithCache maybeCache theory formula =
 
       _ -> fallThrough baseTrace hasInt hasSqrt
   where
-    fallThrough baseTrace hasInt hasSqrt =
-         if any containsQuantifier theory
-           then (False, "Quantifiers in assumptions are not supported yet.", baseTrace, maybeCache)
-         else if hasInt
-           then
-             let outcome = intSolve defaultIntSolveOptions theory formula
-              in case intResult outcome of
-                   Just True  -> (True, reasonOutcome outcome True, baseTrace, maybeCache)
-                   Just False -> (False, reasonOutcome outcome False, baseTrace, maybeCache)
-                   Nothing    ->
-                     let msg = "Integer domain parsed but solver is incomplete for this goal."
-                               ++ if intBruteCandidate outcome
-                                  then " A bounded brute-force search is available but currently disabled."
-                                  else ""
-                     in (False, msg, baseTrace, maybeCache)
-          else if hasSqrt
-            then
-              let (th', goal') = eliminateSqrt theory formula
-                  proved = proveFormulaCAD th' goal'
-                  msg = if proved
-                        then "Proved via CAD with sqrt elimination"
-                        else "Not proved via CAD with sqrt elimination"
-                  trace = emptyTrace { usedAssumptions = th' }
-              in (proved, msg, trace, maybeCache)
-          else if containsQuantifier formula
-            then
-              let proved = solveQuantifiedFormulaCAD theory formula
-                  msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
-              in (proved, msg, baseTrace, maybeCache)
-           else
-       let
-         (substAssumptions, constraintAssumptions) = partitionTheory theory
-         subM = buildSubMap substAssumptions
-
-         -- Track substitutions used
-         substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
-
-         -- Track constraint assumptions
-         constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
-
-         idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
-                           | Eq l r <- constraintAssumptions ]
-
-         -- Compute basis with cache
-         (basis, updatedCache) =
-           if null idealGenerators
-           then ([], maybeCache)
-           else case maybeCache of
-                  Nothing -> (buchberger idealGenerators, Nothing)
-                  Just cache ->
-                    let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
-                    in case maybeCached of
-                         Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
-                         Nothing ->
-                           let computed = buchberger idealGenerators
-                               cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
-                           in (computed, Just cacheAfterInsert)
-
-         basisStep = if null idealGenerators
-                     then []
-                     else [ComputedGroebnerBasis (length basis)]
-
-         (pL, pR) = case formula of
-                      Eq l r -> (toPolySub subM l, toPolySub subM r)
-                      Ge l r -> (toPolySub subM l, toPolySub subM r)
-                      Gt l r -> (toPolySub subM l, toPolySub subM r)
-
-         difference = subPoly pL pR
-         normalForm = reduce difference basis
-
-         reductionStep = [ReducedToNormalForm difference normalForm]
-
-         -- Build trace
-         allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
-       in case formula of
-            Eq _ _ ->
-              let result = normalForm == polyZero
-                  msg = if result
-                        then "Equality Holds (Groebner Normal Form is 0)"
-                        else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
-                  trace = ProofTrace allSteps theory (length basis)
-              in (result, msg, trace, updatedCache)
-
-            Ge _ _ ->
-              let (result, msg) = checkPositivity normalForm True
-                  positivityStep = [CheckedPositivity msg]
-                  trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-              in (result, msg, trace, updatedCache)
-
-            Gt _ _ ->
-              let (result, msg) = checkPositivity normalForm False
-                  positivityStep = [CheckedPositivity msg]
-                  trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-              in (result, msg, trace, updatedCache)
+    fallThrough baseTrace hasInt hasSqrt
+      | any containsQuantifier theory =
+          (False, "Quantifiers in assumptions are not supported yet.", baseTrace, maybeCache)
+      | hasInt =
+          let outcome = intSolve defaultIntSolveOptions theory formula
+          in case intResult outcome of
+               Just True  -> (True, reasonOutcome outcome True, baseTrace, maybeCache)
+               Just False -> (False, reasonOutcome outcome False, baseTrace, maybeCache)
+               Nothing    ->
+                 let msg = "Integer domain parsed but solver is incomplete for this goal."
+                           ++ if intBruteCandidate outcome
+                              then " A bounded brute-force search is available but currently disabled."
+                              else ""
+                 in (False, msg, baseTrace, maybeCache)
+      | hasSqrt =
+          let (th', goal') = eliminateSqrt theory formula
+              proved = proveFormulaCAD th' goal'
+              msg = if proved
+                    then "Proved via CAD with sqrt elimination"
+                    else "Not proved via CAD with sqrt elimination"
+              trace = emptyTrace { usedAssumptions = th' }
+          in (proved, msg, trace, maybeCache)
+      | containsQuantifier formula =
+          let proved = solveQuantifiedFormulaCAD theory formula
+              msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
+          in (proved, msg, baseTrace, maybeCache)
+      | otherwise = groebnerFallback buchberger maybeCache theory formula
 
 -- | Prove a formula with custom Buchberger function and optional cache support
 -- Returns: (isProved, reason, trace, updatedCache)
@@ -413,60 +341,7 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
                 msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
             in (proved, msg, baseTrace', maybeCache)
         else
-          let
-            (substAssumptions, constraintAssumptions) = partitionTheory theory
-            subM = buildSubMap substAssumptions
-
-            substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
-            constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
-
-            idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
-                              | Eq l r <- constraintAssumptions ]
-
-            (basis, updatedCache) =
-              if null idealGenerators
-              then ([], maybeCache)
-              else case maybeCache of
-                     Nothing -> (customBuchberger idealGenerators, Nothing)
-                     Just cache ->
-                       let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
-                       in case maybeCached of
-                            Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
-                            Nothing ->
-                              let computed = customBuchberger idealGenerators
-                                  cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
-                              in (computed, Just cacheAfterInsert)
-
-            basisStep = if null idealGenerators then [] else [ComputedGroebnerBasis (length basis)]
-            (pL, pR) = case formula of
-                         Eq l r -> (toPolySub subM l, toPolySub subM r)
-                         Ge l r -> (toPolySub subM l, toPolySub subM r)
-                         Gt l r -> (toPolySub subM l, toPolySub subM r)
-
-            difference = subPoly pL pR
-            normalForm = reduce difference basis
-            reductionStep = [ReducedToNormalForm difference normalForm]
-            allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
-          in case formula of
-               Eq _ _ ->
-                 let result = normalForm == polyZero
-                     msg = if result
-                           then "Equality Holds (Groebner Normal Form is 0)"
-                           else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
-                     trace = ProofTrace allSteps theory (length basis)
-                 in (result, msg, trace, updatedCache)
-
-               Ge _ _ ->
-                 let (result, msg) = checkPositivity normalForm True
-                     positivityStep = [CheckedPositivity msg]
-                     trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-                 in (result, msg, trace, updatedCache)
-
-               Gt _ _ ->
-                 let (result, msg) = checkPositivity normalForm False
-                     positivityStep = [CheckedPositivity msg]
-                     trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-                 in (result, msg, trace, updatedCache)
+          groebnerFallback customBuchberger maybeCache theory formula
   in
     case formula of
       Forall qs inner
@@ -541,89 +416,6 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
         (False, "Quantifiers are not yet supported; cannot solve universally quantified goal: " ++ prettyFormula formula, baseTrace, maybeCache)
 
       _ -> fallThrough baseTrace hasInt hasSqrt
-  where
-    fallThrough baseTrace' hasInt' hasSqrt' =
-         if any containsQuantifier theory
-           then (False, "Quantifiers in assumptions are not supported yet.", baseTrace', maybeCache)
-         else if hasInt'
-           then
-             let outcome = intSolve defaultIntSolveOptions theory formula
-             in case intResult outcome of
-                  Just True  -> (True, reasonOutcome outcome True, baseTrace', maybeCache)
-                  Just False -> (False, reasonOutcome outcome False, baseTrace', maybeCache)
-                  Nothing    ->
-                    let msg = "Integer domain parsed but solver is incomplete for this goal."
-                              ++ if intBruteCandidate outcome
-                                 then " A bounded brute-force search is available but currently disabled."
-                                 else ""
-                    in (False, msg, baseTrace', maybeCache)
-         else if hasSqrt'
-           then
-             let (th', goal') = eliminateSqrt theory formula
-                 proved = proveFormulaCAD th' goal'
-                 msg = if proved
-                       then "Proved via CAD with sqrt elimination"
-                       else "Not proved via CAD with sqrt elimination"
-                 trace = emptyTrace { usedAssumptions = th' }
-             in (proved, msg, trace, maybeCache)
-         else
-           let
-             (substAssumptions, constraintAssumptions) = partitionTheory theory
-             subM = buildSubMap substAssumptions
-
-             substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
-             constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
-
-             idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
-                               | Eq l r <- constraintAssumptions ]
-
-             (basis, updatedCache) =
-               if null idealGenerators
-               then ([], maybeCache)
-               else case maybeCache of
-                      Nothing -> (customBuchberger idealGenerators, Nothing)
-                      Just cache ->
-                        let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
-                        in case maybeCached of
-                             Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
-                             Nothing ->
-                               let computed = customBuchberger idealGenerators
-                                   cacheAfterInsert = insertBasis idealGenerators computed cacheAfterLookup
-                               in (computed, Just cacheAfterInsert)
-
-             basisStep = if null idealGenerators
-                         then []
-                         else [ComputedGroebnerBasis (length basis)]
-
-             (pL, pR) = case formula of
-                          Eq l r -> (toPolySub subM l, toPolySub subM r)
-                          Ge l r -> (toPolySub subM l, toPolySub subM r)
-                          Gt l r -> (toPolySub subM l, toPolySub subM r)
-
-             difference = subPoly pL pR
-             normalForm = reduce difference basis
-             reductionStep = [ReducedToNormalForm difference normalForm]
-             allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
-           in case formula of
-                Eq _ _ ->
-                  let result = normalForm == polyZero
-                      msg = if result
-                            then "Equality Holds (Groebner Normal Form is 0)"
-                            else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
-                      trace = ProofTrace allSteps theory (length basis)
-                  in (result, msg, trace, updatedCache)
-
-                Ge _ _ ->
-                  let (result, msg) = checkPositivity normalForm True
-                      positivityStep = [CheckedPositivity msg]
-                      trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-                  in (result, msg, trace, updatedCache)
-
-                Gt _ _ ->
-                  let (result, msg) = checkPositivity normalForm False
-                      positivityStep = [CheckedPositivity msg]
-                      trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
-                  in (result, msg, trace, updatedCache)
 
 -- | Original proveTheory function (no caching)
 proveTheory :: Theory -> Formula -> (Bool, String, ProofTrace)
@@ -1013,7 +805,7 @@ intEvalExpr (Mul a b) = do
   return (x * y)
 intEvalExpr (Pow e n) = do
   x <- intEvalExpr e
-  return (x ^ fromIntegral n)
+  return (x ^ (fromIntegral n :: Integer))
 intEvalExpr _ = Nothing
 
 -- Linear integer form: returns (coefficients map, constant term)
@@ -1214,23 +1006,28 @@ intIntervalSolve opts allowBranch theory goal =
           Right Nothing -> Right initial
       -- Refinement + elimination loop
       solveLoop envIn theoryIn usedLP 0 = Right (envIn, theoryIn, usedLP)
-      solveLoop envIn theoryIn usedLP n = do
-        envRefined <- iterateRefineFix envIn 20 theoryIn
-        theoryPruned <- pruneConstraints envRefined theoryIn
-        (envLP, usedLP1) <- linearRelaxation theoryIn goal envRefined
-        envRef2 <- iterateRefineFix envLP 20 theoryPruned
-        theoryPruned2 <- pruneConstraints envRef2 theoryPruned
-        (envCooper, theoryCooper) <- multiCooper envRef2 theoryPruned2 goal
-        let changed = envCooper /= envIn || theoryCooper /= theoryIn || usedLP1
-            usedLP' = usedLP || usedLP1
-        if changed
-          then solveLoop envCooper theoryCooper usedLP' (n-1)
-          else Right (envCooper, theoryCooper, usedLP')
+      solveLoop envIn theoryIn usedLP n =
+        let step = do
+              envRefined <- iterateRefineFix envIn 20 theoryIn
+              theoryPruned <- pruneConstraints envRefined theoryIn
+              (envLP, usedLP1) <- linearRelaxation theoryIn goal envRefined
+              envRef2 <- iterateRefineFix envLP 20 theoryPruned
+              theoryPruned2 <- pruneConstraints envRef2 theoryPruned
+              (envCooper, theoryCooper) <- multiCooper envRef2 theoryPruned2 goal
+              let changed = envCooper /= envIn || theoryCooper /= theoryIn || usedLP1
+                  usedLP' = usedLP || usedLP1
+              pure (changed, envCooper, theoryCooper, usedLP')
+        in case step of
+             Left b -> Left b
+             Right (changed, envCooper, theoryCooper, usedLP') ->
+               if changed
+                 then solveLoop envCooper theoryCooper usedLP' (n-1)
+                 else Right (envCooper, theoryCooper, usedLP')
 
   in case initialWithSolution of
        Left b -> IntSolveOutcome (Just b) False False False False False
        Right env0 ->
-         case solveLoop env0 theory False 8 of
+          case solveLoop env0 theory False (8 :: Int) of
            Left b -> IntSolveOutcome (Just b) False False False False False
            Right (envFinal, theoryFinal, usedLP) ->
              case decideWithIntervals envFinal goal of
@@ -1445,73 +1242,9 @@ maxContribution a (Interval lo hi)
   | a >= 0 = fmap (* a) hi
   | otherwise = fmap (* a) lo
 
--- Brute-force check over finite intervals when domain is small.
--- Returns Just True if goal holds for all satisfying assignments,
--- Just False if a counterexample is found, Nothing if undecided.
-bruteForceCheck :: Map.Map String Interval -> Theory -> Formula -> Maybe Bool
-bruteForceCheck env theory goal =
-  case finiteDomains env of
-    Nothing -> Nothing
-    Just doms ->
-      let totalSize = product (map (fromIntegral . length . snd) doms) :: Integer
-          limit = 5000 :: Integer
-      in if totalSize == 0
-           then Just False
-           else if totalSize <= limit
-                  then searchAll doms
-                  else Nothing
-  where
-    searchAll doms = go doms Map.empty False
-    go [] assignment anySat =
-      case evalWith assignment goal of
-        Just True -> if anySat then Just True else Just True
-        Just False -> Just False
-        Nothing -> if anySat then Nothing else Nothing
-    go ((v, vals):rest) assignment anySat =
-      foldl combine Nothing vals
-      where
-        combine acc val =
-          case acc of
-            Just False -> Just False
-            _ ->
-              let assignment' = Map.insert v val assignment
-              in case evalTheory assignment' of
-                   Just True ->
-                     case go rest assignment' True of
-                       Just False -> Just False
-                       Just True  -> Just True
-                       Nothing    -> Nothing
-                   Just False -> acc
-                   Nothing -> acc
-
-    evalTheory asg =
-      foldM step True theory
-      where
-        step True f = evalWith asg f
-        step False _ = Just False
-
-    evalWith asg (Eq l r) = do
-      a <- intEvalExprWith asg l
-      b <- intEvalExprWith asg r
-      return (a == b)
-    evalWith asg (Ge l r) = do
-      a <- intEvalExprWith asg l
-      b <- intEvalExprWith asg r
-      return (a >= b)
-    evalWith asg (Gt l r) = do
-      a <- intEvalExprWith asg l
-      b <- intEvalExprWith asg r
-      return (a > b)
-
-    finiteDomains m = traverse toList (Map.toList m)
-    toList (v, Interval (Just lo) (Just hi))
-      | lo <= hi = Just (v, [lo..hi])
-      | otherwise = Just (v, [])
-    toList _ = Nothing
-
 -- Targeted small-branch search: pick the smallest finite interval and try assignments
 branchSmall :: IntSolveOptions -> Map.Map String Interval -> Theory -> Formula -> Maybe Bool
-branchSmall opts env theory goal =
+branchSmall _opts env theory _goal =
   case smallestDomain env of
     Nothing -> Nothing
     Just (varName, vals)
@@ -1529,60 +1262,6 @@ branchSmall opts env theory goal =
           let forcedEnv = Map.insert vn (singletonInterval val) env
           in case pruneConstraints forcedEnv theory of
                Left False -> Nothing
-               Right theory' ->
-                 case decideWithIntervals forcedEnv goal of
-                   Just res -> Just res
-                   Nothing -> Nothing
-
--- Solve a linear system of equalities; if a unique integer solution exists, return it.
--- Returns Left False on contradiction, Right Nothing if non-unique or undecidable, Right (Just sol) if unique integers.
-solveLinearUnique :: Theory -> Either Bool (Maybe (Map.Map String Integer))
-solveLinearUnique theory =
-  let eqs = [ (coeffs, c) | Eq l r <- theory, Just (coeffs, c) <- [intLinDiff l r] ]
-      vars = sort . nub $ concatMap (Map.keys . fst) eqs
-  in if null eqs || null vars
-        then Right Nothing
-        else
-          case gaussianIntSolution vars eqs of
-            Left False -> Left False
-            Right (Just sol) -> Right (Just sol)
-            Right Nothing -> Right Nothing
-
--- Gaussian elimination over rationals; checks for unique integer solution.
-gaussianIntSolution :: [String] -> [(Map.Map String Integer, Integer)] -> Either Bool (Maybe (Map.Map String Integer))
-gaussianIntSolution vars eqs =
-  let n = length vars
-      toRow (coeffs, c) = [ toRational (Map.findWithDefault 0 v coeffs) | v <- vars ] ++ [toRational (-c)]
-      rows = map toRow eqs
-      rref = toRREF rows
-  in
-    if any (\row -> all (==0) (init row) && last row /= 0) rref
-       then Left False
-       else
-         let pivots = [ i | (i,row) <- zip [0..] rref, any (/=0) (init row) ]
-         in if length pivots < n
-              then Right Nothing -- underdetermined
-              else
-                let solution = backSubGauss vars rref
-                in case sequence solution of
-                     Just sols -> Right (Just (Map.fromList sols))
-                     Nothing -> Right Nothing
-
-toRREF :: [[Rational]] -> [[Rational]]
-toRREF [] = []
-toRREF rs = rref 0 rs
-  where
-    rref _ [] = []
-    rref lead rows@(row0:_)
-      | lead >= length row0 = rows
-      | otherwise =
-          case dropWhile (\row -> row !! lead == 0) rows of
-            [] -> rref (lead+1) rows
-            (r:rs) ->
-              let pivot = map (/ (r !! lead)) r
-                  rows' = pivot : [ zipWith (-) row (map (* (row !! lead)) pivot) | row <- rs ]
-              in pivot : rref (lead+1) rows'
-
 -- Remove constraints already decided by current intervals; detect contradictions early.
 pruneConstraints :: Map.Map String Interval -> Theory -> Either Bool Theory
 pruneConstraints env = foldr step (Right [])
@@ -1595,30 +1274,6 @@ pruneConstraints env = foldr step (Right [])
             Just True -> Right kept
             Just False -> Left False
             Nothing -> Right (f : kept)
-
-backSubGauss :: [String] -> [[Rational]] -> [Maybe (String, Integer)]
-backSubGauss vars rows =
-  let m = length vars
-      revRows = reverse rows
-      solveRow acc row =
-        case findIndex (/=0) row of
-          Nothing -> acc
-          Just idx | idx < m ->
-            let rhs = last row - sum [ (row !! j) * toRational v | (j,v) <- acc ]
-            in case rationalToInteger rhs of
-                 Just iv -> (idx, iv) : acc
-                 Nothing -> acc
-          _ -> acc
-      sols = foldl solveRow [] revRows
-  in if length sols == m
-        then map (\(i,v) -> Just (vars !! i, v)) sols
-        else replicate m Nothing
-
-rationalToInteger :: Rational -> Maybe Integer
-rationalToInteger q =
-  let num = numerator q
-      den = denominator q
-  in if den == 1 then Just num else Nothing
 
 -- =============================================
 -- LP relaxation (very lightweight)
@@ -1658,7 +1313,7 @@ linearRelaxation theory goal env =
         Just (coeffs, c) | Map.member v coeffs -> Just (coeffs, c, strict)
         _ -> Nothing
 
-    applyConstraint v envAcc (currentEnv, used) (coeffs, c, strict) =
+    applyConstraint v envAcc (_currentEnv, used) (coeffs, c, strict) =
       let a = coeffs Map.! v
           (restMin, restMax) = sumBounds (Map.delete v coeffs) envAcc
           (lo, hi) =
@@ -1696,15 +1351,28 @@ proveExistentialConstructive theory goal =
     Exists qs body ->
       let
         -- 1. Extract equations from the body
-        -- For OR, we need to check if ANY branch is consistent.
         eqsBranches = extractEqualitiesBranches body
         
         -- 2. Build ideal from equations + theory equalities
         theoryEqs = [ Sub l r | Eq l r <- theory ]
         
+        -- Renaming strategy: Ensure existential vars are "largest" for Lex elimination.
+        -- We prefix them with "zz_" so they sort after typical variables (starting with a-y).
+        -- (Assuming Lex order compares strings)
+        existentialVars = map qvName qs
+        rename v | v `elem` existentialVars = "zz_" ++ v
+                 | otherwise = v
+        
+        renamePoly :: Poly -> Poly
+        renamePoly (Poly m) =
+            let renameMonomial (Monomial vars) = 
+                    Monomial (M.mapKeys rename vars)
+            in Poly (M.mapKeys renameMonomial m)
+
         checkBranch eqs = 
-            let ideal = map (toPolySub M.empty) (eqs ++ theoryEqs)
-                basis = buchberger ideal
+            let rawIdeal = map (toPolySub M.empty) (eqs ++ theoryEqs)
+                renamedIdeal = map renamePoly rawIdeal
+                basis = buchberger renamedIdeal
                 isInconsistent = any isConstantNonZero basis
             in (not isInconsistent, basis)
 
@@ -1713,9 +1381,12 @@ proveExistentialConstructive theory goal =
         anyConsistent = any fst results
         
         -- 4. Trace (take first consistent or first if none)
-        (consistent, bestBasis) = case filter fst results of
-                                    (r:_) -> r
-                                    [] -> head results -- show why it failed
+        (_, bestBasis) =
+          case filter fst results of
+            (r:_) -> r
+            [] -> case results of
+                    (r:_) -> r
+                    [] -> (False, [])
         
         step = ComputedGroebnerBasis (length bestBasis)
         trace = ProofTrace [step] theory (length bestBasis)
@@ -1882,7 +1553,7 @@ cooperEliminate env theory goal =
       case Map.lookup v envAcc of
         Nothing -> Right envAcc
         Just iv ->
-          let intersected = foldM (\ivAcc (m, r) ->
+          let intersected = foldM (\ivAcc (m, _) ->
                                       case congruenceInterval m ivAcc of
                                         Just iv' -> Right iv'
                                         Nothing -> Left False
@@ -1918,14 +1589,3 @@ multiCooper env theory goal = cooperLoop env theory
               if env' == envAcc then Right (envAcc, theoryAcc)
               else cooperLoop env' theory'
 
-intEvalExprWith :: Map.Map String Integer -> Expr -> Maybe Integer
-intEvalExprWith env (IntConst n) = Just n
-intEvalExprWith env (IntVar v) = Map.lookup v env
-intEvalExprWith env (Const r) =
-  let n = numerator r; d = denominator r
-  in if d == 1 then Just n else Nothing
-intEvalExprWith env (Add a b) = (+) <$> intEvalExprWith env a <*> intEvalExprWith env b
-intEvalExprWith env (Sub a b) = (-) <$> intEvalExprWith env a <*> intEvalExprWith env b
-intEvalExprWith env (Mul a b) = (*) <$> intEvalExprWith env a <*> intEvalExprWith env b
-intEvalExprWith env (Pow e n) = (^ fromIntegral n) <$> intEvalExprWith env e
-intEvalExprWith _ _ = Nothing
