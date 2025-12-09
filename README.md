@@ -92,18 +92,36 @@ Start the REPL with `cabal run prover`.
 *   `:assume (<op> <lhs> <rhs>)`: Add a constraint to the current theory.
     *   *Example:* `:assume (= (dist2 A B) (dist2 A C))`
 *   `:list`: Show active assumptions and proven lemmas.
-*   `:reset`: Clear all assumptions (keeps lemmas).
-*   `:clear`: Full factory reset.
+*   `:list-lemmas`: Show stored lemmas separately.
+*   `:reset`: Clear all assumptions (keeps lemmas and cache).
+*   `:soft-reset`: Clear all assumptions (keeps lemmas, cache preserved).
+*   `:clear`: Full factory reset (clears everything).
 *   `:load <file>`: Run a `.euclid` script.
+*   `:save-lemmas <file>`: Save proven lemmas to a file.
+*   `:load-lemmas <file>`: Load lemmas from a file.
 
 ### Proof & Solver Commands
-*   `(op lhs rhs)`: Entering a raw formula attempts to prove it immediately.
+*   `(op lhs rhs)`: Entering a raw formula uses automatic solver selection (GeoSolver → best algebraic solver).
     *   *Example:* `(= (dist2 A B) (dist2 A C))`
+*   `:auto (<op> <lhs> <rhs>)`: Explicitly request automatic solver selection (same as direct formula).
+*   `:prove (<op> <lhs> <rhs>)`: Force Gröbner basis solver.
+*   `:wu (<op> <lhs> <rhs>)`: Force Wu's method (works only for equality goals).
 *   `:lemma (<op> <lhs> <rhs>)`: Proves a statement. If valid, adds it to the persistent knowledge base (Lemmas) for future proofs.
-*   `:solve (<op> <lhs> <rhs>) <var1> [var2]`:
-    *   **1D**: Solves for `var1` (e.g., find ranges where a polynomial is positive).
-    *   **2D**: Uses CAD lifting to find regions of `(var1, var2)` that satisfy the condition.
-*   `:project <expr> <var>`: Computes the discriminant (shadow) of a polynomial with respect to `var`.
+*   `:counterexample <formula>` or `:ce <formula>`: Search for a counterexample to the given formula.
+*   `:construct <formula>`: Search for a satisfying assignment for the given formula.
+
+### Advanced Configuration
+*   `:verbose`: Toggle detailed proof explanations (shows proof steps, assumptions used, etc.).
+*   `:auto-simplify`: Toggle automatic expression simplification.
+*   `:set-timeout <seconds>`: Set solver timeout (default: 30s). Prevents hanging on hard problems.
+*   `:show-timeout`: Display current timeout setting.
+*   `:optimize on|off`: Toggle Buchberger optimization for Gröbner basis computation.
+*   `:set-strategy <name>`: Set selection strategy for S-polynomial pairs (normal|sugar|minimal).
+*   `:bruteforce on|off`: Enable/disable bounded brute-force search for integer constraint goals.
+*   `:set-order <order>`: Set term ordering (grevlex|lex|gradedlex).
+*   `:show-order`: Display current term ordering.
+*   `:cache-stats`: Show Gröbner basis cache hit/miss statistics.
+*   `:clear-cache`: Clear the Gröbner basis cache.
 
 ## Codebase Structure
 
