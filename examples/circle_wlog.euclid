@@ -1,0 +1,28 @@
+-- "Algorithmic Improvement": Simplify the problem using WLOG (Without Loss of Generality).
+-- We fix the coordinate system to the triangle ABC.
+-- This preserves the generic nature of the triangle (it can still be any shape),
+-- but drastically simplifies the polynomial system for the solver.
+
+:set-timeout 5
+
+-- 1. Fix A at origin
+:point A 0 0
+
+-- 2. Fix B on x-axis (generic length xB)
+:point B xB 0
+
+-- 3. C is generic
+:point C xC yC
+
+-- 4. Condition: Triangle is non-degenerate
+-- Not collinear means C is not on the x-axis (yC != 0) and B is not at A (xB != 0)
+:assume (not (= yC 0))
+:assume (not (= xB 0))
+
+-- 5. Prove EXISTENCE of circumcenter O(xO, yO) and radius squared Rsq
+:auto (exists ((real xO) (real yO) (real Rsq)) 
+    (and 
+        (= (dist2 O A) Rsq)
+        (and (= (dist2 O B) Rsq) (= (dist2 O C) Rsq))
+    )
+)

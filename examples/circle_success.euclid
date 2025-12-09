@@ -1,0 +1,6 @@
+:set-timeout 120
+:point A xA yA
+:point B xB yB
+:point C xC yC
+-- We use :auto to trigger the intelligent router which now supports generic existence via Wu's method.
+:auto (exists ((real xO) (real yO) (real Rsq)) (and (= (dist2 O A) Rsq) (and (= (dist2 O B) Rsq) (= (dist2 O C) Rsq))))
