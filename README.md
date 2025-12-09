@@ -5,12 +5,27 @@
 
 ## Project Description
 
-**Hasclid** (v9.1) is an advanced, interactive theorem prover for Euclidean geometry built in Haskell. It bridges the gap between geometric intuition and rigorous algebraic proof by translating geometric constraints into polynomial ideals.
+**Hasclid** (v9.1) is an advanced, interactive theorem prover for Euclidean geometry built in Haskell. It bridges the gap between geometric intuition and rigorous algebraic proof through intelligent solver selection and a two-phase proving architecture.
 
-The engine combines three powerful algebraic techniques to automate proofs:
-1.  **Groebner Bases (Buchberger's Algorithm):** For verifying equality constraints (e.g., proving two segments are congruent or points are collinear).
-2.  **Sturm's Theorem:** For rigorous positivity checking of univariate polynomials. This allows Hasclid to handle inequalities (e.g., distance > 0) without relying on numerical approximations.
-3.  **Cylindrical Algebraic Decomposition (CAD) (Partial):** Utilizes polynomial discriminants and resultants to "project" multivariate problems into lower dimensions, enabling the solving of inequalities involving multiple variables.
+### Two-Phase Solving Architecture
+
+**Phase 1: Fast Geometric Reasoning (GeoSolver)**
+- Symbolic constraint propagation for geometric problems
+- Handles symbolic parameters (e.g., side length 'S')
+- Explores multiple geometric configurations (branches)
+- Returns results in milliseconds for solvable cases
+- Falls back to Phase 2 when constraints are insufficient
+
+**Phase 2: Algebraic Solvers (Automatic Selection)**
+
+When GeoSolver cannot decide, the system automatically selects the optimal algebraic method:
+
+1.  **Gröbner Bases (Buchberger's Algorithm):** General-purpose algebraic equation solver. Robust but slower for pure geometry.
+2.  **Wu's Method (Characteristic Sets):** Optimized for geometric theorem proving. Uses triangularization, 10-100x faster than Gröbner for coordinate geometry.
+3.  **CAD (Cylindrical Algebraic Decomposition):** Real inequality solving using polynomial discriminants and sign analysis (1D-2D support).
+4.  **Sturm Sequences:** Real root counting for univariate polynomial inequalities.
+5.  **Integer Solver:** Linear interval solving with optional bounded brute-force search.
+6.  **Modular Arithmetic:** Probabilistic consistency checking over finite fields.
 
 Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environment to define points, script theorems, and explore algebraic geometry interactively.
 
