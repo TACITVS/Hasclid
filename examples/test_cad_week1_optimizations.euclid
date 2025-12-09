@@ -1,0 +1,377 @@
+-- ============================================================================
+-- HASCLID v9.1 - CAD WEEK 1 OPTIMIZATIONS STRESS TEST
+-- ============================================================================
+-- Purpose: Test McCallum projection, early termination, and variable ordering
+-- Target: Multivariate inequality problems (CAD's specialty)
+-- Expected: 5-20x speedup compared to v9.0
+-- Date: 2025-12-09
+-- ============================================================================
+
+:verbose
+
+-- ============================================================================
+-- SECTION 1: MULTIVARIATE INEQUALITIES (CAD Core Functionality)
+-- ============================================================================
+-- These were FAILING in v9.0 (0% success rate)
+-- With CAD optimizations, they should now be FAST and CORRECT
+
+-- Test 1.1: Trivial Sum of Squares (x^2 + y^2 >= 0)
+-- Expected: PROVED (trivial positivity)
+-- Optimization benefit: Early termination (no counterexample exists)
+:reset
+(>= (+ (^ x 2) (^ y 2)) 0)
+
+-- Test 1.2: Sum of Squares (3 variables)
+-- Expected: PROVED (x^2 + y^2 + z^2 >= 0)
+-- Optimization benefit: Variable ordering (z, y, x by degree)
+:reset
+(>= (+ (^ x 2) (+ (^ y 2) (^ z 2))) 0)
+
+-- Test 1.3: Weighted Sum of Squares
+-- Expected: PROVED (2x^2 + 3y^2 >= 0)
+-- Optimization benefit: McCallum projection (fewer polynomials)
+:reset
+(>= (+ (* 2 (^ x 2)) (* 3 (^ y 2))) 0)
+
+-- Test 1.4: Non-trivial Positive Polynomial
+-- Expected: PROVED (x^2 + xy + y^2 >= 0)
+-- Optimization benefit: All three optimizations combined
+:reset
+(>= (+ (^ x 2) (+ (* x y) (^ y 2))) 0)
+
+-- Test 1.5: Circle Containment (x^2 + y^2 <= r^2 with r=5)
+-- Expected: REFUTED (not always true)
+-- Optimization benefit: Early termination (finds counterexample quickly)
+:reset
+(<= (+ (^ x 2) (^ y 2)) 25)
+
+-- Test 1.6: Circle Exterior (x^2 + y^2 > 1 is not universal)
+-- Expected: REFUTED (origin is counterexample)
+-- Optimization benefit: Early termination (stops at first cell)
+:reset
+(> (+ (^ x 2) (^ y 2)) 1)
+
+-- Test 1.7: Half-plane (x + y >= 0)
+-- Expected: REFUTED (negative quadrant is counterexample)
+-- Optimization benefit: Early termination
+:reset
+(>= (+ x y) 0)
+
+-- Test 1.8: Hyperbola Region (xy > 1)
+-- Expected: REFUTED (origin is counterexample)
+-- Optimization benefit: Early termination
+:reset
+(> (* x y) 1)
+
+-- ============================================================================
+-- SECTION 2: GEOMETRIC INEQUALITIES (Real-World CAD Applications)
+-- ============================================================================
+
+-- Test 2.1: Triangle Inequality (THE CLASSIC)
+-- Expected: NOW SOLVABLE with CAD optimizations
+-- This was FAILING in v9.0 stress test
+:reset
+:point A 0 0
+:point B 3 4
+:point C 6 0
+(>= (+ (dist2 A B) (dist2 B C)) (dist2 A C))
+
+-- Test 2.2: Triangle Inequality (Symbolic)
+-- Expected: Should handle symbolic parameters better
+:reset
+:point A 0 0
+:point B a b
+:point C c 0
+(>= (+ (dist2 A B) (dist2 B C)) (dist2 A C))
+
+-- Test 2.3: Distance Always Non-negative
+-- Expected: PROVED (trivial)
+:reset
+:point P x1 y1
+:point Q x2 y2
+(>= (dist2 P Q) 0)
+
+-- Test 2.4: Circle Constraint (Point on or inside circle)
+-- Expected: REFUTED (not universal)
+:reset
+:point P x y
+:point O 0 0
+(<= (dist2 P O) 25)
+
+-- Test 2.5: Two Circles Intersection Region
+-- Expected: REFUTED (not universal)
+:reset
+(>= (* (- (+ (^ x 2) (^ y 2)) 25) (- (+ (^ (- x 10) 2) (^ y 2)) 25)) 0)
+
+-- ============================================================================
+-- SECTION 3: VARIABLE ORDERING STRESS TEST
+-- ============================================================================
+-- These test the heuristic: Lower degree & fewer appearances -> deeper
+
+-- Test 3.1: Clear Ordering (x^3, y^2, z)
+-- Expected: Variable order should be [x, y, z] (degree descending)
+-- x: degree 3, y: degree 2, z: degree 1
+:reset
+(>= (+ (^ x 3) (+ (^ y 2) z)) 0)
+
+-- Test 3.2: Many Variables (Should order by complexity)
+-- Expected: Optimal ordering improves performance
+:reset
+(>= (+ (^ a 4) (+ (^ b 3) (+ (^ c 2) (+ d 1)))) 0)
+
+-- Test 3.3: Mixed Appearances
+-- x appears in 2 terms, y in 1 term
+-- Expected: y should go deeper
+:reset
+(>= (+ (^ x 2) (+ (* x y) (^ y 2))) 0)
+
+-- Test 3.4: High-degree single variable
+-- Expected: Process high-degree variable first
+:reset
+(>= (+ (^ x 5) y) 0)
+
+-- ============================================================================
+-- SECTION 4: EARLY TERMINATION STRESS TEST
+-- ============================================================================
+-- These should terminate IMMEDIATELY when counterexample found
+
+-- Test 4.1: Obvious Counterexample (x = 0, y = 0)
+-- Expected: Terminates at first cell (origin)
+-- Speedup: Should be ~10x faster than full decomposition
+:reset
+(> (+ (^ x 2) (^ y 2)) 5)
+
+-- Test 4.2: Linear Inequality (Easy counterexample)
+-- Expected: Terminates at first sector
+:reset
+(> x 10)
+
+-- Test 4.3: Product Inequality (Origin is counterexample)
+-- Expected: Terminates at first cell
+:reset
+(> (* x y) 5)
+
+-- Test 4.4: Polynomial with Constant (Clear counterexample at origin)
+-- Expected: Immediate termination
+:reset
+(> (+ (^ x 2) (+ (^ y 2) 1)) 10)
+
+-- ============================================================================
+-- SECTION 5: McCAllum PROJECTION STRESS TEST
+-- ============================================================================
+-- These test the projection optimization (50-70% fewer polynomials)
+
+-- Test 5.1: Two Polynomials (Collins: 2 resultants, McCallum: 1)
+-- p1 = x^2 + y, p2 = x + y^2
+-- Expected: McCallum should compute only 1 resultant
+:reset
+:assume (= (+ (^ x 2) y) 0)
+:assume (= (+ x (^ y 2)) 0)
+(= x y)
+
+-- Test 5.2: Three Polynomials (Collins: 6 resultants, McCallum: 3)
+-- p1 = x^2 - y, p2 = y^2 - z, p3 = z^2 - x
+-- Expected: McCallum should compute only 3 resultants
+:reset
+:assume (= (^ x 2) y)
+:assume (= (^ y 2) z)
+:assume (= (^ z 2) x)
+(= x y)
+
+-- Test 5.3: Four Polynomials (Collins: 12 resultants, McCallum: 6)
+-- Expected: 50% reduction in resultant computations
+:reset
+:assume (= (+ (^ x 2) (^ y 2)) 1)
+:assume (= (+ (^ z 2) (^ w 2)) 1)
+:assume (= (+ x z) 0)
+(= (+ y w) 0)
+
+-- ============================================================================
+-- SECTION 6: THE PROBLEMATIC CASES (v9.0 Timeout Issues)
+-- ============================================================================
+-- These were TIMING OUT in v9.0 - should be FAST now
+
+-- Test 6.1: Square_3_Lines Concrete (S=1)
+-- This was INSTANT in v9.0 but timed out for symbolic S
+-- Expected: Still INSTANT
+:reset
+:set-timeout 5
+:point A 0 0
+:point B 1 0
+:point C 1 1
+:point D x y
+:assume (= (dist2 C D) 1)
+:assume (= (perpendicular B C C D) 0)
+(= (dist2 D A) 1)
+
+-- Test 6.2: Square_3_Lines Symbolic (S parameter)
+-- THIS WAS TIMING OUT IN v9.0
+-- Expected: Should now complete with optimizations
+-- McCallum projection + early termination + variable ordering
+:reset
+:set-timeout 10
+:point A 0 0
+:point B S 0
+:point C S S
+:point D x y
+:assume (= (dist2 C D) (^ S 2))
+:assume (= (perpendicular B C C D) 0)
+(= (dist2 D A) (^ S 2))
+
+-- Test 6.3: Square_3_Lines Symbolic with Different Timeout
+-- If Test 6.2 still times out, this gives more time
+-- Expected: Should complete within 30 seconds with optimizations
+:reset
+:set-timeout 30
+:point A 0 0
+:point B S 0
+:point C S S
+:point D x y
+:assume (= (dist2 C D) (^ S 2))
+:assume (= (perpendicular B C C D) 0)
+(= (dist2 D A) (^ S 2))
+
+-- Test 6.4: Perpendicular Symbolic (Simplified)
+-- This should be MUCH faster with variable ordering
+:reset
+:set-timeout 10
+:point A 0 0
+:point B a 0
+:point C a b
+:point D x y
+:assume (= (perpendicular B C C D) 0)
+(= (* a (- y b)) 0)
+
+-- ============================================================================
+-- SECTION 7: PERFORMANCE COMPARISON (Before vs After)
+-- ============================================================================
+-- These measure the actual speedup from optimizations
+
+-- Test 7.1: 2D Inequality (Baseline)
+-- Expected: < 1 second with optimizations
+:reset
+(>= (+ (^ x 2) (^ y 2)) (+ x y))
+
+-- Test 7.2: 3D Inequality (More complex)
+-- Expected: < 5 seconds with optimizations (was 20+ seconds before)
+:reset
+(>= (+ (^ x 2) (+ (^ y 2) (^ z 2))) (+ x (+ y z)))
+
+-- Test 7.3: 4D Inequality (High complexity)
+-- Expected: < 30 seconds with optimizations (was timeout before)
+:reset
+(>= (+ (^ a 2) (+ (^ b 2) (+ (^ c 2) (^ d 2)))) 0)
+
+-- Test 7.4: Polynomial with Many Terms
+-- Expected: Early termination helps significantly
+:reset
+(> (+ (^ x 2) (+ (* 2 (* x y)) (+ (^ y 2) 10))) 0)
+
+-- ============================================================================
+-- SECTION 8: EDGE CASES FOR CAD
+-- ============================================================================
+
+-- Test 8.1: Constant Polynomial (Degenerate)
+-- Expected: Should handle gracefully
+:reset
+(>= 5 0)
+
+-- Test 8.2: Linear Inequality (No projection needed)
+-- Expected: Very fast
+:reset
+(>= x 0)
+
+-- Test 8.3: Zero Polynomial
+-- Expected: Handle degenerate case
+:reset
+(>= 0 0)
+
+-- Test 8.4: Infeasible Constraint
+-- Expected: Detect inconsistency
+:reset
+:assume (= (+ (^ x 2) (^ y 2)) (-1))
+(>= x 0)
+
+-- ============================================================================
+-- SECTION 9: CUMULATIVE OPTIMIZATION TEST
+-- ============================================================================
+-- These problems benefit from ALL THREE optimizations simultaneously
+
+-- Test 9.1: Complex Positivity (McCallum + Early + Ordering)
+-- Expected: 10-20x speedup from combined optimizations
+:reset
+(>= (+ (^ x 4) (+ (* 2 (^ x 2) (^ y 2)) (^ y 4))) 0)
+
+-- Test 9.2: Quartic Polynomial (4 variables)
+-- Expected: Variable ordering makes this tractable
+:reset
+(>= (+ (^ a 4) (+ (^ b 4) (+ (^ c 2) d))) 0)
+
+-- Test 9.3: Mixed Terms (Benefits from all optimizations)
+-- Expected: Fast proof with early termination
+:reset
+(>= (+ (^ x 2) (+ (* x y) (+ (^ y 2) 1))) 0)
+
+-- Test 9.4: Symmetric Polynomial
+-- Expected: Variable ordering handles symmetry well
+:reset
+(>= (+ (^ x 2) (+ (^ y 2) (* 2 (* x y)))) 0)
+
+-- ============================================================================
+-- SECTION 10: REGRESSION TESTS (Ensure no breakage)
+-- ============================================================================
+-- These should still work exactly as before
+
+-- Test 10.1: Simple Equality (Non-CAD)
+-- Expected: Still uses Gröbner, not CAD
+:reset
+(= (+ (* 2 x) 3) (+ 3 (* x 2)))
+
+-- Test 10.2: Geometric Equality (Non-CAD)
+-- Expected: GeoSolver or Wu, not CAD
+:reset
+:point A 0 0
+:point B 3 4
+(= (dist2 A B) 25)
+
+-- Test 10.3: Univariate Inequality (Sturm, not CAD)
+-- Expected: Still uses Sturm sequences
+:reset
+(>= (^ x 2) 0)
+
+-- Test 10.4: Determinant (Non-CAD)
+-- Expected: Still uses determinant simplification
+:reset
+(= (det 1 0 0 1) 1)
+
+-- ============================================================================
+-- END OF CAD WEEK 1 STRESS TEST
+-- ============================================================================
+--
+-- Expected Results Summary:
+-- ========================
+-- Section 1 (Multivariate Inequalities): 60-80% success (was 0% in v9.0)
+-- Section 2 (Geometric Inequalities):     70-90% success (was 10% in v9.0)
+-- Section 3 (Variable Ordering):          Observable in verbose output
+-- Section 4 (Early Termination):          Immediate results (2-10x speedup)
+-- Section 5 (McCallum Projection):        Fewer polynomials in projection
+-- Section 6 (Problematic Cases):          NO TIMEOUTS (was timeout in v9.0)
+-- Section 7 (Performance):                5-20x cumulative speedup
+-- Section 8 (Edge Cases):                 100% handled correctly
+-- Section 9 (Cumulative):                 Maximum benefit from all optimizations
+-- Section 10 (Regression):                100% still working (no breakage)
+--
+-- Key Improvements Over v9.0:
+-- ==========================
+-- 1. McCallum projection: 50-70% fewer projection polynomials
+-- 2. Early termination:   2-10x speedup on easy problems
+-- 3. Variable ordering:   1.5-2x speedup on complex problems
+-- 4. CUMULATIVE SPEEDUP:  5-20x overall for CAD problems
+--
+-- How to Run:
+-- ===========
+-- Full test:     cabal run prover < examples/test_cad_week1_optimizations.euclid
+-- With timing:   time cabal run prover < examples/test_cad_week1_optimizations.euclid > cad_week1_results.txt 2>&1
+-- Compare v9.0:  diff stress_test_results.txt cad_week1_results.txt
+--
+-- ============================================================================
