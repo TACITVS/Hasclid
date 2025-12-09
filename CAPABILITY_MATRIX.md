@@ -1,4 +1,4 @@
-# Hasclid v9.0 Capability Matrix
+# Hasclid v9.1 Capability Matrix
 
 ## Purpose
 This document maps the precise boundaries of what Hasclid CAN and CANNOT prove, based on empirical stress testing.

@@ -1,6 +1,6 @@
 # GeoSolver Symbolic Support - Implementation Roadmap
 
-## Current Status (v9.0)
+## Current Status (v9.1)
 
 ### What Works ✅
 - Multi-solver routing system (ProblemAnalyzer + SolverRouter)

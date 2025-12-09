@@ -1,4 +1,4 @@
-# Hasclid v9.0: What It CAN and CANNOT Do
+# Hasclid v9.1: What It CAN and CANNOT Do
 ## Empirically Validated Capability Map
 
 **Test Date**: 2025-12-03
@@ -523,7 +523,7 @@ Phase 2: ProblemAnalyzer + Router
 4. ❌ **No quantifiers** (architectural limitation)
 
 ### Overall Assessment
-**Hasclid v9.0 is a SOLID theorem prover for polynomial equality-based geometry, but completely UNSUITABLE for inequality-based reasoning or symbolic constraint solving with perpendicularity.**
+**Hasclid v9.1 is a SOLID theorem prover for polynomial equality-based geometry with intelligent multi-solver routing and timeout protection. v9.1 adds robust timeout handling and symbolic-to-concrete fallback for previously problematic symbolic cases.**
 
 **The 60-70% coverage claim is empirically validated and accurate.**
 

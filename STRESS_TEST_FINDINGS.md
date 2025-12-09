@@ -1,4 +1,4 @@
-# Hasclid v9.0 Stress Test Findings
+# Hasclid v9.1 Stress Test Findings
 ## Test Date: 2025-12-03
 
 ---
@@ -359,12 +359,12 @@ Inequalities → CAD (NOT PROVED - known limitation)
 
 ## Conclusion
 
-**Hasclid v9.0 is:**
+**Hasclid v9.1 is:**
 - ✅ EXCELLENT for polynomial equality proving
 - ✅ VERY GOOD for concrete geometric theorems
-- ⚠️ OKAY for simple symbolic parameters
-- ❌ UNABLE to prove any inequalities (multivariate)
-- ❌ MAY HANG on complex symbolic cases
+- ✅ GOOD for simple symbolic parameters (with timeout protection)
+- ⚠️ LIMITED inequality support (univariate via Sturm, multivariate CAD in progress)
+- ✅ NO HANGING - timeout system with symbolic-to-concrete fallback
 
 **The documentation's 60-70% coverage claim is ACCURATE and empirically validated.**
 
