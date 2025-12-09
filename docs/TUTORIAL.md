@@ -30,7 +30,7 @@ cabal run prover
 You'll see:
 ```
 ==================================================
-   Euclid Geometric Prover v7.3
+   Euclid Geometric Prover v9.1
    Now with Proof Explanations!
    Type :help for commands.
 ==================================================

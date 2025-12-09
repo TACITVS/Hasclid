@@ -1,7 +1,7 @@
 # Hasclid: Roadmap to Professional Completeness
 ## The Path from 70% → 99% Coverage
 
-**Current Status**: v9.0 - Research-grade equality prover
+**Current Status**: v9.1 - Production-ready multi-solver equality prover with timeout protection
 **Target Status**: v10.0 - Professional mathematician's tool
 **Estimated Total Time**: 8-12 weeks of focused development
 **Coverage Goal**: 60-70% → 98-99% of classical Euclidean geometry

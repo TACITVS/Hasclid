@@ -2,7 +2,7 @@
 
 ## Overview
 
-Term ordering is a critical choice in Gröbner basis computation that significantly affects performance. Hasclid v7.4+ supports three standard term orderings.
+Term ordering is a critical choice in Gröbner basis computation that significantly affects performance. Hasclid v9.1 supports three standard term orderings.
 
 ## Available Orderings
 
