@@ -5,7 +5,7 @@
 
 ## Project Description
 
-**Hasclid** (v7.3) is an advanced, interactive theorem prover for Euclidean geometry built in Haskell. It bridges the gap between geometric intuition and rigorous algebraic proof by translating geometric constraints into polynomial ideals.
+**Hasclid** (v9.1) is an advanced, interactive theorem prover for Euclidean geometry built in Haskell. It bridges the gap between geometric intuition and rigorous algebraic proof by translating geometric constraints into polynomial ideals.
 
 The engine combines three powerful algebraic techniques to automate proofs:
 1.  **Groebner Bases (Buchberger's Algorithm):** For verifying equality constraints (e.g., proving two segments are congruent or points are collinear).
@@ -16,7 +16,7 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
 
 ## 📚 Documentation
 
-**v9.0:** Complete formal language specification!
+**v9.1:** Complete formal language specification with intelligent multi-solver architecture!
 
 - **[Tutorial](docs/TUTORIAL.md)** - Learn Euclid in 30 minutes
 - **[Language Reference](docs/LANGUAGE.md)** - Complete specification
@@ -31,7 +31,7 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
     *   `collinear`: Collinearity checks (determinant-based).
     *   `dot`: Vector dot products.
     *   `circle`: Circle equation constraints.
-    *   **v9.0:** `midpoint`, `perpendicular`, `parallel` primitives.
+    *   **v9.1:** `midpoint`, `perpendicular`, `parallel` primitives.
 *   **Advanced Proof Logic**:
     *   **Equality**: Automatically reduced using computed Groebner Bases of the hypothesis ideal.
     *   **Inequality**: Verified using root counting (Sturm sequences) and interval bisection.
@@ -41,8 +41,8 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
     *   **:lemma**: Prove and store intermediate results to the theory context.
     *   **:solve**: Find valid regions for variables satisfying an inequality (1D and 2D support).
     *   **:project**: Visualization of CAD projections (discriminants).
-    *   **v9.0:** **:verbose** - Show detailed proof explanations.
-    *   **v9.0:** **:save-lemmas / :load-lemmas** - Build reusable theorem libraries.
+    *   **v9.1:** **:verbose** - Show detailed proof explanations.
+    *   **v9.1:** **:save-lemmas / :load-lemmas** - Build reusable theorem libraries.
 *   **Scripting**: Load and verify complex multi-step theorems from `.euclid` files.
 
 ## Installation
