@@ -6,10 +6,12 @@ Hasclid now features an intelligent multi-solver architecture that automatically
 
 ## Architecture
 
+### Two-Phase Solving System
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                         User Input                           │
-│                    :auto (= expr1 expr2)                     │
+│                      User Input Formula                      │
+│              (= expr1 expr2) or :auto command                │
 └────────────────────────────┬────────────────────────────────┘
                              │
                              ▼
@@ -18,33 +20,107 @@ Hasclid now features an intelligent multi-solver architecture that automatically
 │  - Extract variables and constraints                         │
 │  - Classify problem type (Algebraic, Geometric, etc.)       │
 │  - Estimate complexity (Trivial → Infeasible)               │
-│  - Detect geometric features (distances, perpendicularity)  │
+│  - Detect geometric features & quantifiers                   │
 └────────────────────────────┬────────────────────────────────┘
                              │
                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      Solver Router                           │
-│  Rule-based dispatch:                                        │
-│  1. Check if solvable (complexity not too high)             │
-│  2. Match problem type to solver strength                    │
-│  3. Apply routing rules (see below)                         │
-└────────────────────┬───────────────┬────────────────────────┘
-                     │               │
-         ┌───────────┘               └────────────┐
-         ▼                                        ▼
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│  Gröbner Basis   │  │   Wu's Method    │  │      CAD         │
-│  (Buchberger)    │  │  (Char. Sets)    │  │   (Collins)      │
-│                  │  │                  │  │                  │
-│ • General Alg.   │  │ • Geometric      │  │ • Inequalities   │
-│ • Robust         │  │ • Fast for Geo   │  │ • 1D-2D only     │
-│ • Slower for Geo │  │ • Triangular     │  │ • Real numbers   │
-└──────────────────┘  └──────────────────┘  └──────────────────┘
+┌═════════════════════════════════════════════════════════════┐
+║                  PHASE 1: GeoSolver                          ║
+║              (Fast Symbolic Geometric Reasoning)             ║
+║                                                              ║
+║  - Symbolic constraint propagation                           ║
+║  - Handles symbolic parameters (S, T, etc.)                  ║
+║  - Explores multiple geometric branches                      ║
+║  - Returns in milliseconds when successful                   ║
+║                                                              ║
+║  Results: GeoProved | GeoDisproved | GeoUnknown             ║
+└────────────────┬──────────────────┬─────────────────────────┘
+                 │                  │
+    GeoProved/   │                  │ GeoUnknown
+    GeoDisproved │                  │ (fallback needed)
+                 │                  │
+                 ▼                  ▼
+            ┌────────┐    ┌─────────────────────────────┐
+            │ DONE   │    │  Quantifier Detection       │
+            └────────┘    │  & Special Case Routing     │
+                          └──────────┬──────────────────┘
+                                     │
+                ┌────────────────────┼────────────────────┐
+                │                    │                    │
+                ▼                    ▼                    ▼
+        ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+        │ Exists +     │    │ Integer      │    │  Other       │
+        │ Equality     │    │ Quantifiers  │    │  Formulas    │
+        └──────┬───────┘    └──────┬───────┘    └──────┬───────┘
+               │                   │                    │
+               ▼                   ▼                    ▼
+        ┌──────────────┐    ┌──────────────┐           │
+        │ Modular +    │    │ intSolve/    │           │
+        │ Const. Wu    │    │ intSat       │           │
+        └──────────────┘    └──────────────┘           │
+                                                        │
+                                                        ▼
+┌═════════════════════════════════════════════════════════════┐
+║              PHASE 2: Algebraic Solver Router                ║
+║           (Intelligent Solver Selection & Dispatch)          ║
+└─┬───────────────┬───────────────┬───────────────┬───────────┘
+  │               │               │               │
+  ▼               ▼               ▼               ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐ ┌─────────────┐
+│ Gröbner  │ │   Wu's   │ │   CAD    │ │  Sturm      │
+│  Basis   │ │  Method  │ │(Collins) │ │ Sequences   │
+│          │ │          │ │          │ │             │
+│• General │ │• Geo     │ │• Ineq    │ │• Univariate │
+│• Robust  │ │• Fast    │ │• 1D-2D   │ │• Positivity │
+└──────────┘ └──────────┘ └──────────┘ └─────────────┘
 ```
 
 ## Components
 
-### 1. ProblemAnalyzer (Phase 1)
+### 0. GeoSolver (Phase 1 - Fast Path)
+
+**File**: `src/GeoSolver.hs` (~600 lines)
+
+**Purpose**: Fast symbolic geometric constraint propagation solver that attempts to prove theorems before falling back to algebraic methods.
+
+**Algorithm**:
+1. **Constraint Propagation**: Symbolically propagates known constraints (distances, perpendicularity, etc.)
+2. **Branching**: Explores multiple geometric configurations when ambiguity exists
+3. **Symbolic Reasoning**: Works with symbolic parameters (e.g., side length 'S')
+4. **Quick Decision**: Returns GeoProved/GeoDisproved in milliseconds when constraints are sufficient
+
+**Key Advantages**:
+- **Speed**: Orders of magnitude faster than algebraic methods for solvable cases
+- **Symbolic Support**: Unlike CAD, handles symbolic parameters naturally
+- **Constructive**: Can explore multiple geometric branches
+- **Early Exit**: Prevents expensive algebraic computation when unnecessary
+
+**Return Values**:
+```haskell
+data GeoResult = GeoProved | GeoDisproved | GeoUnknown
+```
+
+**Example**:
+```
+:point A 0 0
+:point B S 0
+:point C 0 S
+:assume (= S 5)
+(= (dist2 A B) 25)
+→ GeoProved (instantly, before algebraic fallback)
+```
+
+**When GeoSolver Succeeds**:
+- Concrete geometric configurations with sufficient constraints
+- Some symbolic problems where constraints fully determine the result
+- Problems involving perpendicularity, distance, collinearity with known values
+
+**When it Falls Back to Phase 2**:
+- Insufficient constraints to determine truth value
+- Complex algebraic relationships
+- High-degree polynomial constraints
+
+### 1. ProblemAnalyzer
 
 **File**: `src/ProblemAnalyzer.hs` (346 lines)
 
@@ -113,7 +189,93 @@ WU'S METHOD: PROVED
 Conclusion reduces to zero under characteristic set
 ```
 
-### 3. SolverRouter (Phase 3)
+**Constructive Existence Proofs**:
+
+Wu's method also implements `proveExistentialWu` for constructive existence proofs:
+- Uses triangularization to build satisfying assignments
+- Returns witnesses for existentially quantified formulas
+- Integrated into SolverRouter for `Exists` quantifiers
+
+**Example**:
+```haskell
+-- Proves: ∃x. (x² = 4)
+-- Returns: x = 2 (constructive witness)
+```
+
+### 3. Modular Arithmetic Solver
+
+**File**: `src/Modular.hs`
+
+**Purpose**: Probabilistic consistency checking over finite fields for existence proofs.
+
+**Algorithm**:
+1. **Finite Field Evaluation**: Evaluates polynomials modulo a prime (default: 97)
+2. **Solution Search**: Searches for satisfying assignments in ℤ_p
+3. **Probabilistic Guarantee**: If inconsistent mod p, then inconsistent over ℚ
+
+**Key Advantages**:
+- **Fast**: Finite field arithmetic is much faster than symbolic computation
+- **Existence Proofs**: Can quickly find witnesses for existential formulas
+- **Early Rejection**: Detects inconsistencies without expensive symbolic computation
+
+**Usage** (automatic via SolverRouter):
+- Triggered for `Exists` quantifiers with equality constraints
+- Works alongside Constructive Wu for witness finding
+
+**Example**:
+```haskell
+-- Formula: ∃x, y. (x² + y² = 5)
+-- Modular solver finds: x=1, y=2 (mod 97)
+-- Verifies: 1² + 2² = 5 ✓
+```
+
+**Limitations**:
+- Only proves existence, not universal statements
+- Probabilistic (can have false positives over finite fields)
+- Used as a heuristic alongside other methods
+
+### 4. Integer Constraint Solver
+
+**File**: `src/Prover.hs` (functions: `intSolve`, `intSat`, `proveForallInt`)
+
+**Purpose**: Specialized solver for integer-valued variables with linear and bounded constraints.
+
+**Algorithm**:
+1. **Linear Interval Solving**: Propagates linear constraints to compute variable bounds
+2. **Bounded Brute-Force**: Optional exhaustive search over small integer ranges (when `:bruteforce on`)
+3. **Quantifier Handling**:
+   - `∃x. φ(x)`: Search for satisfying integer assignment
+   - `∀x. φ(x)`: Check all values in computed bounds
+
+**Key Features**:
+- **Integer Variables**: `IntVar`, `IntConst` for integer-only problems
+- **Linear Constraints**: Efficiently handles `ax + b ≤ c` style constraints
+- **Configurable Search**: User controls brute-force search via `:bruteforce on|off`
+
+**Usage**:
+```
+:bruteforce on
+-- Enables bounded search for integer goals
+```
+
+**Example**:
+```haskell
+-- ∀x ∈ [1..10]. (x² ≥ x)
+-- Integer solver checks all values 1,2,...,10
+-- Returns: PROVED
+```
+
+**Options** (configurable via `IntSolveOptions`):
+- `allowBruteForce`: Enable/disable exhaustive search
+- `maxBruteForceRange`: Limit on search space size (default: 1000)
+- `integerMode`: Require integer solutions
+
+**When Used**:
+- Problems with `IntVar` or `IntConst` expressions
+- Quantified formulas over bounded integer domains
+- As fallback when algebraic methods fail on integer-constrained problems
+
+### 5. SolverRouter (Phase 2 Dispatcher)
 
 **File**: `src/SolverRouter.hs` (275 lines)
 
@@ -246,18 +408,36 @@ Router uses conservative estimates:
 
 ## Known Limitations
 
-### Phase 4 Not Implemented: Timeout System
+### Phase 4 COMPLETE: Timeout System ✅
 
-**Status**: Pending
+**Status**: IMPLEMENTED (v9.1)
 
-**Risk**: Solvers can hang on inappropriate problems
+**Implementation**: `solveWithFallback` in `src/Main.hs`
 
-**Workaround**:
-- Router rejects VeryHigh complexity
-- Use Ctrl+C to interrupt hung process
-- Manual solver selection bypasses router protection
+**Features**:
+1. **Timeout Protection**: All solver calls wrapped with `System.Timeout`
+2. **Configurable**: User-controlled timeout via `:set-timeout <seconds>` (default: 30s)
+3. **Symbolic Fallback**: On timeout with symbolic parameters, automatically retries with concrete values (e.g., S=1)
+4. **Clear Messaging**: User sees `[TIMEOUT]` with explanation and fallback results
 
-**Future**: Add `System.Timeout` wrapper around solver calls
+**Usage**:
+```
+:set-timeout 60        -- Set 60 second timeout
+:show-timeout          -- Display current timeout
+```
+
+**Example**:
+```
+-- Symbolic problem times out after 30s
+[TIMEOUT] Symbolic proof timed out. Retrying with concrete values (S=1)...
+NOTE: This is a specific instance check.
+Result: PROVED (for S=1)
+```
+
+**Eliminated Risks**:
+- ✅ No more indefinite hangs
+- ✅ User control over computation time
+- ✅ Graceful degradation to concrete instances
 
 ### CAD Integration Incomplete
 
@@ -304,12 +484,12 @@ Router uses conservative estimates:
 
 ## Future Enhancements
 
-### Short Term (Phase 4-5)
+### Short Term (Phase 5+)
 
-1. **Timeout System**: Wrap solvers with `System.Timeout`
-2. **Complete CAD Integration**: Full inequality support
-3. **Comprehensive Testing**: Test suite for routing logic
-4. **Documentation**: Usage examples and best practices
+1. ✅ **Timeout System**: COMPLETE - Implemented in v9.1 with symbolic fallback
+2. **Complete CAD Integration**: Full inequality support for higher dimensions
+3. **Comprehensive Testing**: Expand test suite for routing logic
+4. **Documentation**: Additional usage examples and best practices
 
 ### Long Term
 
@@ -410,6 +590,10 @@ Edit `SolverRouter.selectSolver`:
 
 ---
 
-**Status**: Phases 1-3 complete and tested. System is production-ready for equality solving with intelligent dispatch.
+**Status**: Phases 1-4 COMPLETE and tested. System is production-ready with:
+- ✅ Phase 1: GeoSolver (fast geometric reasoning)
+- ✅ Phase 2: Multi-solver architecture (6 solvers)
+- ✅ Phase 3: Intelligent routing
+- ✅ Phase 4: Timeout system with symbolic fallback
 
-**Remaining**: Phase 4 (timeouts) and Phase 5 (comprehensive testing/docs) are nice-to-have enhancements.
+**Remaining**: Phase 5 (comprehensive testing/docs expansion) is a continuous improvement effort.
