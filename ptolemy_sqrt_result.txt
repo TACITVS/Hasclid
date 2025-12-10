@@ -1,0 +1,74 @@
+==================================================
+   Hasclid v9.0 - Multi-Solver System
+   Intelligent routing: Wu/Grobner/CAD + Router
+   Type :help for commands.
+==================================================
+> -- ============================================================================
+
+> -- PTOLEMY'S THEOREM - With Actual Square Roots!
+
+> -- No workarounds - direct sqrt usage
+
+> -- ============================================================================
+
+> --
+
+> -- THEOREM: For ANY cyclic quadrilateral (inscribed in a circle):
+
+> -- |AC| · |BD| = |AB| · |CD| + |BC| · |DA|
+
+> --
+
+> -- We'll prove this DIRECTLY using sqrt, not the double-squaring workaround!
+
+> -- ============================================================================
+
+> 
+
+> :verbose
+Verbose mode ON: Will show detailed proof explanations
+
+> 
+
+> -- Four points on unit circle
+
+> :assume (= (+ (^ xA 2) (^ yA 2)) 1)
+Assumed: (= ((^ xA 2) + (^ yA 2)) 1)
+
+> :assume (= (+ (^ xB 2) (^ yB 2)) 1)
+Assumed: (= ((^ xB 2) + (^ yB 2)) 1)
+
+> :assume (= (+ (^ xC 2) (^ yC 2)) 1)
+Assumed: (= ((^ xC 2) + (^ yC 2)) 1)
+
+> :assume (= (+ (^ xD 2) (^ yD 2)) 1)
+Assumed: (= ((^ xD 2) + (^ yD 2)) 1)
+
+> 
+
+> -- Define squared distances
+
+> :assume (= dAB2 (+ (^ (- xB xA) 2) (^ (- yB yA) 2)))
+Assumed: (= dAB2 ((^ (- xB xA) 2) + (^ (- yB yA) 2)))
+
+> :assume (= dBC2 (+ (^ (- xC xB) 2) (^ (- yC yB) 2)))
+Assumed: (= dBC2 ((^ (- xC xB) 2) + (^ (- yC yB) 2)))
+
+> :assume (= dCD2 (+ (^ (- xD xC) 2) (^ (- yD yC) 2)))
+Assumed: (= dCD2 ((^ (- xD xC) 2) + (^ (- yD yC) 2)))
+
+> :assume (= dDA2 (+ (^ (- xA xD) 2) (^ (- yA yD) 2)))
+Assumed: (= dDA2 ((^ (- xA xD) 2) + (^ (- yA yD) 2)))
+
+> :assume (= dAC2 (+ (^ (- xC xA) 2) (^ (- yC yA) 2)))
+Assumed: (= dAC2 ((^ (- xC xA) 2) + (^ (- yC yA) 2)))
+
+> :assume (= dBD2 (+ (^ (- xD xB) 2) (^ (- yD yB) 2)))
+Assumed: (= dBD2 ((^ (- xD xB) 2) + (^ (- yD yB) 2)))
+
+> 
+
+> -- THE ORIGINAL FORM OF PTOLEMY'S THEOREM
+
+> -- Using actual square roots!
+

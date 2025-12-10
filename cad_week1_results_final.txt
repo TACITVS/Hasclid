@@ -1,0 +1,415 @@
+==================================================
+   Hasclid v9.0 - Multi-Solver System
+   Intelligent routing: Wu/Grobner/CAD + Router
+   Type :help for commands.
+==================================================
+> -- ============================================================================
+
+> -- HASCLID v9.1 - CAD WEEK 1 OPTIMIZATIONS STRESS TEST
+
+> -- ============================================================================
+
+> -- Purpose: Test McCallum projection, early termination, and variable ordering
+
+> -- Target: Multivariate inequality problems (CAD's specialty)
+
+> -- Expected: 5-20x speedup compared to v9.0
+
+> -- Date: 2025-12-09
+
+> -- ============================================================================
+
+> 
+
+> :verbose
+Verbose mode ON: Will show detailed proof explanations
+
+> 
+
+> -- ============================================================================
+
+> -- SECTION 1: MULTIVARIATE INEQUALITIES (CAD Core Functionality)
+
+> -- ============================================================================
+
+> -- These were FAILING in v9.0 (0% success rate)
+
+> -- With CAD optimizations, they should now be FAST and CORRECT
+
+> 
+
+> -- Test 1.1: Trivial Sum of Squares (x^2 + y^2 >= 0)
+
+> -- Expected: PROVED (trivial positivity)
+
+> -- Optimization benefit: Early termination (no counterexample exists)
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 2) (^ y 2)) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+> 
+
+> -- Test 1.2: Sum of Squares (3 variables)
+
+> -- Expected: PROVED (x^2 + y^2 + z^2 >= 0)
+
+> -- Optimization benefit: Variable ordering (z, y, x by degree)
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 2) (+ (^ y 2) (^ z 2))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 3
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected Gr”bner Basis: General-purpose method for this problem type
+
+Result: NOT PROVED
+  Gr”bner basis method only supports equality goals
+
+
+> 
+
+> -- Test 1.3: Weighted Sum of Squares
+
+> -- Expected: PROVED (2x^2 + 3y^2 >= 0)
+
+> -- Optimization benefit: McCallum projection (fewer polynomials)
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (* 2 (^ x 2)) (* 3 (^ y 2))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+> 
+
+> -- Test 1.4: Non-trivial Positive Polynomial
+
+> -- Expected: PROVED (x^2 + xy + y^2 >= 0)
+
+> -- Optimization benefit: All three optimizations combined
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 2) (+ (* x y) (^ y 2))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+> 
+
+> -- Test 1.5: Circle Containment (x^2 + y^2 <= r^2 with r=5)
+
+> -- Expected: REFUTED (not always true)
+
+> -- Optimization benefit: Early termination (finds counterexample quickly)
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (<= (+ (^ x 2) (^ y 2)) 25)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Unknown
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Problem type not supported by available solvers
+
+Result: NOT PROVED
+  Problem is too complex or type not supported by automatic solver
+
+
+> 
+
+> -- Test 1.6: Circle Exterior (x^2 + y^2 > 1 is not universal)
+
+> -- Expected: REFUTED (origin is counterexample)
+
+> -- Optimization benefit: Early termination (stops at first cell)
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (> (+ (^ x 2) (^ y 2)) 1)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: NOT PROVED
+  CAD check (2D) found countercell
+
+
+> 
+
+> -- Test 1.7: Half-plane (x + y >= 0)
+
+> -- Expected: REFUTED (negative quadrant is counterexample)
+
+> -- Optimization benefit: Early termination
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ x y) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 1
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: NOT PROVED
+  CAD check (2D) found countercell
+
+
+> 
+
+> -- Test 1.8: Hyperbola Region (xy > 1)
+
+> -- Expected: REFUTED (origin is counterexample)
+
+> -- Optimization benefit: Early termination
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (> (* x y) 1)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: NOT PROVED
+  CAD check (2D) found countercell
+
+
+> 
+
+> -- ============================================================================
+
+> -- SECTION 2: GEOMETRIC INEQUALITIES (Real-World CAD Applications)
+
+> -- ============================================================================
+
+> 
+
+> -- Test 2.1: Triangle Inequality (THE CLASSIC)
+
+> -- Expected: NOW SOLVABLE with CAD optimizations
+
+> -- This was FAILING in v9.0 stress test
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :point A 0 0
+Defined 2D Point A at (0, 0)
+
+> :point B 3 4
+Defined 2D Point B at (3, 4)
+
+> :point C 6 0
+Defined 2D Point C at (6, 0)
+
+> (>= (+ (dist2 A B) (dist2 B C)) (dist2 A C))
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 15
+  Constraints: 9
+  Max Degree: 2
+  Complexity: High
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Real algebraic geometry with inequalities
+
+Result: PROVED
+  Constant >= 0
+
+
+> 
+
+> -- Test 2.2: Triangle Inequality (Symbolic)
+
+> -- Expected: Should handle symbolic parameters better
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :point A 0 0
+Defined 2D Point A at (0, 0)
+
+> :point B a b
+Defined 2D Point B at (a, b)
+
+> :point C c 0
+Defined 2D Point C at (c, 0)
+
+> (>= (+ (dist2 A B) (dist2 B C)) (dist2 A C))
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 18
+  Constraints: 9
+  Max Degree: 2
+  Complexity: High
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Real algebraic geometry with inequalities
+
+Result: NOT PROVED
+  CAD check (3D) found countercell
+
+
+> 
+
+> -- Test 2.3: Distance Always Non-negative
+
+> -- Expected: PROVED (trivial)
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :point P x1 y1
+Defined 2D Point P at (x1, y1)
+
+> :point Q x2 y2
+Defined 2D Point Q at (x2, y2)
+
+> (>= (dist2 P Q) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 14
+  Constraints: 6
+  Max Degree: 2
+  Complexity: High
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Real algebraic geometry with inequalities
+
+Result: PROVED
+  CAD check (4D) succeeded
+
+
+> 
+
+> -- Test 2.4: Circle Constraint (Point on or inside circle)
+
+> -- Expected: REFUTED (not universal)
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :point P x y
+Defined 2D Point P at (x, y)
+
+> :point O 0 0
+Defined 2D Point O at (0, 0)
+
+> (<= (dist2 P O) 25)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 12
+  Constraints: 6
+  Max Degree: 2
+  Complexity: High
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Problem type not supported by available solvers
+
+Result: NOT PROVED
+  Problem is too complex or type not supported by automatic solver
+
+
+> 
+
+> -- Test 2.5: Two Circles Intersection Region
+
+> -- Expected: REFUTED (not universal)
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+

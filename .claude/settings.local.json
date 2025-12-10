@@ -17,7 +17,13 @@
       "Bash(grep:*)",
       "Bash(wc:*)",
       "Bash(taskkill:*)",
-      "Bash(cmd.exe /c \"cabal run prover < test_triangle_symbolic.euclid\")"
+      "Bash(cmd.exe /c \"cabal run prover < test_triangle_symbolic.euclid\")",
+      "Bash(ls:*)",
+      "Bash(git fetch:*)",
+      "Bash(paste - -)",
+      "Bash(cabal clean:*)",
+      "Bash(cmd.exe /c \"taskkill /F /IM prover.exe\")",
+      "Bash(cmd.exe /c \"taskkill /F /IM prover.exe 2>&1 || echo No prover running\")"
     ],
     "deny": [],
     "ask": []

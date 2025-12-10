@@ -1,0 +1,347 @@
+Build profile: -w ghc-9.12.2 -O1
+In order, the following will be built (use -v for more details):
+ - prover-0.1.0.0 (exe:prover) (configuration changed)
+Configuring executable 'prover' for prover-0.1.0.0...
+Preprocessing executable 'prover' for prover-0.1.0.0...
+Building executable 'prover' for prover-0.1.0.0...
+==================================================
+   Hasclid v9.0 - Multi-Solver System
+   Intelligent routing: Wu/Grobner/CAD + Router
+   Type :help for commands.
+==================================================
+> -- ============================================================================
+
+> -- NAPOLEON'S THEOREM (1825)
+
+> -- One of the most beautiful theorems in geometry
+
+> -- ============================================================================
+
+> --
+
+> -- THEOREM: If you construct equilateral triangles on each side of ANY
+
+> -- triangle (externally), the centers of these three equilateral triangles
+
+> -- themselves form an equilateral triangle.
+
+> --
+
+> -- DIFFICULTY: 10/10 - Harder than Euler's Four-Square Identity
+
+> -- VARIABLES: ~15
+
+> -- ATTRIBUTED TO: Napoleon Bonaparte
+
+> -- ============================================================================
+
+> 
+
+> :verbose
+Verbose mode ON: Will show detailed proof explanations
+
+> :set-timeout 60
+Solver timeout set to: 60 seconds
+
+> 
+
+> -- ============================================================================
+
+> -- SETUP: Define arbitrary triangle ABC
+
+> -- ============================================================================
+
+> 
+
+> :point A xA yA
+Defined 2D Point A at (xA, yA)
+
+> :point B xB yB
+Defined 2D Point B at (xB, yB)
+
+> :point C xC yC
+Defined 2D Point C at (xC, yC)
+
+> 
+
+> -- ============================================================================
+
+> -- CONSTRUCTION: Centers of equilateral triangles
+
+> -- ============================================================================
+
+> -- We need to construct the centers O1, O2, O3 of equilateral triangles
+
+> -- built on sides AB, BC, CA respectively.
+
+> --
+
+> -- For an equilateral triangle on side PQ:
+
+> -- - The center is at distance |PQ|*sqrt(3)/3 from the midpoint
+
+> -- - Perpendicular to PQ, in the outward direction
+
+> --
+
+> -- Algebraic approach: Use the fact that for equilateral triangle,
+
+> -- if we rotate a point 60° around the center, we get another vertex.
+
+> --
+
+> -- We'll use a coordinate-based construction without explicit sqrt(3)
+
+> -- ============================================================================
+
+> 
+
+> -- CENTER O1: Equilateral triangle on side AB
+
+> -- For an equilateral triangle on AB with center O1:
+
+> -- The third vertex D1 satisfies:
+
+> -- 1. |O1-A| = |O1-B| = |O1-D1| (center equidistant from vertices)
+
+> -- 2. |A-D1| = |B-D1| = |A-B| (equilateral)
+
+> --
+
+> -- We can express O1 as: O1 = (A + B + D1)/3
+
+> -- And use the equilateral constraint to find D1
+
+> 
+
+> -- Let's use a different approach: parametric construction
+
+> -- O1 is at the centroid of the equilateral triangle on AB
+
+> -- Using complex number rotation (algebraically):
+
+> -- If AB is one side, rotating B-A by 60° around A gives D1
+
+> -- Rotation by 60° = (1/2, sqrt(3)/2) = multiply by (1/2 + i*sqrt(3)/2)
+
+> -- Algebraically: D1 = A + R60(B-A) where R60 is 60° rotation matrix
+
+> 
+
+> -- For simplicity, let's use the constraint-based approach:
+
+> -- O1, O2, O3 are defined implicitly by constraints
+
+> 
+
+> -- APPROACH: Use symmetry and direct algebraic constraints
+
+> -- For the center O1 of equilateral triangle on AB:
+
+> -- - Distance from O1 to midpoint of AB is |AB|*sqrt(3)/6
+
+> -- - Direction is perpendicular to AB
+
+> 
+
+> -- Let's algebraize this by squaring to eliminate sqrt:
+
+> -- If M1 = midpoint of AB = ((xA+xB)/2, (yA+yB)/2)
+
+> -- Then |O1-M1|² = 3*|AB|²/36 = |AB|²/12
+
+> -- And (O1-M1) · (B-A) = 0 (perpendicular)
+
+> 
+
+> :point O1 x1 y1
+Defined 2D Point O1 at (x1, y1)
+
+> :point O2 x2 y2
+Defined 2D Point O2 at (x2, y2)
+
+> :point O3 x3 y3
+Defined 2D Point O3 at (x3, y3)
+
+> 
+
+> -- Midpoints
+
+> :macro M1x (/ (+ xA xB) 2)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro M1y (/ (+ yA yB) 2)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro M2x (/ (+ xB xC) 2)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro M2y (/ (+ yB yC) 2)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro M3x (/ (+ xC xA) 2)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro M3y (/ (+ yC yA) 2)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> 
+
+> -- Side vectors
+
+> :macro ABx (- xB xA)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro ABy (- yB yA)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro BCx (- xC xB)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro BCy (- yC yB)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro CAx (- xA xC)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> :macro CAy (- yA yC)
+Parse Error: Invalid syntax: not a formula
+Context: Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)
+
+> 
+
+> -- O1 construction constraints (on side AB):
+
+> -- 1. O1-M1 perpendicular to AB: (x1-M1x)*ABx + (y1-M1y)*ABy = 0
+
+> :assume (= (+ (* (- x1 M1x) ABx) (* (- y1 M1y) ABy)) 0)
+Assumed: (= ((* (- x1 M1x) ABx) + (* (- y1 M1y) ABy)) 0)
+
+> 
+
+> -- 2. Distance: |O1-M1|² = |AB|²/12
+
+> -- |AB|² = ABx² + ABy²
+
+> -- |O1-M1|² = (x1-M1x)² + (y1-M1y)²
+
+> -- Constraint: 12*(x1-M1x)² + 12*(y1-M1y)² = ABx² + ABy²
+
+> :assume (= (* 12 (+ (^ (- x1 M1x) 2) (^ (- y1 M1y) 2))) (+ (^ ABx 2) (^ ABy 2)))
+Assumed: (= (* 12 ((^ (- x1 M1x) 2) + (^ (- y1 M1y) 2))) ((^ ABx 2) + (^ ABy 2)))
+
+> 
+
+> -- O2 construction constraints (on side BC):
+
+> :assume (= (+ (* (- x2 M2x) BCx) (* (- y2 M2y) BCy)) 0)
+Assumed: (= ((* (- x2 M2x) BCx) + (* (- y2 M2y) BCy)) 0)
+
+> :assume (= (* 12 (+ (^ (- x2 M2x) 2) (^ (- y2 M2y) 2))) (+ (^ BCx 2) (^ BCy 2)))
+Assumed: (= (* 12 ((^ (- x2 M2x) 2) + (^ (- y2 M2y) 2))) ((^ BCx 2) + (^ BCy 2)))
+
+> 
+
+> -- O3 construction constraints (on side CA):
+
+> :assume (= (+ (* (- x3 M3x) CAx) (* (- y3 M3y) CAy)) 0)
+Assumed: (= ((* (- x3 M3x) CAx) + (* (- y3 M3y) CAy)) 0)
+
+> :assume (= (* 12 (+ (^ (- x3 M3x) 2) (^ (- y3 M3y) 2))) (+ (^ CAx 2) (^ CAy 2)))
+Assumed: (= (* 12 ((^ (- x3 M3x) 2) + (^ (- y3 M3y) 2))) ((^ CAx 2) + (^ CAy 2)))
+
+> 
+
+> -- ============================================================================
+
+> -- PROOF: The Napoleon triangle O1-O2-O3 is equilateral
+
+> -- ============================================================================
+
+> -- We need to prove: |O1-O2| = |O2-O3| = |O3-O1|
+
+> -- Or equivalently: |O1-O2|² = |O2-O3|² AND |O2-O3|² = |O3-O1|²
+
+> 
+
+> -- First equality: |O1-O2|² = |O2-O3|²
+
+> :prove (= (+ (^ (- x1 x2) 2) (^ (- y1 y2) 2)) (+ (^ (- x2 x3) 2) (^ (- y2 y3) 2)))
+RESULT: NOT PROVED
+LHS /= RHS (Normal Form: 2y2*y3 - 2M3y*y3 - 2y1*y2 + 2M1y*y1 + 2x2*x3 - 2M3x*x3 - 2x1*x2 + 2M1x*x1 + M3y^2 + M3x^2 - M1y^2 - M1x^2 - 1/12CAy^2 - 1/12CAx^2 + 1/12ABy^2 + 1/12ABx^2)
+
+==========================================
+PROOF EXPLANATION:
+==========================================
+
+Used Assumptions (24):
+  * (* 12 ((^ (- x3 M3x) 2) + (^ (- y3 M3y) 2))) = ((^ CAx 2) + (^ CAy 2))
+  * ((* (- x3 M3x) CAx) + (* (- y3 M3y) CAy)) = 0
+  * (* 12 ((^ (- x2 M2x) 2) + (^ (- y2 M2y) 2))) = ((^ BCx 2) + (^ BCy 2))
+  * ((* (- x2 M2x) BCx) + (* (- y2 M2y) BCy)) = 0
+  * (* 12 ((^ (- x1 M1x) 2) + (^ (- y1 M1y) 2))) = ((^ ABx 2) + (^ ABy 2))
+  * ((* (- x1 M1x) ABx) + (* (- y1 M1y) ABy)) = 0
+  * xO3 = x3
+  * yO3 = y3
+  * zO3 = 0
+  * xO2 = x2
+  * yO2 = y2
+  * zO2 = 0
+  * xO1 = x1
+  * yO1 = y1
+  * zO1 = 0
+  * xC = xC
+  * yC = yC
+  * zC = 0
+  * xB = xB
+  * yB = yB
+  * zB = 0
+  * xA = xA
+  * yA = yA
+  * zA = 0
+
+Proof Steps:
+  1. Used substitution: xO3 -> x3
+  2. Used substitution: yO3 -> y3
+  3. Used substitution: zO3 -> 0
+  4. Used substitution: xO2 -> x2
+  5. Used substitution: yO2 -> y2
+  6. Used substitution: zO2 -> 0
+  7. Used substitution: xO1 -> x1
+  8. Used substitution: yO1 -> y1
+  9. Used substitution: zO1 -> 0
+  10. Used substitution: xC -> xC
+  11. Used substitution: yC -> yC
+  12. Used substitution: zC -> 0
+  13. Used substitution: xB -> xB
+  14. Used substitution: yB -> yB
+  15. Used substitution: zB -> 0
+  16. Used substitution: xA -> xA
+  17. Used substitution: yA -> yA
+  18. Used substitution: zA -> 0
+  19. Applied constraint: (= (* 12 ((^ (- x3 M3x) 2) + (^ (- y3 M3y) 2))) ((^ CAx 2) + (^ CAy 2)))
+  20. Applied constraint: (= ((* (- x3 M3x) CAx) + (* (- y3 M3y) CAy)) 0)
+  21. Applied constraint: (= (* 12 ((^ (- x2 M2x) 2) + (^ (- y2 M2y) 2))) ((^ BCx 2) + (^ BCy 2)))
+  22. Applied constraint: (= ((* (- x2 M2x) BCx) + (* (- y2 M2y) BCy)) 0)
+  23. Applied constraint: (= (* 12 ((^ (- x1 M1x) 2) + (^ (- y1 M1y) 2))) ((^ ABx 2) + (^ ABy 2)))
+  24. Applied constraint: (= ((* (- x1 M1x) ABx) + (* (- y1 M1y) ABy)) 0)
+  25. Computed Groebner basis (12 polynomials)
+  26. Reduced to normal form: 2y2*y3 - 2M3y*y3 - 2y1*y2 + 2M1y*y1 + 2x2*x3 - 2M3x*x3 - 2x1*x2 + 2M1x*x1 + M3y^2 + M3x^2 - M1y^2 - M1x^2 - 1/12CAy^2 - 1/12CAx^2 + 1/12ABy^2 + 1/12ABx^2
+
+Groebner Basis Size: 12
+==========================================
+
+
+
+[End of input]

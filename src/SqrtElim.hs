@@ -36,6 +36,26 @@ freshVar = do
   let idx = Map.size memo + 1
   return ("sqrt_aux" ++ show idx)
 
+-- Helper: Check if expression contains sqrt
+containsSqrt :: Expr -> Bool
+containsSqrt (Sqrt _) = True
+containsSqrt (Add a b) = containsSqrt a || containsSqrt b
+containsSqrt (Sub a b) = containsSqrt a || containsSqrt b
+containsSqrt (Mul a b) = containsSqrt a || containsSqrt b
+containsSqrt (Div a b) = containsSqrt a || containsSqrt b
+containsSqrt (Pow e _) = containsSqrt e
+containsSqrt _ = False
+
+-- Helper: Check if sqrt appears in a SUM (Add/Sub) context
+-- This is the case that smart simplifications can't handle
+containsSqrtInSum :: Expr -> Bool
+containsSqrtInSum (Add a b) = containsSqrt a || containsSqrt b
+containsSqrtInSum (Sub a b) = containsSqrt a || containsSqrt b
+containsSqrtInSum (Mul a b) = containsSqrtInSum a || containsSqrtInSum b
+containsSqrtInSum (Div a b) = containsSqrtInSum a || containsSqrtInSum b
+containsSqrtInSum (Pow e _) = containsSqrtInSum e
+containsSqrtInSum _ = False
+
 elimFormula :: Formula -> ElimM Formula
 elimFormula (Eq (Sqrt a) (Sqrt b)) = do
   a' <- elimExpr a
@@ -124,6 +144,19 @@ elimFormula (Lt b (Sqrt a)) = do
   addConstraint (Ge a' (Const 0))
   addConstraint (Ge b' (Const 0))
   return (Lt (Pow b' 2) a')
+-- Automatic squaring for equations containing sqrt in SUMS
+-- This handles cases like: sqrt(a) = sqrt(b) + sqrt(c)
+-- By squaring: a = (sqrt(b) + sqrt(c))^2
+-- NOTE: Only triggers for sqrt in Add/Sub contexts to avoid infinite loops
+-- Simple cases like sqrt(x)*sqrt(x)=x are handled by smart simplifications
+elimFormula (Eq l r)
+  | containsSqrtInSum l || containsSqrtInSum r = do
+      -- Square both sides: (l)^2 = (r)^2
+      -- Use elimExpr (not recursive elimFormula) to avoid infinite squaring
+      -- The expansion (a+b)^2 still has sqrt in sums, but elimExpr handles it
+      l' <- elimExpr (Mul l l)
+      r' <- elimExpr (Mul r r)
+      return (Eq l' r')
 elimFormula (Eq l r) = do
   l' <- elimExpr l
   r' <- elimExpr r

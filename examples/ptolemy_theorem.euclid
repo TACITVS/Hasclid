@@ -1,0 +1,75 @@
+-- ============================================================================
+-- PTOLEMY'S THEOREM (~100 CE, Claudius Ptolemy)
+-- One of the fundamental theorems in geometry
+-- ============================================================================
+--
+-- THEOREM: For a cyclic quadrilateral (inscribed in a circle),
+-- the product of the diagonals equals the sum of the products of opposite sides.
+--
+-- FORMULA: |AC| · |BD| = |AB| · |CD| + |BC| · |DA|
+--
+-- DIFFICULTY: 8/10
+-- VARIABLES: ~10
+-- ATTRIBUTED TO: Claudius Ptolemy (~100 CE)
+-- ============================================================================
+
+:verbose
+
+-- ============================================================================
+-- ALGEBRAIC APPROACH: Square both sides to eliminate square roots
+-- ============================================================================
+-- Ptolemy: |AC| · |BD| = |AB| · |CD| + |BC| · |DA|
+-- Squaring: (|AC| · |BD|)² = (|AB| · |CD| + |BC| · |DA|)²
+-- Expanding: |AC|² · |BD|² = |AB|² · |CD|² + 2·|AB|·|CD|·|BC|·|DA| + |BC|² · |DA|²
+
+-- 1. Setup: Four points A, B, C, D on unit circle
+-- Using unit circle (x² + y² = 1) for simplicity
+-- This gives us 4 constraints automatically
+
+:assume (= (+ (^ xA 2) (^ yA 2)) 1)
+:assume (= (+ (^ xB 2) (^ yB 2)) 1)
+:assume (= (+ (^ xC 2) (^ yC 2)) 1)
+:assume (= (+ (^ xD 2) (^ yD 2)) 1)
+
+-- 2. Define SQUARED distances (all 6 distances in quadrilateral)
+-- Sides: AB, BC, CD, DA
+-- Diagonals: AC, BD
+
+:assume (= dAB2 (+ (^ (- xB xA) 2) (^ (- yB yA) 2)))
+:assume (= dBC2 (+ (^ (- xC xB) 2) (^ (- yC yB) 2)))
+:assume (= dCD2 (+ (^ (- xD xC) 2) (^ (- yD yC) 2)))
+:assume (= dDA2 (+ (^ (- xA xD) 2) (^ (- yA yD) 2)))
+:assume (= dAC2 (+ (^ (- xC xA) 2) (^ (- yC yA) 2)))
+:assume (= dBD2 (+ (^ (- xD xB) 2) (^ (- yD yB) 2)))
+
+-- 3. Define auxiliary variables for the products that appear in Ptolemy
+-- LHS of squared Ptolemy: |AC|² · |BD|²
+-- RHS of squared Ptolemy: |AB|² · |CD|² + 2·|AB|·|CD|·|BC|·|DA| + |BC|² · |DA|²
+
+:assume (= LHS (* dAC2 dBD2))
+
+-- For RHS, we need: |AB|² · |CD|² + 2·|AB|·|CD|·|BC|·|DA| + |BC|² · |DA|²
+-- The tricky part is the middle term: 2·|AB|·|CD|·|BC|·|DA|
+-- This is 2·sqrt(|AB|²)·sqrt(|CD|²)·sqrt(|BC|²)·sqrt(|DA|²)
+-- = 2·sqrt(|AB|² · |CD|² · |BC|² · |DA|²)
+
+-- Define: term1 = |AB|² · |CD|²
+--         term2 = |BC|² · |DA|²
+:assume (= term1 (* dAB2 dCD2))
+:assume (= term2 (* dBC2 dDA2))
+
+-- For cross term, we need 2·|AB|·|CD|·|BC|·|DA|
+-- Define: crossProd = |AB|·|CD|·|BC|·|DA|
+-- Then: crossProd² = dAB2 · dCD2 · dBC2 · dDA2
+:assume (= (^ crossProd 2) (* (* dAB2 dCD2) (* dBC2 dDA2)))
+
+-- Now RHS = term1 + term2 + 2·crossProd
+:assume (= RHS (+ (+ term1 term2) (* 2 crossProd)))
+
+-- ============================================================================
+-- THE PROOF: Ptolemy's Theorem (Squared Form)
+-- ============================================================================
+-- Prove: LHS = RHS
+-- i.e., |AC|² · |BD|² = |AB|² · |CD|² + |BC|² · |DA|² + 2·|AB|·|CD|·|BC|·|DA|
+
+(= LHS RHS)
