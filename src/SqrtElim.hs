@@ -153,8 +153,27 @@ elimFormula (Exists vars f) = Exists vars <$> elimFormula f
 elimExpr :: Expr -> ElimM Expr
 elimExpr (Add a b) = Add <$> elimExpr a <*> elimExpr b
 elimExpr (Sub a b) = Sub <$> elimExpr a <*> elimExpr b
+-- Smart sqrt multiplication: sqrt(a) * sqrt(b) → sqrt(a*b) OR sqrt(a) * sqrt(a) → a
+elimExpr (Mul (Sqrt a) (Sqrt b))
+  | a == b = do
+      -- sqrt(x) * sqrt(x) = x (with x >= 0)
+      a' <- elimExpr a
+      addConstraint (Ge a' (Const 0))
+      return a'
+  | otherwise = do
+      -- sqrt(a) * sqrt(b) = sqrt(a*b) (with a,b >= 0)
+      a' <- elimExpr a
+      b' <- elimExpr b
+      addConstraint (Ge a' (Const 0))
+      addConstraint (Ge b' (Const 0))
+      elimExpr (Sqrt (Mul a' b'))
 elimExpr (Mul a b) = Mul <$> elimExpr a <*> elimExpr b
 elimExpr (Div a b) = Div <$> elimExpr a <*> elimExpr b
+-- Smart sqrt power: (sqrt(a))^2 = a (with a >= 0)
+elimExpr (Pow (Sqrt a) 2) = do
+  a' <- elimExpr a
+  addConstraint (Ge a' (Const 0))
+  return a'
 elimExpr (Pow e n) = Pow <$> elimExpr e <*> pure n
 elimExpr (Sqrt e) = do
   e' <- elimExpr e
