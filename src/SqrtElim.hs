@@ -168,6 +168,12 @@ elimExpr (Mul (Sqrt a) (Sqrt b))
       addConstraint (Ge b' (Const 0))
       elimExpr (Sqrt (Mul a' b'))
 elimExpr (Mul a b) = Mul <$> elimExpr a <*> elimExpr b
+-- Smart sqrt division: a / sqrt(a) → sqrt(a) (for a > 0)
+elimExpr (Div a (Sqrt b))
+  | a == b = do
+      a' <- elimExpr a
+      addConstraint (Ge a' (Const 0))
+      elimExpr (Sqrt a)
 elimExpr (Div a b) = Div <$> elimExpr a <*> elimExpr b
 -- Smart sqrt power: (sqrt(a))^2 = a (with a >= 0)
 elimExpr (Pow (Sqrt a) 2) = do
