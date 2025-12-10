@@ -350,6 +350,8 @@ simplifyExpr (Div e1 e2) =
        (Const 0, _) -> Const 0              -- 0 / e = 0
        (e, Const 1) -> e                    -- e / 1 = e
        (Const r1, Const r2) | r2 /= 0 -> Const (r1 / r2)
+       (Div a b, c) -> simplifyExpr (Div a (Mul b c))  -- (a/b)/c = a/(bc)
+       (a, Div b c) -> simplifyExpr (Div (Mul a c) b)  -- a/(b/c) = (ac)/b
        _ | s1 == s2 -> Const 1              -- e / e = 1
        _ -> Div s1 s2
 
@@ -745,6 +747,30 @@ containsSqrtFormula (Or f1 f2) = containsSqrtFormula f1 || containsSqrtFormula f
 containsSqrtFormula (Not f) = containsSqrtFormula f
 containsSqrtFormula (Forall _ f) = containsSqrtFormula f
 containsSqrtFormula (Exists _ f) = containsSqrtFormula f
+
+-- | Check if expression contains division (for rational elimination)
+containsDivExpr :: Expr -> Bool
+containsDivExpr (Div _ _) = True
+containsDivExpr (Add a b) = containsDivExpr a || containsDivExpr b
+containsDivExpr (Sub a b) = containsDivExpr a || containsDivExpr b
+containsDivExpr (Mul a b) = containsDivExpr a || containsDivExpr b
+containsDivExpr (Pow e _) = containsDivExpr e
+containsDivExpr (Sqrt e) = containsDivExpr e
+containsDivExpr (Determinant rows) = any containsDivExpr (concat rows)
+containsDivExpr (Circle _ _ e) = containsDivExpr e
+containsDivExpr _ = False
+
+containsDivFormula :: Formula -> Bool
+containsDivFormula (Eq l r) = containsDivExpr l || containsDivExpr r
+containsDivFormula (Ge l r) = containsDivExpr l || containsDivExpr r
+containsDivFormula (Gt l r) = containsDivExpr l || containsDivExpr r
+containsDivFormula (Le l r) = containsDivExpr l || containsDivExpr r
+containsDivFormula (Lt l r) = containsDivExpr l || containsDivExpr r
+containsDivFormula (And f1 f2) = containsDivFormula f1 || containsDivFormula f2
+containsDivFormula (Or f1 f2) = containsDivFormula f1 || containsDivFormula f2
+containsDivFormula (Not f) = containsDivFormula f
+containsDivFormula (Forall _ f) = containsDivFormula f
+containsDivFormula (Exists _ f) = containsDivFormula f
 
 -- =============================================
 -- Integer square root helper

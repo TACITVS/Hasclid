@@ -1,0 +1,6 @@
+; Pure polynomial version
+:assume (= (* 3 (^ y 2)) (^ x 2))
+:assume (= (* 3 (^ y 2)) (^ (- x 1) 2))
+
+; Prove 2*x = 1 (equivalent to x = 1/2)
+:prove (= (* 2 x) 1)

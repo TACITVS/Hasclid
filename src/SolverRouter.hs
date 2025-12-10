@@ -46,6 +46,7 @@ import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
 import CADLift (proveFormulaCAD)
 import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..))
 import SqrtElim (eliminateSqrt)
+import RationalElim (eliminateRational)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
@@ -430,11 +431,15 @@ executeSolver :: SolverChoice -> SolverOptions -> Theory -> Formula -> (Bool, St
 executeSolver solver opts theory goal =
   let hasSqrt = containsSqrtFormula goal || any containsSqrtFormula theory
       hasInt = containsIntFormula goal || any containsIntFormula theory
+      hasDiv = containsDivFormula goal || any containsDivFormula theory
       groebner = selectGroebner opts
   in case solver of
        UseWu ->
          if hasInt
          then runInt opts theory goal
+         else
+         if hasDiv
+         then runCadRational theory goal
          else
          if hasSqrt
          then runCadSqrt theory goal
@@ -449,6 +454,9 @@ executeSolver solver opts theory goal =
        UseGroebner ->
          if hasInt
          then runInt opts theory goal
+         else
+         if hasDiv
+         then runCadRational theory goal
          else
          if hasSqrt
          then runCadSqrt theory goal
@@ -479,6 +487,9 @@ executeSolver solver opts theory goal =
        UseCAD ->
          if hasInt
          then runInt opts theory goal
+         else
+         if hasDiv
+         then runCadRational theory goal
          else
          if hasSqrt
          then runCadSqrt theory goal
@@ -573,6 +584,21 @@ executeCADInequality theory lhs rhs isStrict =
 extractPolyVars :: Poly -> S.Set String
 extractPolyVars (Poly m) =
   S.fromList $ concatMap (\(Monomial vars) -> M.keys vars) (M.keys m)
+
+-- CAD-based rational elimination path
+runCadRational :: Theory -> Formula -> (Bool, String, Maybe String)
+runCadRational theory goal =
+  let (th', goal') = eliminateRational theory goal
+      hasSqrt = containsSqrtFormula goal' || any containsSqrtFormula th'
+      (th'', goal'') = if hasSqrt
+                         then eliminateSqrt th' goal'
+                         else (th', goal')
+      proved = proveFormulaCAD th'' goal''
+      msg = if proved
+            then "Proved via CAD with rational" ++
+                 (if hasSqrt then " and sqrt" else "") ++ " elimination"
+            else "Not proved via CAD with rational elimination"
+  in (proved, msg, Nothing)
 
 -- CAD-based sqrt elimination path
 runCadSqrt :: Theory -> Formula -> (Bool, String, Maybe String)

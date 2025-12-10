@@ -37,6 +37,7 @@ executable prover
         Positivity
         ProblemAnalyzer
         Prover
+        RationalElim
         SolverRouter
         SqrtElim
         Sturm
@@ -68,6 +69,7 @@ test-suite prover-test
         Positivity
         ProblemAnalyzer
         Prover
+        RationalElim
         SolverRouter
         SqrtElim
         Sturm

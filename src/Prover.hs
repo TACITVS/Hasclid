@@ -30,6 +30,7 @@ import Positivity (checkPositivityEnhanced, PositivityResult(..), PositivityMeth
 import Cache (GroebnerCache, lookupBasis, insertBasis)
 import CADLift (proveFormulaCAD, satisfiableFormulaCAD, solveQuantifiedFormulaCAD)
 import SqrtElim (eliminateSqrt)
+import RationalElim (eliminateRational)
 import qualified Data.Map.Strict as M
 import Data.List (nub, minimumBy, sort, findIndex)
 import qualified Data.List as L
@@ -216,6 +217,7 @@ proveTheoryWithCache :: Maybe GroebnerCache -> Theory -> Formula -> (Bool, Strin
 proveTheoryWithCache maybeCache theory formula =
   let baseTrace = emptyTrace { usedAssumptions = theory }
       hasInt = containsIntFormula formula || any containsIntFormula theory
+      hasDiv = containsDivFormula formula || any containsDivFormula theory
       hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
   in
     case formula of
@@ -228,7 +230,8 @@ proveTheoryWithCache maybeCache theory formula =
                 let hasIntForm = containsIntFormula inner || any containsIntFormula theory
                     hasSqrtForm = containsSqrtFormula inner || any containsSqrtFormula theory
                     polyOk = all isPolyFormula (inner : theory)
-                in if hasIntForm || hasSqrtForm || not polyOk
+                    hasDivForm = containsDivFormula inner || any containsDivFormula theory
+                in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk
                                                      then (False, "Real universal (unbounded) not supported for non-polynomial or mixed-domain goals.", baseTrace, maybeCache)
                                                      else
                                                        case negateRealGoal inner of
@@ -238,16 +241,17 @@ proveTheoryWithCache maybeCache theory formula =
                                                            in if satAny
                                                                 then (False, "Found counterexample branch for real universal (CAD satisfiable).", baseTrace, maybeCache)
                                                                 else (True, "Real universal proved by refuting negation with CAD.", baseTrace, maybeCache)
-                     
+
       Exists qs inner
         | all (\q -> qvType q == QuantReal) qs
         , not (any containsQuantifier theory) ->
             let hasIntForm = containsIntFormula inner || any containsIntFormula theory
+                hasDivForm = containsDivFormula inner || any containsDivFormula theory
                 hasSqrtForm = containsSqrtFormula inner || any containsSqrtFormula theory
                 hasNestedQuant = containsQuantifier inner
                 polyOk = all isPolyFormula (inner : theory)
-            in if hasIntForm || hasSqrtForm || not polyOk || hasNestedQuant
-                 then fallThrough baseTrace hasInt hasSqrt
+            in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk || hasNestedQuant
+                 then fallThrough baseTrace hasInt hasDiv hasSqrt
                  else
                    let (holds, msg) =
                          case traverse boundsFromQ qs of
@@ -290,9 +294,9 @@ proveTheoryWithCache maybeCache theory formula =
         let quantMsg = "Quantifiers are not yet supported; cannot solve universally quantified goal: " ++ prettyFormula formula
         in (False, quantMsg, baseTrace, maybeCache)
 
-      _ -> fallThrough baseTrace hasInt hasSqrt
+      _ -> fallThrough baseTrace hasInt hasDiv hasSqrt
   where
-    fallThrough baseTrace hasInt hasSqrt
+    fallThrough baseTrace hasInt hasDiv hasSqrt
       | any containsQuantifier theory =
           (False, "Quantifiers in assumptions are not supported yet.", baseTrace, maybeCache)
       | hasInt =
@@ -306,6 +310,20 @@ proveTheoryWithCache maybeCache theory formula =
                               then " A bounded brute-force search is available but currently disabled."
                               else ""
                  in (False, msg, baseTrace, maybeCache)
+      | hasDiv =
+          let (th', goal') = eliminateRational theory formula
+              hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
+              (th'', goal'') = if hasSqrt'
+                                 then eliminateSqrt th' goal'
+                                 else (th', goal')
+              proved = proveFormulaCAD th'' goal''
+              msg = if proved
+                    then "Proved via CAD with rational" ++
+                         (if hasSqrt' then " and sqrt" else "") ++
+                         " elimination"
+                    else "Not proved via CAD with rational elimination"
+              trace = emptyTrace { usedAssumptions = th'' }
+          in (proved, msg, trace, maybeCache)
       | hasSqrt =
           let (th', goal') = eliminateSqrt theory formula
               proved = proveFormulaCAD th' goal'
@@ -326,8 +344,9 @@ proveTheoryWithOptions :: ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory ->
 proveTheoryWithOptions customBuchberger maybeCache theory formula =
   let baseTrace = emptyTrace { usedAssumptions = theory }
       hasInt = containsIntFormula formula || any containsIntFormula theory
+      hasDiv = containsDivFormula formula || any containsDivFormula theory
       hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
-      fallThrough baseTrace' hasInt' hasSqrt' =
+      fallThrough baseTrace' hasInt' hasDiv' hasSqrt' =
         if any containsQuantifier theory
           then (False, "Quantifiers in assumptions are not supported yet.", baseTrace', maybeCache)
         else if hasInt'
@@ -342,6 +361,21 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
                                 then " A bounded brute-force search is available but currently disabled."
                                 else ""
                    in (False, msg, baseTrace', maybeCache)
+        else if hasDiv'
+          then
+            let (th', goal') = eliminateRational theory formula
+                hasSqrt'' = containsSqrtFormula goal' || any containsSqrtFormula th'
+                (th'', goal'') = if hasSqrt''
+                                   then eliminateSqrt th' goal'
+                                   else (th', goal')
+                proved = proveFormulaCAD th'' goal''
+                msg = if proved
+                      then "Proved via CAD with rational" ++
+                           (if hasSqrt'' then " and sqrt" else "") ++
+                           " elimination"
+                      else "Not proved via CAD with rational elimination"
+                trace = emptyTrace { usedAssumptions = th'' }
+            in (proved, msg, trace, maybeCache)
         else if hasSqrt'
           then
             let (th', goal') = eliminateSqrt theory formula
@@ -367,13 +401,14 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
               Just (res, msg) -> (res, msg, baseTrace, maybeCache)
               Nothing ->
                 let hasIntForm = containsIntFormula inner || any containsIntFormula theory
+                    hasDivForm = containsDivFormula inner || any containsDivFormula theory
                     hasSqrtForm = containsSqrtFormula inner || any containsSqrtFormula theory
                     polyOk = all isPolyFormula (inner : theory)
-                in if hasIntForm || hasSqrtForm || not polyOk
-                     then fallThrough baseTrace hasInt hasSqrt
+                in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk
+                     then fallThrough baseTrace hasInt hasDiv hasSqrt
                      else
                        case negateRealGoal inner of
-                         Nothing -> fallThrough baseTrace hasInt hasSqrt
+                         Nothing -> fallThrough baseTrace hasInt hasDiv hasSqrt
                          Just negs ->
                            let satAny = any (\ng -> satisfiableFormulaCAD theory ng) negs
                            in if satAny
@@ -384,11 +419,12 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
         | all (\q -> qvType q == QuantReal) qs
         , not (any containsQuantifier theory) ->
             let hasIntForm = containsIntFormula inner || any containsIntFormula theory
+                hasDivForm = containsDivFormula inner || any containsDivFormula theory
                 hasSqrtForm = containsSqrtFormula inner || any containsSqrtFormula theory
                 hasNestedQuant = containsQuantifier inner
                 polyOk = all isPolyFormula (inner : theory)
-            in if hasIntForm || hasSqrtForm || not polyOk || hasNestedQuant
-                 then fallThrough baseTrace hasInt hasSqrt
+            in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk || hasNestedQuant
+                 then fallThrough baseTrace hasInt hasDiv hasSqrt
                  else
                    let (holds, msg) =
                          case traverse boundsFromQ qs of
@@ -431,7 +467,7 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
       Forall _ _ ->
         (False, "Quantifiers are not yet supported; cannot solve universally quantified goal: " ++ prettyFormula formula, baseTrace, maybeCache)
 
-      _ -> fallThrough baseTrace hasInt hasSqrt
+      _ -> fallThrough baseTrace hasInt hasDiv hasSqrt
 
 -- | Original proveTheory function (no caching)
 proveTheory :: Theory -> Formula -> (Bool, String, ProofTrace)
