@@ -4,10 +4,12 @@ module SqrtElim
 
 import Expr
 import Control.Monad.State
+import qualified Data.Map.Strict as Map
 
 -- | Eliminate sqrt by introducing auxiliary variables.
 -- Each (sqrt e) becomes a fresh variable v with constraints:
 --   v^2 = e    and    v >= 0    and    e >= 0
+-- MEMOIZATION: Reuses same auxiliary variable for identical sqrt expressions
 -- Special rewrites:
 --   sqrt(t^2)  -> t with added constraint t >= 0
 --   sqrt a >= sqrt b  ->  a >= b  AND a >= 0 AND b >= 0
@@ -19,18 +21,19 @@ import Control.Monad.State
 -- Returns (transformedTheory, transformedGoal) both sqrt-free.
 eliminateSqrt :: Theory -> Formula -> (Theory, Formula)
 eliminateSqrt theory goal =
-  let ((theory', goal'), extras) = runState (do
+  let ((theory', goal'), (extras, _)) = runState (do
         t' <- mapM elimFormula theory
         g' <- elimFormula goal
-        return (t', g')) []
+        return (t', g')) ([], Map.empty)
   in (extras ++ theory', goal')
 
-type ElimM = State [Formula]
+type SqrtMemo = Map.Map Expr String
+type ElimM = State ([Formula], SqrtMemo)
 
 freshVar :: ElimM String
 freshVar = do
-  extras <- get
-  let idx = length extras + 1
+  (_, memo) <- get
+  let idx = Map.size memo + 1
   return ("sqrt_aux" ++ show idx)
 
 elimFormula :: Formula -> ElimM Formula
@@ -84,6 +87,43 @@ elimFormula (Gt b (Sqrt a)) = do
   addConstraint (Ge a' (Const 0))
   addConstraint (Ge b' (Const 0))
   return (Gt (Pow b' 2) a')
+-- Le and Lt cases (newly added operators)
+elimFormula (Le (Sqrt a) (Sqrt b)) = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Le a' b')
+elimFormula (Lt (Sqrt a) (Sqrt b)) = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Lt a' b')
+elimFormula (Le (Sqrt a) b) = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Le a' (Pow b' 2))
+elimFormula (Le b (Sqrt a)) = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Le (Pow b' 2) a')
+elimFormula (Lt (Sqrt a) b) = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Lt a' (Pow b' 2))
+elimFormula (Lt b (Sqrt a)) = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Lt (Pow b' 2) a')
 elimFormula (Eq l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
@@ -96,6 +136,19 @@ elimFormula (Gt l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
   return (Gt l' r')
+elimFormula (Le l r) = do
+  l' <- elimExpr l
+  r' <- elimExpr r
+  return (Le l' r')
+elimFormula (Lt l r) = do
+  l' <- elimExpr l
+  r' <- elimExpr r
+  return (Lt l' r')
+elimFormula (And f1 f2) = And <$> elimFormula f1 <*> elimFormula f2
+elimFormula (Or f1 f2) = Or <$> elimFormula f1 <*> elimFormula f2
+elimFormula (Not f) = Not <$> elimFormula f
+elimFormula (Forall vars f) = Forall vars <$> elimFormula f
+elimFormula (Exists vars f) = Exists vars <$> elimFormula f
 
 elimExpr :: Expr -> ElimM Expr
 elimExpr (Add a b) = Add <$> elimExpr a <*> elimExpr b
@@ -111,15 +164,23 @@ elimExpr (Sqrt e) = do
       addConstraint (Ge t' (Const 0))
       return t'
     _ -> do
-      v <- freshVar
-      let vExpr = Var v
-          eqConstraint = Eq (Pow vExpr 2) e'
-          geConstraint = Ge vExpr (Const 0)
-          radicandConstraint = Ge e' (Const 0)
-      addConstraint eqConstraint
-      addConstraint geConstraint
-      addConstraint radicandConstraint
-      return vExpr
+      -- Check memo first - reuse variable if we've seen this expression
+      (_, memo) <- get
+      case Map.lookup e' memo of
+        Just varName -> return (Var varName)  -- REUSE existing variable!
+        Nothing -> do
+          -- Create new variable and memoize it
+          v <- freshVar
+          let vExpr = Var v
+              eqConstraint = Eq (Pow vExpr 2) e'
+              geConstraint = Ge vExpr (Const 0)
+              radicandConstraint = Ge e' (Const 0)
+          addConstraint eqConstraint
+          addConstraint geConstraint
+          addConstraint radicandConstraint
+          -- Add to memo
+          modify (\(cs, m) -> (cs, Map.insert e' v m))
+          return vExpr
 elimExpr (Determinant rows) = Determinant <$> mapM (mapM elimExpr) rows
 elimExpr (Circle p c r) = Circle p c <$> elimExpr r
 -- Geometric primitives and base cases
@@ -135,4 +196,4 @@ elimExpr e@(Var _) = return e
 elimExpr e@(Const _) = return e
 
 addConstraint :: Formula -> ElimM ()
-addConstraint f = modify (f :)
+addConstraint f = modify (\(constraints, memo) -> (f : constraints, memo))

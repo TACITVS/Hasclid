@@ -35,7 +35,7 @@ data Expr
   | AngleEq2DAbs String String String String String String -- ∠ABC ≡ ∠DEF up to reflection (2D)
   -- High-level algebraic primitives
   | Determinant [[Expr]]                   -- Lazy determinant of a matrix
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | Quantifier domain
 data QuantType = QuantReal | QuantInt deriving (Eq, Show)
