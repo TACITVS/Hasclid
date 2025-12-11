@@ -118,6 +118,10 @@ polyDiv f g = Just (f, polyZero) -- Placeholder: Use pseudo-division from Wu if 
 factorHeuristic :: Poly -> [Poly]
 factorHeuristic p =
   let (m, rest) = extractMonomial p
-  in if m == monomialOne then [rest] else [polyFromMonomial m, rest]
+      -- Apply square-free factorization to the rest
+      sq = squareFreePart rest
+  in if m == monomialOne 
+     then [sq] 
+     else [polyFromMonomial m, sq]
 
 
