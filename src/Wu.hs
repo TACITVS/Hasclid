@@ -371,7 +371,7 @@ formatWuTrace trace = unlines $
   , ""
   ] ++ map formatBranch (branches trace) ++ 
   [ ""
-  , "Overall Result: " ++ if isProved trace then "✓ PROVED" else "✗ NOT PROVED"
+  , "Overall Result: " ++ if isProved trace then "[PROVED]" else "[NOT PROVED]"
   , "Reason: " ++ proofReason trace
   ]
 
