@@ -3,6 +3,7 @@
 module Main where
 
 import Expr (Formula(Eq, Ge, Gt, Le, Lt), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
+import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea)
 import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
 import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger, IntSolveOptions(..))
 import BuchbergerOpt (SelectionStrategy(..), buchbergerWithStrategy)
@@ -63,6 +64,7 @@ data REPLState = REPLState
   , solverTimeout :: Int  -- Timeout in seconds (default 30)
   , lastTimeoutSeconds :: Maybe Int -- Tracks last timeout to allow automatic retry escalation
   , solverOptions :: SolverOptions
+  , construction :: Construction -- Area Method Construction
   }
 
 data REPLEnv = REPLEnv
@@ -84,7 +86,7 @@ type REPLM = ReaderT REPLEnv (ExceptT ProverError IO)
 
 initialState :: REPLEnv -> REPLState
 initialState env =
-  REPLState [] [] [] False True emptyCache (envTermOrder env) (envUseOptimized env) (envSelectionStrategy env) M.empty 30 Nothing (envSolverOptions env)
+  REPLState [] [] [] False True emptyCache (envTermOrder env) (envUseOptimized env) (envSelectionStrategy env) M.empty 30 Nothing (envSolverOptions env) []
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -351,6 +353,22 @@ handleCommand state stateWithHist newHist input = do
       case loadResult of
         Left err -> pure (stateWithHist, err)
         Right lemmasLoaded -> pure (stateWithHist { lemmas = lemmasLoaded }, "Lemmas loaded from " ++ filename)
+
+    (":construct":_) -> do
+      let cmdStr = drop 10 input
+      case parseConstructionStep cmdStr of
+        Right step -> 
+           let newConstr = construction state ++ [step]
+           in pure (stateWithHist { construction = newConstr }, "Added construction step: " ++ show step)
+        Left err -> pure (stateWithHist, "Parse error: " ++ err)
+
+    (":prove-area":_) -> do
+      let goalStr = drop 11 input
+      case parseGeoExpr goalStr of
+        Right goal ->
+           let (res, msg) = proveArea (construction state) goal
+           in pure (stateWithHist, "Area Method Result: " ++ show res ++ "\n" ++ msg)
+        Left err -> pure (stateWithHist, "Parse error: " ++ err)
 
     (":help":_) -> pure (stateWithHist, unlines
       [ "Commands:"
@@ -660,3 +678,48 @@ parseMacroDef current s =
 formatMacro :: (String, ([String], SExpr)) -> String
 formatMacro (name, (params, body)) =
   "  " ++ name ++ " " ++ show params ++ " => " ++ show body
+
+-- =============================================
+-- Area Method Parsers
+-- =============================================
+
+parseConstructionStep :: String -> Either String ConstructStep
+parseConstructionStep s =
+  let tokens = tokenizePrefix s
+  in case parseSExpr tokens of
+       Right (List [Atom p, Atom "free"], _) -> Right (PointFree p)
+       Right (List [Atom p, Atom "intersection", Atom a, Atom b, Atom c, Atom d], _) -> Right (PointInter p a b c d)
+       Right (List [Atom m, Atom "midpoint", Atom a, Atom b], _) -> Right (PointMid m a b)
+       Right (List [Atom p, Atom "on-line", Atom a, Atom b, rat], _) -> 
+         case parseRatSExpr rat of
+           Just r -> Right (PointOnLine p a b r)
+           Nothing -> Left "Invalid ratio"
+       _ -> Left "Invalid construction syntax. Expected S-Expression e.g. (P intersection A B C D)"
+
+parseGeoExpr :: String -> Either String GeoExpr
+parseGeoExpr s =
+  let tokens = tokenizePrefix s
+  in case parseSExpr tokens of
+       Right (sexpr, _) -> sexprToGeo sexpr
+       Left err -> Left (formatError err)
+
+sexprToGeo :: SExpr -> Either String GeoExpr
+sexprToGeo (Atom s) = Left "Unexpected atom at top level"
+sexprToGeo (List [Atom "S", Atom a, Atom b, Atom c]) = Right (S_Area a b c)
+sexprToGeo (List [Atom "P", Atom a, Atom b, Atom c]) = Right (P_Pyth a b c)
+sexprToGeo (List [Atom "dist2", Atom a, Atom b]) = Right (G_Dist2 a b)
+sexprToGeo (List [Atom "+", a, b]) = G_Add <$> sexprToGeo a <*> sexprToGeo b
+sexprToGeo (List [Atom "-", a, b]) = G_Sub <$> sexprToGeo a <*> sexprToGeo b
+sexprToGeo (List [Atom "*", a, b]) = G_Mul <$> sexprToGeo a <*> sexprToGeo b
+sexprToGeo (List [Atom "/", a, b]) = G_Div <$> sexprToGeo a <*> sexprToGeo b
+sexprToGeo (List [Atom "const", val]) = G_Const <$> (case parseRatSExpr val of Just r -> Right r; Nothing -> Left "Bad number")
+sexprToGeo _ = Left "Unknown GeoExpr format"
+
+parseRatSExpr :: SExpr -> Maybe Rational
+parseRatSExpr (Atom s) 
+  | all (\c -> isDigit c || c == '-' || c == '/') s = 
+      if '/' `elem` s
+      then let (n, d) = span (/= '/') s in Just (read n % read (drop 1 d))
+      else Just (fromInteger (read s) % 1)
+  | otherwise = Nothing
+parseRatSExpr _ = Nothing
