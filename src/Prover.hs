@@ -32,13 +32,14 @@ import CADLift (proveFormulaCAD, satisfiableFormulaCAD, solveQuantifiedFormulaCA
 import SqrtElim (eliminateSqrt)
 import RationalElim (eliminateRational)
 import qualified Data.Map.Strict as M
-import Data.List (nub, minimumBy, sort, findIndex)
+import Data.List (nub, minimumBy, sort, findIndex, find)
 import qualified Data.List as L
 import Data.Ratio (numerator, denominator)
 import qualified Data.Map.Strict as Map
 import Control.Monad (foldM)
 import Data.Maybe (fromMaybe, maybeToList, catMaybes, isJust, isNothing)
 import Data.List (delete)
+import Numeric.Natural (Natural)
 
 -- =============================================
 -- Proof Tracing Data Structures
@@ -130,6 +131,75 @@ partitionTheory (f:fs) =
        Eq _ _       -> (subs, f:constrs)
        _            -> (subs, constrs)
 
+-- =============================================
+-- Lightweight preprocessing for Groebner goals
+-- =============================================
+
+-- Substitute a map inside a formula (avoids capture for bound vars).
+substFormula :: M.Map String Expr -> Formula -> Formula
+substFormula sub (Eq l r) = Eq (substituteAll sub l) (substituteAll sub r)
+substFormula sub (Ge l r) = Ge (substituteAll sub l) (substituteAll sub r)
+substFormula sub (Gt l r) = Gt (substituteAll sub l) (substituteAll sub r)
+substFormula sub (Le l r) = Le (substituteAll sub l) (substituteAll sub r)
+substFormula sub (Lt l r) = Lt (substituteAll sub l) (substituteAll sub r)
+substFormula sub (And f1 f2) = And (substFormula sub f1) (substFormula sub f2)
+substFormula sub (Or f1 f2) = Or (substFormula sub f1) (substFormula sub f2)
+substFormula sub (Not f) = Not (substFormula sub f)
+substFormula sub (Forall qs f) =
+  let blocked = foldr M.delete sub (map qvName qs)
+  in Forall qs (substFormula blocked f)
+substFormula sub (Exists qs f) =
+  let blocked = foldr M.delete sub (map qvName qs)
+  in Exists qs (substFormula blocked f)
+
+-- Detect a single-variable linear equality and solve for that variable.
+-- Returns (variable, value) where value is a constant expression.
+solveLinearSingleVar :: Expr -> Expr -> Maybe (String, Expr)
+solveLinearSingleVar l r =
+  case linearSingleVar (toPolySub M.empty (Sub l r)) of
+    Just (v, a, c) | a /= 0 -> Just (v, Const ((-c) / a))
+    _ -> Nothing
+  where
+    linearSingleVar :: Poly -> Maybe (String, Rational, Rational)
+    linearSingleVar (Poly mp) =
+      case foldl step (Just (Nothing, 0, 0)) (M.toList mp) of
+        Just (Just v, aSum, cSum) -> Just (v, aSum, cSum)
+        _ -> Nothing
+      where
+        step Nothing _ = Nothing
+        step (Just (mv, a, c)) (Monomial mon, coeff) =
+          case M.toList mon of
+            [] -> Just (mv, a, c + coeff)
+            [(v,1)] ->
+              case mv of
+                Nothing   -> Just (Just v, a + coeff, c)
+                Just vOld ->
+                  if vOld == v
+                    then Just (mv, a + coeff, c)
+                    else Nothing
+            _ -> Nothing
+
+-- Iteratively eliminates simple linear equalities to constants,
+-- applying substitutions to both theory and goal.
+preprocessSystem :: Theory -> Formula -> (Theory, Formula, [(String, Expr)])
+preprocessSystem theory formula = go theory formula []
+  where
+    go th goal acc =
+      case find substitutionCandidate th of
+        Nothing -> (th, goal, reverse acc)
+        Just f@(Eq l r) ->
+          case solveLinearSingleVar l r of
+            Nothing -> (th, goal, reverse acc)
+            Just (v, val) ->
+              let subMap = M.singleton v val
+                  th' = map (substFormula subMap) (filter (/= f) th)
+                  goal' = substFormula subMap goal
+              in go th' goal' ((v, val) : acc)
+        _ -> (th, goal, reverse acc)
+
+    substitutionCandidate (Eq l r) = isJust (solveLinearSingleVar l r)
+    substitutionCandidate _ = False
+
 -- Shared Groebner fallback used by both cached and custom Buchberger flows.
 groebnerFallback
   :: ([Poly] -> [Poly])
@@ -139,10 +209,13 @@ groebnerFallback
   -> (Bool, String, ProofTrace, Maybe GroebnerCache)
 groebnerFallback customBuchberger maybeCache theory formula =
   let
-    (substAssumptions, constraintAssumptions) = partitionTheory theory
+    (theoryPrep, formulaPrep, subApplied) = preprocessSystem theory formula
+
+    (substAssumptions, constraintAssumptions) = partitionTheory theoryPrep
     subM = buildSubMap substAssumptions
 
     substSteps = [ UsedSubstitution v e | Eq (Var v) e <- substAssumptions ]
+    preSubSteps = [ UsedConstraint (Eq (Var v) e) | (v, e) <- subApplied ]
     constraintSteps = [ UsedConstraint f | f@(Eq _ _) <- constraintAssumptions ]
 
     idealGenerators = [ subPoly (toPolySub subM l) (toPolySub subM r)
@@ -163,7 +236,7 @@ groebnerFallback customBuchberger maybeCache theory formula =
                       in (computed, Just cacheAfterInsert)
 
     basisStep = if null idealGenerators then [] else [ComputedGroebnerBasis (length basis)]
-    (pL, pR) = case formula of
+    (pL, pR) = case formulaPrep of
                  Eq l r -> (toPolySub subM l, toPolySub subM r)
                  Ge l r -> (toPolySub subM l, toPolySub subM r)
                  Gt l r -> (toPolySub subM l, toPolySub subM r)
@@ -174,42 +247,42 @@ groebnerFallback customBuchberger maybeCache theory formula =
     difference = subPoly pL pR
     normalForm = reduce compare difference basis  -- Use Lex order for backwards compatibility
     reductionStep = [ReducedToNormalForm difference normalForm]
-    allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
-  in case formula of
+    allSteps = substSteps ++ preSubSteps ++ constraintSteps ++ basisStep ++ reductionStep
+  in case formulaPrep of
        Eq _ _ ->
          let result = normalForm == polyZero
              msg = if result
                    then "Equality Holds (Groebner Normal Form is 0)"
                    else "LHS /= RHS (Normal Form: " ++ prettyPoly normalForm ++ ")"
-             trace = ProofTrace allSteps theory (length basis)
+             trace = ProofTrace allSteps theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
 
        Ge _ _ ->
          let (result, msg) = checkPositivity normalForm True
              positivityStep = [CheckedPositivity msg]
-             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+             trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
 
        Gt _ _ ->
          let (result, msg) = checkPositivity normalForm False
              positivityStep = [CheckedPositivity msg]
-             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+             trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
 
        Le _ _ ->
          let (result, msg) = checkPositivity normalForm True  -- l <= r becomes r >= l
              positivityStep = [CheckedPositivity msg]
-             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+             trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
 
        Lt _ _ ->
          let (result, msg) = checkPositivity normalForm False  -- l < r becomes r > l
              positivityStep = [CheckedPositivity msg]
-             trace = ProofTrace (allSteps ++ positivityStep) theory (length basis)
+             trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
 
        _ ->
-         (False, "Goal not supported by available solvers.", ProofTrace allSteps theory (length basis), updatedCache)
+         (False, "Goal not supported by available solvers.", ProofTrace allSteps theoryPrep (length basis), updatedCache)
 
 -- | Prove a formula with optional cache support
 -- Returns: (isProved, reason, trace, updatedCache)

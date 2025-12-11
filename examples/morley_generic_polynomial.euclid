@@ -1,0 +1,84 @@
+; ======================================================================
+; Morley's Theorem - Generic Triangle (polynomial formulation)
+; ----------------------------------------------------------------------
+; Normalization:
+;   B = (0, 0)
+;   C = (1, 0)
+;   A = (ax, ay), with ay > 0 and 0 < ax < 1
+;
+; Trisector slopes tA, tB, tC satisfy the tan triple-angle cubic:
+;   (cx) * t^3 - 3*cy*t^2 - 3*cx*t + cy = 0
+; where (cx, cy) is the vector from the angle vertex to its adjacent side.
+;
+; Morley points are placed by line parameters (u/v) instead of free coords.
+; Goals: dist2(P,Q) = dist2(Q,R) and dist2(Q,R) = dist2(R,P).
+; ======================================================================
+
+:verbose
+
+; Triangle vertices (normalized)
+:point B 0 0
+:point C 1 0
+:point A ax ay
+
+; Non-degenerate interior constraints
+:assume (> ay 0)
+:assume (> ax 0)
+:assume (< ax 1)
+
+; ----------------------------------------------------------------------
+; Trisector slopes via triple-angle cubic at each vertex
+; Vertex B: angle ABC, vector to C is (1,0), to A is (ax, ay)
+; tan(B) = ay / ax, so cubic: ax*tB^3 - 3*ay*tB^2 - 3*ax*tB + ay = 0
+:assume (= (+ (* ax (^ tB 3)) (* -3 ay (^ tB 2)) (* -3 ax tB) ay) 0)
+
+; Vertex C: angle BCA, vector to A is (ax-1, ay)
+; cubic: (ax-1)*tC^3 - 3*ay*tC^2 - 3*(ax-1)*tC + ay = 0
+:assume (= (+ (* (- ax 1) (^ tC 3)) (* -3 ay (^ tC 2)) (* -3 (- ax 1) tC) ay) 0)
+
+; Vertex A: angle CAB, vector to B is (-ax, -ay), to C is (1-ax, -ay)
+; tan(A) = ay / (1-ax), cubic: (1-ax)*tA^3 - 3*ay*tA^2 - 3*(1-ax)*tA + ay = 0
+:assume (= (+ (* (- 1 ax) (^ tA 3)) (* -3 ay (^ tA 2)) (* -3 (- 1 ax) tA) ay) 0)
+
+; Interior-side pruning for trisectors (keep them above base)
+:assume (> tB 0)
+:assume (> tC 0)
+:assume (> tA 0)
+
+; ----------------------------------------------------------------------
+; Direction vectors for first trisectors at each vertex (slope form)
+; B→: dirB = (1, tB)
+; C→: dirC = (-1, tC)   (toward interior)
+; A→: dirA = (1-ax, -ay) rotated by tA slope => direction (1, tA)
+; ----------------------------------------------------------------------
+
+; ----------------------------------------------------------------------
+; Morley point P: intersection of trisectors from B and C
+; P = B + uB * dirB = C + vC * dirC
+:point P px py
+:assume (= px uB)
+:assume (= py (* tB uB))
+:assume (= px (+ 1 (* -1 vC)))
+:assume (= py (* tC vC))
+
+; Morley point Q: intersection of trisectors from C and A
+; Q = C + uC * dirC = A + vA * dirA
+:point Q qx qy
+:assume (= qx (+ 1 (* -1 uC)))
+:assume (= qy (* tC uC))
+:assume (= qx (+ ax vA))
+:assume (= qy (+ ay (* tA vA)))
+
+; Morley point R: intersection of trisectors from A and B
+; R = A + uA * dirA = B + vB * dirB
+:point R rx ry
+:assume (= rx (+ ax uA))
+:assume (= ry (+ ay (* tA uA)))
+:assume (= rx vB)
+:assume (= ry (* tB vB))
+
+; ----------------------------------------------------------------------
+; Equilateral goals on squared distances
+; ----------------------------------------------------------------------
+:prove (= (dist2 P Q) (dist2 Q R))
+:prove (= (dist2 Q R) (dist2 R P))

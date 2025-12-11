@@ -1,0 +1,38 @@
+; ============================================================================
+; MORLEY'S THEOREM - Lemma 2: Trisector Intersection
+; ============================================================================
+; Test if we can compute the intersection of two trisectors
+
+:verbose
+
+; Right triangle at origin: A=(0,0), B=(1,0), C=(0,1)
+:assume (= xA 0)
+:assume (= yA 0)
+:assume (= xB 1)
+:assume (= yB 0)
+:assume (= xC 0)
+:assume (= yC 1)
+
+; First trisector from A: makes 30° with x-axis
+; Algebraic: 3*y^2 = x^2 (from tan^2(30°) = 1/3)
+; Line equation: y = x/sqrt(3) or 3*y^2 = x^2
+
+; Second trisector from B: makes 30° above negative x-axis  
+; Point B is at (1,0), angle at B is 45° (right isosceles)
+; Trisection: 15° each, second trisector at 30° from horizontal
+; From B, equation: y = (x-1)*tan(30°) = (x-1)/sqrt(3)
+; Algebraic: 3*y^2 = (x-1)^2
+
+; Intersection point P: where both trisector conditions hold
+:assume (> xP 0)
+:assume (> yP 0)
+:assume (< xP 1)
+:assume (= (* 3 (^ yP 2)) (^ xP 2))
+:assume (= (* 3 (^ yP 2)) (^ (- xP 1) 2))
+
+; GOAL: These two constraints should determine P uniquely
+; Prove they're consistent: 3*yP^2 = xP^2 AND 3*yP^2 = (xP-1)^2
+; This means xP^2 = (xP-1)^2, so xP^2 = xP^2 - 2*xP + 1
+; Therefore 0 = -2*xP + 1, so xP = 1/2
+
+:prove (= xP (/ 1 2))

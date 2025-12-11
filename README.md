@@ -58,6 +58,7 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
     *   **:project**: Visualization of CAD projections (discriminants).
     *   **v9.1:** **:verbose** - Show detailed proof explanations.
     *   **v9.1:** **:save-lemmas / :load-lemmas** - Build reusable theorem libraries.
+    *   **v9.1:** **root-between** DSL helper: `(root-between x poly lo hi)` expands to `poly=0 ∧ lo < x ∧ x < hi`, useful for picking a specific root (e.g., an interior trisector slope).
 *   **Scripting**: Load and verify complex multi-step theorems from `.euclid` files.
 
 ## 🏆 Notable Achievements

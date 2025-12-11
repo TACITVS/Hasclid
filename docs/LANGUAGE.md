@@ -95,14 +95,27 @@ rational ::= integer ["/" positive_integer]
 
 ### Comments
 ```
-comment ::= "--" <text until end of line>
+line-comment ::= "--" <text> | "//" <text> | "#" <text> | ";" <text>
+block-comment ::= "#|" <text> "|#"
 ```
+
+- Line comments strip the rest of the line.
+- Block comments are non-nested and removed even mid-line.
 
 **Example:**
 ```lisp
--- This is a comment
-:point A 0 0  -- Inline comment
+; This is a comment
+:point A 0 0  ; Inline comment
+#| This whole section is ignored |#
 ```
+
+### Root selection helper
+
+```
+(root-between var poly lo hi)
+```
+
+Sugar for `(and (= poly 0) (> var lo) (< var hi))`. Use it to bind a specific root of a polynomial within an interval (e.g., picking an interior trisector slope).
 
 ### Whitespace
 Spaces, tabs, and newlines separate tokens but are otherwise insignificant.
@@ -616,12 +629,12 @@ Non-substitution assumptions (e.g., `(= (midpoint A B M) 0)`) become **ideal gen
 
 **Example:**
 ```lisp
--- Right Triangle Proof
+; Right Triangle Proof
 :point A 0 0
 :point B 3 0
 :point C 0 4
 
--- Prove Pythagorean theorem
+; Prove Pythagorean theorem
 (= (+ (dist2 A B) (dist2 A C)) (dist2 B C))
 ```
 
@@ -735,3 +748,5 @@ Non-substitution assumptions (e.g., `(= (midpoint A B M) 0)`) become **ideal gen
 ---
 
 **End of Language Reference**
+
+### Root selection helper\n\n(root-between var poly lo hi) is sugar for (and (= poly 0) (> var lo) (< var hi)). Use it to bind a specific root of a polynomial inside an interval (e.g., selecting an interior trisector).\n

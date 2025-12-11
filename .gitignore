@@ -23,3 +23,9 @@ push_refactor.bat
 
 # Local scratch/dev artifacts
 scratch/
+
+# Local temporary outputs
+tmp_prover_cmds.txt
+tmp_prover_out.txt
+nul
+test_div_detection.hs

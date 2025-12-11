@@ -1,0 +1,23 @@
+; ============================================================================
+; ERDOS-MORDELL LEMMA B - INTEGER POLYNOMIAL FORM
+; ============================================================================
+; We prove R_b >= d_a + d_c by proving the equivalent squared-squared form:
+; ((x+1)^2 + 3y^2)^2 >= 12 * y^2 * (x+1)^2
+;
+; This eliminates the symbolic root 's' entirely, preventing sampler errors.
+;
+; Derivation:
+; 1. Original: 4*Rb^2 >= (2da + 2dc)^2
+; 2. Expand: 4((x+1)^2 + y^2) >= (y + s(x+1))^2
+; 3. Rearrange: (x+1)^2 + 3y^2 >= 2sy(x+1)
+; 4. Square again: ((x+1)^2 + 3y^2)^2 >= 4 * s^2 * y^2 * (x+1)^2
+; 5. Substitute s^2=3: ((x+1)^2 + 3y^2)^2 >= 12 * y^2 * (x+1)^2
+
+:verbose
+
+; 1. DEFINE LHS and RHS (Pure Integer Polynomials)
+:assume (= LHS (^ (+ (^ (+ x 1) 2) (* 3 (^ y 2))) 2))
+:assume (= RHS (* 12 (* (^ y 2) (^ (+ x 1) 2))))
+
+; 2. PROVE
+:prove (>= LHS RHS)

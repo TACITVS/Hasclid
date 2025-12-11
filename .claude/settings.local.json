@@ -23,7 +23,10 @@
       "Bash(paste - -)",
       "Bash(cabal clean:*)",
       "Bash(cmd.exe /c \"taskkill /F /IM prover.exe\")",
-      "Bash(cmd.exe /c \"taskkill /F /IM prover.exe 2>&1 || echo No prover running\")"
+      "Bash(cmd.exe /c \"taskkill /F /IM prover.exe 2>&1 || echo No prover running\")",
+      "Bash(git log:*)",
+      "Bash(wait)",
+      "Bash(git rm:*)"
     ],
     "deny": [],
     "ask": []

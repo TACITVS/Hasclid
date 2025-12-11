@@ -1,0 +1,43 @@
+-- ============================================================================
+-- Morley's Theorem - Rational Expression Tests
+-- Testing angle trisection formulas with division
+-- ============================================================================
+
+:verbose
+
+-- TEST 1: Simple rational expression positivity
+-- If sA2 > 0 and tB > 0, then 1/(sA2 + 1/tB) > 0
+:assume (> sA2 0)
+:assume (> tB 0)
+:let tA = (/ 1 (+ sA2 (/ 1 tB)))
+:prove (> tA 0)
+
+-- TEST 2: Simplified Morley trisector relationship
+:clear
+:assume (> sA2 1)
+:assume (> tB15 0)
+:assume (< tB15 1)
+:let slope1 = (/ 1 (+ (* sA2 tB15) 1))
+:prove (> slope1 0)
+
+-- TEST 3: Nested rational simplification
+:clear
+:assume (> a 1)
+:assume (> b 1)
+:prove (= (/ a (/ b 1)) (/ a b))
+
+-- TEST 4: Angle trisection constraint
+-- tan(3θ) = (3t - t³)/(1 - 3t²), so if tan(3θ) = 2, we have:
+-- 2(1 - 3t²) = 3t - t³
+:clear
+:assume (= (+ (+ (^ t1 3) (* -6 (^ t1 2))) (+ (* -3 t1) 2)) 0)
+:assume (> t1 0)
+:assume (< t1 1)
+:prove (> t1 0)
+
+-- TEST 5: Division in intersection point calculation
+:clear
+:assume (> sA2 0)
+:assume (> tB15 0)
+:assume (= xR (* tB15 (/ 1 (+ (* sA2 tB15) 1))))
+:prove (> xR 0)

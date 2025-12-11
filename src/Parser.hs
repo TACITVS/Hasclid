@@ -394,6 +394,16 @@ formulaFromSExpr macros sexpr =
         [x] -> Right x
         _ -> Right $ foldr1 And fs
 
+    -- root-between: (root-between var poly lo hi) expands to poly=0 ∧ lo<var ∧ var<hi
+    List [Atom "root-between", Atom v, poly, lo, hi] -> do
+      p <- exprFromSExpr poly
+      loE <- exprFromSExpr lo
+      hiE <- exprFromSExpr hi
+      let eqPart = Eq p (Const 0)
+          loPart = Gt (Var v) loE
+          hiPart = Lt (Var v) hiE
+      Right (And eqPart (And loPart hiPart))
+
     List (Atom "or" : args) -> do
       fs <- mapM (formulaFromSExpr macros) args
       case fs of

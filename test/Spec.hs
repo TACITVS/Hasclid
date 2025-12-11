@@ -4,6 +4,7 @@ import Expr
 import BuchbergerOpt (reduce)
 import Positivity (checkPositivityEnhanced, isPositive)
 import Prover (intSolve, intResult, defaultIntSolveOptions)
+import Parser (parseFormulaWithMacros, SExpr(..), MacroMap)
 import Test.QuickCheck
 import qualified Data.Map.Strict as M
 
@@ -40,6 +41,15 @@ prop_intSolveSubstitution =
       outcome = intSolve defaultIntSolveOptions th goal
   in intResult outcome == Just True
 
+-- Property 6: macros expand inside parseFormulaWithMacros
+prop_macro_expansion :: Bool
+prop_macro_expansion =
+  let macros :: MacroMap
+      macros = M.fromList [("inc", (["x"], List [Atom "+", Atom "x", Atom "1"]))]
+  in case parseFormulaWithMacros macros "(= (inc 1) 2)" of
+       Right (Eq (Add (Const 1) (Const 1)) (Const 2)) -> True
+       _ -> False
+
 main :: IO ()
 main = do
   quickCheck prop_toPolyConstAdd
@@ -47,3 +57,4 @@ main = do
   quickCheck prop_pos_isPositive
   quickCheck prop_intSolveConst
   quickCheck prop_intSolveSubstitution
+  quickCheck prop_macro_expansion

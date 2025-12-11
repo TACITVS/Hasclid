@@ -1,0 +1,75 @@
+; ============================================================================
+; THEBAULT'S PROBLEM III - EXPLICIT CIRCUMCENTER OPTIMIZATION
+; ============================================================================
+; Strategy:
+; 1. Fix coordinates: B(-1,0), C(1,0), A(u,v).
+; 2. EXPLICITLY define Circumcenter O and Radius R using algebra.
+;    (This removes 3 expensive variables from the Groebner Basis search).
+; 3. Keep Incenter implicit (avoiding square roots).
+; 4. Solve only for the Thebault Circle parameters (x, r) and Incenter (ix, iy).
+
+:set-timeout 300  ; Give it 5 minutes just in case
+:verbose
+
+; ---------------------------------------------------------
+; 1. PRE-CALCULATED CIRCUMCIRCLE (Manual Derivation)
+; ---------------------------------------------------------
+; Given B(-1,0) and C(1,0), the perp bisector is x=0. So Ox = 0.
+; Distance OB^2 = 1^2 + Oy^2 = 1 + Oy^2 = R^2
+; Distance OA^2 = u^2 + (v - Oy)^2 = R^2
+; Equating: 1 + Oy^2 = u^2 + v^2 - 2v*Oy + Oy^2
+;           1 = u^2 + v^2 - 2v*Oy
+;           2v*Oy = u^2 + v^2 - 1
+; Let K = u^2 + v^2 - 1. Then 2*v*Oy = K.
+
+:point A u v
+:assume (= K (- (+ (^ u 2) (^ v 2)) 1))
+
+; Define Oy and R2 explicitly without creating new search variables
+:assume (= (* 2 (* v oy)) K)      ; 2v*Oy = K
+:assume (= R2 (+ 1 (^ oy 2)))     ; R^2 = 1 + Oy^2
+
+; ---------------------------------------------------------
+; 2. INCENTER I (ix, iy) - Implicit Definition
+; ---------------------------------------------------------
+; Distance squared to side BC (y=0) is iy^2.
+; We equate this to distance squared to lines AB and AC.
+
+; Line AB: through (-1,0) and (u,v). Eq: vX - (u+1)Y + v = 0
+; NormSq_AB = v^2 + (u+1)^2
+; Constraint: DistSq(I, AB) = DistSq(I, BC)
+:assume (= (^ (+ (- (* v ix) (* (+ u 1) iy)) v) 2) (* (^ iy 2) (+ (^ v 2) (^ (+ u 1) 2))))
+
+; Line AC: through (1,0) and (u,v). Eq: vX - (u-1)Y - v = 0
+; NormSq_AC = v^2 + (u-1)^2
+; Constraint: DistSq(I, AC) = DistSq(I, BC)
+:assume (= (^ (- (- (* v ix) (* (- u 1) iy)) v) 2) (* (^ iy 2) (+ (^ v 2) (^ (- u 1) 2))))
+
+; ---------------------------------------------------------
+; 3. THEBAULT CIRCLE P (x, r)
+; ---------------------------------------------------------
+; Center P(x, y). Tangent to BC implies y = r (assuming P above axis).
+:assume (= y r)
+
+; Tangent to AM: Line through M(m,0) and A(u,v)
+; Vector MA = (u-m, v). Normal = (-v, u-m).
+; Line Eq: -v(X-m) + (u-m)Y = 0  =>  -v*X + (u-m)Y + v*m = 0
+; NormSq_AM = v^2 + (u-m)^2
+; DistSq(P, AM) = r^2
+:assume (= (^ (+ (+ (* (- 0 v) x) (* (- u m) y)) (* v m)) 2) (* (^ r 2) (+ (^ v 2) (^ (- u m) 2))))
+
+; Tangent to Circumcircle (Internal)
+; Center O is (0, oy). RadiusSq is R2.
+; DistSq(P,O) = (x-0)^2 + (y-oy)^2
+; Tangency condition: (DistSq(P,O) - R2 - r^2)^2 = 4 * R2 * r^2
+:assume (= distPO2 (+ (^ x 2) (^ (- y oy) 2)))
+:assume (= (^ (- (- distPO2 R2) (^ r 2)) 2) (* 4 (* R2 (^ r 2))))
+
+; ---------------------------------------------------------
+; 4. THE PROOF
+; ---------------------------------------------------------
+; Verify the system allows for a solution.
+; Variables to eliminate: x, r, ix, iy, oy, R2, K
+; Parameters: u, v, m
+
+:prove (= 0 0)

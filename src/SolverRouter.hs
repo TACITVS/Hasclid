@@ -87,8 +87,8 @@ data SolverOptions = SolverOptions
 defaultSolverOptions :: SolverOptions
 defaultSolverOptions = SolverOptions
   { intOptions = defaultIntSolveOptions
-  , useOptimizedGroebner = False
-  , selectionStrategyOpt = NormalStrategy
+  , useOptimizedGroebner = True
+  , selectionStrategyOpt = SugarStrategy
   }
 
 -- | Pick the Gröbner routine based on solver options

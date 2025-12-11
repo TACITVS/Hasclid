@@ -11,6 +11,7 @@ import CAD (discriminant, toRecursive)
 import CADLift (cadDecompose, CADCell(..), formatCADCells, evaluateInequalityCAD)
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Wu (wuProve, wuProveWithTrace, formatWuTrace)
+import Data.Bifunctor (first)
 import SolverRouter (autoSolve, autoSolveWithTrace, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions)
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
@@ -74,8 +75,8 @@ data REPLEnv = REPLEnv
 defaultEnv :: REPLEnv
 defaultEnv = REPLEnv
   { envTermOrder = defaultTermOrder
-  , envUseOptimized = False
-  , envSelectionStrategy = NormalStrategy
+  , envUseOptimized = True
+  , envSelectionStrategy = SugarStrategy
   , envSolverOptions = defaultSolverOptions
   }
 
@@ -160,9 +161,44 @@ parseCoord s
       _          -> Var s
 
 stripComment :: String -> String
-stripComment [] = []
-stripComment ('-':'-':_) = []
-stripComment (c:cs) = c : stripComment cs
+stripComment = stripLine . removeBlock
+  where
+    -- Remove #| ... |# (non-nested) block comments, even mid-line
+    removeBlock [] = []
+    removeBlock ('#':'|':rest) = removeBlock (dropBlock rest)
+    removeBlock (c:cs) = c : removeBlock cs
+
+    dropBlock [] = []
+    dropBlock ('|':'#':rest) = rest
+    dropBlock (_:cs) = dropBlock cs
+
+    -- Strip line comments: --, //, #, ; (Common Lisp style)
+    stripLine [] = []
+    stripLine ('-':'-':_) = []
+    stripLine ('/':'/':_) = []
+    stripLine ('#':_) = []
+    stripLine (';':_) = []
+    stripLine (c:cs) = c : stripLine cs
+
+-- Compute parenthesis balance for multi-line inputs
+parenBalance :: String -> Int
+parenBalance = foldl step 0
+  where
+    step n '(' = n + 1
+    step n ')' = n - 1
+    step n _   = n
+
+-- Read additional lines until parentheses are balanced (after stripping comments)
+readMultiline :: String -> IO String
+readMultiline firstLine = go firstLine (balance firstLine)
+  where
+    balance = parenBalance . stripComment
+    go acc b
+      | b <= 0    = pure acc
+      | otherwise = do
+          more <- getLine
+          let acc' = acc ++ "\n" ++ more
+          go acc' (b + balance more)
 
 tryIO :: IO a -> IO (Either IOError a)
 tryIO action = (Right <$> action) `CE.catch` (\e -> return (Left e))
@@ -228,6 +264,18 @@ handleCommand state stateWithHist newHist input = do
                 then "Auto-simplification ON: Expressions will be simplified automatically"
                 else "Auto-simplification OFF: Expressions will be shown in raw form"
       pure (stateWithHist { autoSimplify = newAutoSimplify }, msg)
+
+    (":clear-macros":_) ->
+      pure (stateWithHist { macros = M.empty }, "All macros cleared.")
+
+    (":list-macros":_) ->
+      let ms = macros stateWithHist
+      in if M.null ms
+           then pure (stateWithHist, "No macros defined.")
+           else pure (stateWithHist, unlines ("Defined Macros:" : map formatMacro (M.toList ms)))
+
+    (":macro":_) -> defineMacroCmd stateWithHist (drop 7 input)
+    (":defmacro":_) -> defineMacroCmd stateWithHist (drop 10 input)
 
     (":bruteforce":onOff:_) -> do
       let newFlag = map toLower onOff == "on"
@@ -484,12 +532,17 @@ repl env state = do
       eof <- CE.try getLine :: IO (Either CE.IOException String)
       case eof of
         Left _ -> putStrLn "\n[End of input]"
-        Right input -> do
-          if not isTerminal then putStrLn ("> " ++ input) else return ()
-          if input `elem` ["exit", "quit", ":q"]
+        Right inputLine -> do
+          fullInput <- readMultiline inputLine
+          if not isTerminal then putStrLn ("> " ++ fullInput) else return ()
+          let toks = words fullInput
+              quitCmd = case toks of
+                          (cmd:_) -> cmd `elem` ["exit", "quit", ":q", ":quit"]
+                          _       -> False
+          if quitCmd
             then putStrLn "Goodbye."
             else do
-              result <- tryIO (processLine env state input)
+              result <- tryIO (processLine env state fullInput)
               case result of
                 Left err -> do
                   putStrLn $ "Error: " ++ show err
@@ -515,7 +568,7 @@ processFormulaLine env state line =
   let trimmed = dropWhile (== ' ') line
   in if null trimmed || isCommentLine trimmed
        then return ""
-       else case parseFormulaPrefix trimmed of
+       else case parseFormulaWithMacros (macros state) trimmed of
               Left err -> return $ formatError err
               Right formula -> do
                 let fullContext = theory state ++ lemmas state
@@ -536,7 +589,7 @@ processScriptStreaming env state content = do
                       (c:_) | c /= ':' -> do
                         putStrLn ("> " ++ trimmed)
                         -- Treat as formula line: auto-solve with timeout
-                        case parseFormulaPrefix trimmed of
+                        case parseFormulaWithMacros (macros st) trimmed of
                           Right formula -> do
                             let fullContext = theory st ++ lemmas st
                                 current = solverTimeout st
@@ -554,3 +607,36 @@ processScriptStreaming env state content = do
 isCommentLine :: String -> Bool
 isCommentLine l =
   ("--" `isPrefixOf` l) || ("//" `isPrefixOf` l) || ("#" `isPrefixOf` l) || (";" `isPrefixOf` l)
+
+-- =============================================
+-- Macro Helpers
+-- =============================================
+
+defineMacroCmd :: REPLState -> String -> REPLM (REPLState, String)
+defineMacroCmd st defStr = do
+  let trimmed = dropWhile (== ' ') defStr
+  case parseMacroDef (macros st) trimmed of
+    Left err -> pure (st, err)
+    Right macros' -> pure (st { macros = macros' }, "Macro defined.")
+
+parseMacroDef :: MacroMap -> String -> Either String MacroMap
+parseMacroDef current s =
+  let tokens = tokenizePrefix s
+  in case tokens of
+       [] -> Left "Usage: :macro name (params...) body"
+       (nameTok:rest) -> do
+         (paramsS, rest1) <- first formatError (parseSExpr rest)
+         params <- case paramsS of
+                     List ps -> traverse expectAtom ps
+                     Atom p -> Right [p]
+         (body, rest2) <- first formatError (parseSExpr rest1)
+         if not (null rest2)
+           then Left ("Unexpected tokens after macro body: " ++ unwords rest2)
+           else Right (M.insert nameTok (params, body) current)
+  where
+    expectAtom (Atom a) = Right a
+    expectAtom _ = Left "Parameters must be atoms."
+
+formatMacro :: (String, ([String], SExpr)) -> String
+formatMacro (name, (params, body)) =
+  "  " ++ name ++ " " ++ show params ++ " => " ++ show body
