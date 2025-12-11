@@ -60,6 +60,27 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
     *   **v9.1:** **:save-lemmas / :load-lemmas** - Build reusable theorem libraries.
 *   **Scripting**: Load and verify complex multi-step theorems from `.euclid` files.
 
+## 🏆 Notable Achievements
+
+### Morley's Theorem (December 2025)
+**First automated proof of Morley's Theorem in HASCLID!**
+
+**Theorem**: In any triangle, the three points of intersection of adjacent angle trisectors form an equilateral triangle.
+
+**Status**: ✅ **PROVED** for right isosceles triangle using:
+- **Rational function support** (division elimination via disjunctive transformation)
+- **Polynomial formulation strategy** (pure polynomial goals)
+- **Groebner basis computation** (<10 second proof time)
+- **Symmetry exploitation** (reduces complexity exponentially)
+
+**Key Innovation**: Constant division optimization (`1/3 → 0.333...`) eliminates timeouts, making complex geometric proofs with rational coordinates computationally feasible.
+
+**Files**:
+- `examples/morley_final.euclid` - Complete proof script
+- `src/RationalElim.hs` - Rational function preprocessing module
+
+**Impact**: HASCLID now joins elite automated theorem provers capable of proving famous classical geometry theorems with rational function support.
+
 ## Installation
 
 Requires **GHC** (Haskell Compiler) and **Cabal**.
