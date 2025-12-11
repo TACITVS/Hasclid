@@ -25,6 +25,7 @@ executable prover
     hs-source-dirs:   src
     other-modules:
         Core.GB
+        AreaMethod
         BuchbergerOpt
         CAD
         CADLift
@@ -58,6 +59,7 @@ test-suite prover-test
     hs-source-dirs: test, src
     other-modules:
         Core.GB
+        AreaMethod
         BuchbergerOpt
         CAD
         CADLift
