@@ -15,6 +15,7 @@ data GeoExpr
   | P_Pyth String String String
   | G_Dist2 String String
   | G_Const Rational
+  | G_Param String
   | G_Add GeoExpr GeoExpr
   | G_Sub GeoExpr GeoExpr
   | G_Mul GeoExpr GeoExpr
@@ -26,7 +27,8 @@ data ConstructStep
   | PointInter String String String String String
   | PointMid String String String
   | PointFoot String String String String
-  | PointOnLine String String String Rational
+  | PointOnLine String String String GeoExpr
+  | PointInterAng String String String GeoExpr String String GeoExpr
   deriving (Show, Eq)
 
 type Construction = [ConstructStep]
@@ -64,6 +66,7 @@ simplifyGeo (G_Div a b) =
 simplifyGeo (S_Area a b c) = normalizeArea a b c
 simplifyGeo (P_Pyth a b c) = normalizePyth a b c
 simplifyGeo (G_Dist2 a b) = normalizeDist2 a b
+simplifyGeo (G_Param s) = G_Param s
 simplifyGeo x = x
 
 normalizeArea :: String -> String -> String -> GeoExpr
@@ -90,7 +93,7 @@ normalizeDist2 a b
 -- =============================================
 
 eliminate :: ConstructStep -> GeoExpr -> GeoExpr
-eliminate (PointMid m a b) expr = eliminate (PointOnLine m a b (1%2)) expr
+eliminate (PointMid m a b) expr = eliminate (PointOnLine m a b (G_Const (1%2))) expr
 eliminate step expr = simplifyGeo (elimRec step expr)
 
 elimRec :: ConstructStep -> GeoExpr -> GeoExpr
@@ -99,6 +102,7 @@ elimRec step (G_Sub a b) = G_Sub (elimRec step a) (elimRec step b)
 elimRec step (G_Mul a b) = G_Mul (elimRec step a) (elimRec step b)
 elimRec step (G_Div a b) = G_Div (elimRec step a) (elimRec step b)
 elimRec step (G_Const c) = G_Const c
+elimRec step (G_Param s) = G_Param s
 elimRec step (S_Area a b c) = elimArea step a b c
 elimRec step (P_Pyth a b c) = elimPyth step a b c
 elimRec step (G_Dist2 a b)  = elimDist step a b
@@ -115,26 +119,12 @@ elimArea (PointInter y u v p q) a b c
   | y == b = elimAreaInter y u v p q c a
   | y == c = elimAreaInter y u v p q a b
   | otherwise = S_Area a b c
+elimArea (PointInterAng y u v t1 p q t2) a b c
+  | y == a = elimAreaInterAng y u v t1 p q t2 b c
+  | y == b = elimAreaInterAng y u v t1 p q t2 c a
+  | y == c = elimAreaInterAng y u v t1 p q t2 a b
+  | otherwise = S_Area a b c
 elimArea _ a b c = S_Area a b c
-
--- Area Helpers
-elimAreaOnLine :: String -> String -> String -> Rational -> String -> String -> GeoExpr
-elimAreaOnLine _ u v r a b =
-  let sU = S_Area u a b
-      sV = S_Area v a b
-      term1 = G_Mul (G_Const (1-r)) sU
-      term2 = G_Mul (G_Const r) sV
-  in G_Add term1 term2
-
-elimAreaInter :: String -> String -> String -> String -> String -> String -> String -> GeoExpr
-elimAreaInter _ u v p q a b =
-  let sPQU = S_Area p q u
-      sPQV = S_Area p q v
-      sVAB = S_Area v a b
-      sUAB = S_Area u a b
-      num = G_Sub (G_Mul sPQU sVAB) (G_Mul sPQV sUAB)
-      den = G_Sub sPQU sPQV
-  in G_Div num den
 
 -- Pythagoras Elimination
 elimPyth :: ConstructStep -> String -> String -> String -> GeoExpr
@@ -143,21 +133,22 @@ elimPyth (PointOnLine y u v r) a b c
       let pU = P_Pyth a u c
           pV = P_Pyth a v c
           uv2 = G_Dist2 u v
-          corr = G_Mul (G_Const ((1-r)*r*2)) uv2
-          term1 = G_Mul (G_Const (1-r)) pU
-          term2 = G_Mul (G_Const r) pV
+          coeff = G_Mul (G_Mul (G_Sub (G_Const 1) r) r) (G_Const 2)
+          corr = G_Mul coeff uv2
+          term1 = G_Mul (G_Sub (G_Const 1) r) pU
+          term2 = G_Mul r pV
       in G_Sub (G_Add term1 term2) corr
   | y == a =
       let pU = P_Pyth u b c
           pV = P_Pyth v b c
-          term1 = G_Mul (G_Const (1-r)) pU
-          term2 = G_Mul (G_Const r) pV
+          term1 = G_Mul (G_Sub (G_Const 1) r) pU
+          term2 = G_Mul r pV
       in G_Add term1 term2
   | y == c =
       let pU = P_Pyth a b u
           pV = P_Pyth a b v
-          term1 = G_Mul (G_Const (1-r)) pU
-          term2 = G_Mul (G_Const r) pV
+          term1 = G_Mul (G_Sub (G_Const 1) r) pU
+          term2 = G_Mul r pV
       in G_Add term1 term2
   | otherwise = P_Pyth a b c
 elimPyth _ a b c = P_Pyth a b c
@@ -170,14 +161,41 @@ elimDist (PointOnLine y u v r) a b
   | otherwise = G_Dist2 a b
 elimDist _ a b = G_Dist2 a b
 
-elimDistOnLine :: String -> String -> String -> Rational -> String -> GeoExpr
+-- =============================================
+-- Helpers
+-- =============================================
+
+elimAreaOnLine :: String -> String -> String -> GeoExpr -> String -> String -> GeoExpr
+elimAreaOnLine _ u v r a b =
+  let sU = S_Area u a b
+      sV = S_Area v a b
+      term1 = G_Mul (G_Sub (G_Const 1) r) sU
+      term2 = G_Mul r sV
+  in G_Add term1 term2
+
+elimAreaInter :: String -> String -> String -> String -> String -> String -> String -> GeoExpr
+elimAreaInter _ u v p q a b =
+  let sPQU = S_Area p q u
+      sPQV = S_Area p q v
+      sVAB = S_Area v a b
+      sUAB = S_Area u a b
+      num = G_Sub (G_Mul sPQU sVAB) (G_Mul sPQV sUAB)
+      den = G_Sub sPQU sPQV
+  in G_Div num den
+
+elimAreaInterAng :: String -> String -> String -> GeoExpr -> String -> String -> GeoExpr -> String -> String -> GeoExpr
+elimAreaInterAng _ u v t1 p q t2 a b =
+  G_Const 0 -- Placeholder
+
+elimDistOnLine :: String -> String -> String -> GeoExpr -> String -> GeoExpr
 elimDistOnLine _ u v r b =
   let dU = G_Dist2 u b
       dV = G_Dist2 v b
       dUV = G_Dist2 u v
-      term1 = G_Mul (G_Const (1-r)) dU
-      term2 = G_Mul (G_Const r) dV
-      corr  = G_Mul (G_Const ((1-r)*r)) dUV
+      term1 = G_Mul (G_Sub (G_Const 1) r) dU
+      term2 = G_Mul r dV
+      coeff = G_Mul (G_Sub (G_Const 1) r) r
+      corr  = G_Mul coeff dUV
   in G_Sub (G_Add term1 term2) corr
 
 -- =============================================

@@ -690,10 +690,14 @@ parseConstructionStep s =
        Right (List [Atom p, Atom "free"], _) -> Right (PointFree p)
        Right (List [Atom p, Atom "intersection", Atom a, Atom b, Atom c, Atom d], _) -> Right (PointInter p a b c d)
        Right (List [Atom m, Atom "midpoint", Atom a, Atom b], _) -> Right (PointMid m a b)
+       Right (List [Atom y, Atom "inter_ang", Atom u, Atom v, t1s, Atom p, Atom q, t2s], _) ->
+         case (sexprToGeo t1s, sexprToGeo t2s) of
+           (Right t1, Right t2) -> Right (PointInterAng y u v t1 p q t2)
+           _ -> Left "Invalid tangent expressions"
        Right (List [Atom p, Atom "on-line", Atom a, Atom b, rat], _) -> 
-         case parseRatSExpr rat of
-           Just r -> Right (PointOnLine p a b r)
-           Nothing -> Left "Invalid ratio"
+         case sexprToGeo rat of
+           Right r -> Right (PointOnLine p a b r)
+           Left err -> Left ("Invalid ratio: " ++ err)
        _ -> Left "Invalid construction syntax. Expected S-Expression e.g. (P intersection A B C D)"
 
 parseGeoExpr :: String -> Either String GeoExpr
@@ -704,7 +708,10 @@ parseGeoExpr s =
        Left err -> Left (formatError err)
 
 sexprToGeo :: SExpr -> Either String GeoExpr
-sexprToGeo (Atom s) = Left "Unexpected atom at top level"
+sexprToGeo (Atom s) = 
+  case parseRatSExpr (Atom s) of
+    Just r -> Right (G_Const r)
+    Nothing -> Right (G_Param s)
 sexprToGeo (List [Atom "S", Atom a, Atom b, Atom c]) = Right (S_Area a b c)
 sexprToGeo (List [Atom "P", Atom a, Atom b, Atom c]) = Right (P_Pyth a b c)
 sexprToGeo (List [Atom "dist2", Atom a, Atom b]) = Right (G_Dist2 a b)
