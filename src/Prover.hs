@@ -172,7 +172,7 @@ groebnerFallback customBuchberger maybeCache theory formula =
                  _      -> (polyZero, polyZero)
 
     difference = subPoly pL pR
-    normalForm = reduce difference basis
+    normalForm = reduce compare difference basis  -- Use Lex order for backwards compatibility
     reductionStep = [ReducedToNormalForm difference normalForm]
     allSteps = substSteps ++ constraintSteps ++ basisStep ++ reductionStep
   in case formula of

@@ -17,7 +17,7 @@ prop_toPolyConstAdd a b =
 prop_reduceSelfZero :: Bool
 prop_reduceSelfZero =
   let p = toPoly (Add (Var "x") (Const 1))
-  in reduce p [p] == polyZero
+  in reduce compare p [p] == polyZero  -- Use Lex order
 
 -- Property 3: simple positive polynomial is detected as positive
 prop_pos_isPositive :: Bool

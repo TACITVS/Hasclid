@@ -48,6 +48,7 @@ import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityR
 import SqrtElim (eliminateSqrt)
 import RationalElim (eliminateRational)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
+import TermOrder (TermOrder(..), compareMonomials)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import Data.List (delete)
@@ -93,9 +94,10 @@ defaultSolverOptions = SolverOptions
 -- | Pick the Gröbner routine based on solver options
 selectGroebner :: SolverOptions -> ([Poly] -> [Poly])
 selectGroebner opts =
-  if useOptimizedGroebner opts
-     then buchbergerWithStrategy (selectionStrategyOpt opts)
-     else buchberger
+  let ord = compareMonomials GrevLex  -- Use GrevLex for best performance
+  in if useOptimizedGroebner opts
+       then buchbergerWithStrategy ord (selectionStrategyOpt opts)
+       else buchberger
 
 -- =============================================
 -- Main Automatic Solving Functions

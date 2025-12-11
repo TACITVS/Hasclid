@@ -1,9 +1,10 @@
 module Core.GB
   ( SelectionStrategy(..)
+  , MonomialOrder
   , reduce
   , sPoly
   , buchbergerOptimized
   , buchbergerWithStrategy
   ) where
 
-import BuchbergerOpt (SelectionStrategy(..), reduce, sPoly, buchbergerOptimized, buchbergerWithStrategy)
+import BuchbergerOpt (SelectionStrategy(..), MonomialOrder, reduce, sPoly, buchbergerOptimized, buchbergerWithStrategy)

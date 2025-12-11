@@ -2,7 +2,7 @@
 
 module Expr where
 
-import Data.List (intercalate, sortBy, nub)
+import Data.List (intercalate, sortBy, nub, maximumBy)
 import qualified Data.Map.Strict as M
 import Numeric.Natural (Natural)
 import Data.Ratio ((%), numerator, denominator)
@@ -189,6 +189,13 @@ getLeadingTerm :: Poly -> Maybe (Monomial, Rational)
 getLeadingTerm (Poly m)
   | M.null m = Nothing
   | otherwise = M.lookupMax m
+
+-- | Get leading term using a custom monomial ordering
+-- This allows GrevLex and other orderings to be used instead of the default Lex
+getLeadingTermByOrder :: (Monomial -> Monomial -> Ordering) -> Poly -> Maybe (Monomial, Rational)
+getLeadingTermByOrder cmp (Poly m)
+  | M.null m = Nothing
+  | otherwise = Just $ maximumBy (\(m1, _) (m2, _) -> cmp m1 m2) (M.toList m)
 
 prettyMonomial :: Monomial -> String
 prettyMonomial (Monomial m)

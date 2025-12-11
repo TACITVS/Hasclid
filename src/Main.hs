@@ -15,7 +15,7 @@ import SolverRouter (autoSolve, autoSolveWithTrace, formatAutoSolveResult, isPro
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
-import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder)
+import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder, compareMonomials)
 
 import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice)
 import Control.Monad (foldM)
@@ -112,9 +112,10 @@ currentSolverOptions env st =
 
 chooseBuchberger :: REPLEnv -> REPLState -> ([Poly] -> [Poly])
 chooseBuchberger env st =
-  if useOptimizedBuchberger st || envUseOptimized env
-     then buchbergerWithStrategy (selectionStrategy st)
-     else buchberger
+  let ord = compareMonomials (termOrder st)
+  in if useOptimizedBuchberger st || envUseOptimized env
+       then buchbergerWithStrategy ord (selectionStrategy st)
+       else buchberger
 
 serializeLemma :: Formula -> String
 serializeLemma (Eq l r) = "(= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"

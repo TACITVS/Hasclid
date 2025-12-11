@@ -2,6 +2,7 @@
 
 module BuchbergerOpt
   ( SelectionStrategy(..)
+  , MonomialOrder
   , buchbergerOptimized
   , buchbergerWithStrategy
   , reduce
@@ -13,6 +14,13 @@ import qualified Data.Map.Strict as M
 import Data.List (nub, minimumBy)
 import Data.Ord (comparing)
 import Numeric.Natural
+
+-- =============================================
+-- Term Ordering Type
+-- =============================================
+
+-- | A monomial ordering function (e.g., GrevLex, Lex, etc.)
+type MonomialOrder = Monomial -> Monomial -> Ordering
 
 -- =============================================
 -- Selection Strategies
@@ -42,9 +50,9 @@ data CriticalPair = CriticalPair
 -- | Criterion 1: Coprime leading monomials
 -- If gcd(LM(f), LM(g)) = 1, then S(f,g) reduces to 0 mod basis
 -- Skip this pair!
-criterion1 :: Poly -> Poly -> Bool
-criterion1 f g =
-  case (getLeadingTerm f, getLeadingTerm g) of
+criterion1 :: MonomialOrder -> Poly -> Poly -> Bool
+criterion1 ord f g =
+  case (getLeadingTermByOrder ord f, getLeadingTermByOrder ord g) of
     (Just (ltF, _), Just (ltG, _)) ->
       monomialGCD ltF ltG == monomialOne
     _ -> False
@@ -54,12 +62,12 @@ criterion1 f g =
 --   - LM(h) divides LCM(LM(f), LM(g))
 --   - S(f,h) and S(g,h) have been reduced to 0
 -- Then S(f,g) will also reduce to 0
-criterion2 :: CriticalPair -> [Poly] -> [CriticalPair] -> Bool
-criterion2 pair _ _ =
+criterion2 :: MonomialOrder -> CriticalPair -> [Poly] -> [CriticalPair] -> Bool
+criterion2 ord pair _ _ =
   -- Simplified version: check if LCM equals product (strong sufficient condition)
   case pairPolys pair of
     (f, g) ->
-      case (getLeadingTerm f, getLeadingTerm g) of
+      case (getLeadingTermByOrder ord f, getLeadingTermByOrder ord g) of
         (Just (ltF, _), Just (ltG, _)) ->
           let lcm = pairLCM pair
               product = monomialMul ltF ltG
@@ -84,9 +92,9 @@ monomialGCD (Monomial m1) (Monomial m2) =
 -- =============================================
 
 -- Create a critical pair from two polynomials
-makeCriticalPair :: Poly -> Poly -> Maybe CriticalPair
-makeCriticalPair f g =
-  case (getLeadingTerm f, getLeadingTerm g) of
+makeCriticalPair :: MonomialOrder -> Poly -> Poly -> Maybe CriticalPair
+makeCriticalPair ord f g =
+  case (getLeadingTermByOrder ord f, getLeadingTermByOrder ord g) of
     (Just (ltF, _), Just (ltG, _)) ->
       let lcm = monomialLCM ltF ltG
           deg = monomialDegree lcm
@@ -112,49 +120,49 @@ selectPair strategy pairs =
 -- =============================================
 
 -- | Optimized Buchberger with selection strategy and criteria
-buchbergerWithStrategy :: SelectionStrategy -> [Poly] -> [Poly]
-buchbergerWithStrategy strategy polys =
+buchbergerWithStrategy :: MonomialOrder -> SelectionStrategy -> [Poly] -> [Poly]
+buchbergerWithStrategy ord strategy polys =
   let initial = filter (/= polyZero) polys
-      initialPairs = generatePairs initial
-  in go initial initialPairs []
+      initialPairs = generatePairs ord initial
+  in go ord initial initialPairs []
   where
-    go :: [Poly] -> [CriticalPair] -> [CriticalPair] -> [Poly]
-    go basis [] _ = basis  -- No more pairs, done!
-    go basis pairs processed =
+    go :: MonomialOrder -> [Poly] -> [CriticalPair] -> [CriticalPair] -> [Poly]
+    go _ basis [] _ = basis  -- No more pairs, done!
+    go cmp basis pairs processed =
       case selectPair strategy pairs of
         Nothing -> basis
         Just (pair, remaining) ->
           let (f, g) = pairPolys pair
           in
             -- Apply Buchberger criteria
-            if criterion1 f g || criterion2 pair basis processed
+            if criterion1 cmp f g || criterion2 cmp pair basis processed
             then
               -- Skip this pair (criteria say it's useless)
-              go basis remaining (pair : processed)
+              go cmp basis remaining (pair : processed)
             else
               -- Compute S-polynomial and reduce
-              let s = sPoly f g
-                  r = reduce s basis
+              let s = sPoly cmp f g
+                  r = reduce cmp s basis
               in
                 if r == polyZero
                 then
                   -- Remainder is zero, continue
-                  go basis remaining (pair : processed)
+                  go cmp basis remaining (pair : processed)
                 else
                   -- Non-zero remainder, add to basis and generate new pairs
                   let newBasis = nub (r : basis)
                       newPairs = [(r, b) | b <- basis, b /= r]
-                      newCriticalPairs = concatMap (\(a,b) -> maybe [] (:[]) (makeCriticalPair a b)) newPairs
-                  in go newBasis (remaining ++ newCriticalPairs) (pair : processed)
+                      newCriticalPairs = concatMap (\(a,b) -> maybe [] (:[]) (makeCriticalPair cmp a b)) newPairs
+                  in go cmp newBasis (remaining ++ newCriticalPairs) (pair : processed)
 
-    generatePairs :: [Poly] -> [CriticalPair]
-    generatePairs bs =
-      concatMap (\(f, g) -> maybe [] (:[]) (makeCriticalPair f g))
+    generatePairs :: MonomialOrder -> [Poly] -> [CriticalPair]
+    generatePairs cmp bs =
+      concatMap (\(f, g) -> maybe [] (:[]) (makeCriticalPair cmp f g))
                 [(f, g) | f <- bs, g <- bs, f /= g]
 
--- | Optimized Buchberger with default strategy (Normal)
+-- | Optimized Buchberger with default strategy (Normal) and Lex order (for backwards compatibility)
 buchbergerOptimized :: [Poly] -> [Poly]
-buchbergerOptimized = buchbergerWithStrategy NormalStrategy
+buchbergerOptimized = buchbergerWithStrategy compare NormalStrategy
 
 -- Note: Helper functions (subPoly, reduce, sPoly) are imported from Prover.hs
 
@@ -163,30 +171,30 @@ buchbergerOptimized = buchbergerWithStrategy NormalStrategy
 -- =============================================
 
 -- 1. Multivariate Polynomial Reduction (Division)
-reduce :: Poly -> [Poly] -> Poly
-reduce p fs
+reduce :: MonomialOrder -> Poly -> [Poly] -> Poly
+reduce ord p fs
   | p == polyZero = polyZero
-  | otherwise = case findDivisor p fs of
+  | otherwise = case findDivisor ord p fs of
       Just (f, mQuot, cQuot) ->
           let subTerm = polyMul (polyMul f (Poly (M.singleton mQuot 1))) (polyFromConst cQuot)
-          in reduce (polySub p subTerm) fs
+          in reduce ord (polySub p subTerm) fs
       Nothing ->
-          case getLeadingTerm p of
+          case getLeadingTermByOrder ord p of
             Just (ltM, ltC) ->
               let rest = polySub p (Poly (M.singleton ltM ltC))
-                  reducedRest = reduce rest fs
+                  reducedRest = reduce ord rest fs
               in polyAdd (Poly (M.singleton ltM ltC)) reducedRest
             Nothing -> p
 
   where
-    findDivisor :: Poly -> [Poly] -> Maybe (Poly, Monomial, Rational)
-    findDivisor poly divisors =
-      case getLeadingTerm poly of
+    findDivisor :: MonomialOrder -> Poly -> [Poly] -> Maybe (Poly, Monomial, Rational)
+    findDivisor cmp poly divisors =
+      case getLeadingTermByOrder cmp poly of
         Nothing -> Nothing
         Just (ltP, cP) ->
             let candidates = [ (f, mDiv, cP / cF)
                              | f <- divisors
-                             , Just (ltF, cF) <- [getLeadingTerm f]
+                             , Just (ltF, cF) <- [getLeadingTermByOrder cmp f]
                              , Just mDiv <- [monomialDiv ltP ltF]
                              ]
             in case candidates of
@@ -194,9 +202,9 @@ reduce p fs
                  []    -> Nothing
 
 -- 2. S-Polynomial
-sPoly :: Poly -> Poly -> Poly
-sPoly f g =
-  case (getLeadingTerm f, getLeadingTerm g) of
+sPoly :: MonomialOrder -> Poly -> Poly -> Poly
+sPoly ord f g =
+  case (getLeadingTermByOrder ord f, getLeadingTermByOrder ord g) of
     (Just (ltF, cF), Just (ltG, cG)) ->
       let lcmM = monomialLCM ltF ltG
       in case (monomialDiv lcmM ltF, monomialDiv lcmM ltG) of

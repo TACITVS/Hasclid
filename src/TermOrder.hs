@@ -3,6 +3,7 @@
 module TermOrder
   ( TermOrder(..)
   , compareMonomialsWithOrder
+  , compareMonomials
   , defaultTermOrder
   , parseTermOrder
   , showTermOrder
@@ -12,6 +13,7 @@ import qualified Data.Map.Strict as M
 import Numeric.Natural
 import Data.List (sortBy)
 import GHC.Generics (Generic)
+import Expr (Monomial(..))
 
 -- =============================================
 -- Term Ordering Types
@@ -38,6 +40,11 @@ compareMonomialsWithOrder :: TermOrder -> M.Map String Natural -> M.Map String N
 compareMonomialsWithOrder Lex     = compareLex
 compareMonomialsWithOrder GrLex   = compareGrLex
 compareMonomialsWithOrder GrevLex = compareGrevLex
+
+-- | Compare two Monomial values using the specified term ordering
+-- This is a wrapper around compareMonomialsWithOrder for the Monomial newtype
+compareMonomials :: TermOrder -> Monomial -> Monomial -> Ordering
+compareMonomials ord (Monomial m1) (Monomial m2) = compareMonomialsWithOrder ord m1 m2
 
 -- =============================================
 -- Lexicographic Ordering (Lex)
