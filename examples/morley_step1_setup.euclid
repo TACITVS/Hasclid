@@ -1,0 +1,26 @@
+-- ============================================================================
+-- MORLEY STEP 1: Setup & Constants
+-- ============================================================================
+
+:verbose
+
+-- 1. Define Constants
+-- s = sqrt(3)
+:assume (= (^ s 2) 3)
+
+-- 2. Define Angles (Parameters)
+-- u = tan(alpha), v = tan(beta), w = tan(gamma)
+-- Constraint: alpha + beta + gamma = 60 => tan(sum) = sqrt(3)
+-- Identity: tan(a+b+c) = (sum t - prod t) / (1 - sum t_i t_j)
+:assume (= (- (+ u v w) (* u v w)) (* s (- 1 (+ (* u v) (* v w) (* w u)))))
+
+-- 3. Fix the Central Equilateral Triangle PQR
+-- Q at origin, R at (1,0). P is the top vertex.
+:point Q 0 0
+:point R 1 0
+:point P 1/2 (/ s 2)
+
+-- Lemma 1: Verify PQR is equilateral (Simple sanity check for the engine)
+:lemma (= (dist2 Q R) 1)
+:lemma (= (dist2 Q P) 1)
+:lemma (= (dist2 R P) 1)
