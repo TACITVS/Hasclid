@@ -385,7 +385,7 @@ formatBranch b = unlines $
   ] ++ 
   [ "Pseudo-Division:"
   ] ++ 
-  [ "  " ++ desc ++ "\n    → " ++ prettyPoly poly 
+  [ "  " ++ desc ++ "\n    -> " ++ prettyPoly poly 
   | (desc, poly) <- reductionSteps b 
   ] ++ 
   [ "Remainder: " ++ prettyPoly (finalRemainder b)
