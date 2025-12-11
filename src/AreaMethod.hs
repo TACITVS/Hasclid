@@ -185,7 +185,31 @@ elimAreaInter _ u v p q a b =
 
 elimAreaInterAng :: String -> String -> String -> GeoExpr -> String -> String -> GeoExpr -> String -> String -> GeoExpr
 elimAreaInterAng _ u v t1 p q t2 a b =
-  G_Const 0 -- Placeholder
+  let
+    -- f1(Z) = S_VUZ - (t1/4) * P_VUZ  (Line through U)
+    -- f2(Z) = S_QPZ - (t2/4) * P_QPZ  (Line through P)
+    k1 = G_Div t1 (G_Const 4)
+    k2 = G_Div t2 (G_Const 4)
+    
+    evalF1 z = G_Sub (S_Area v u z) (G_Mul k1 (P_Pyth v u z))
+    evalF2 z = G_Sub (S_Area q p z) (G_Mul k2 (P_Pyth q p z))
+    
+    f1A = evalF1 a
+    f1B = evalF1 b
+    f2A = evalF2 a
+    f2B = evalF2 b
+    f2U = evalF2 u -- f1(U) is 0 by definition
+    
+    dAB = G_Sub (G_Mul f1A f2B) (G_Mul f1B f2A)
+    
+    -- Formula derived from linear interpolation:
+    -- S_ABY = S_ABU * D_AB / ( (f1(B)-f1(A))*f2(U) + D_AB )
+    
+    term1 = G_Mul (G_Sub f1B f1A) f2U
+    den = G_Add term1 dAB
+    num = G_Mul (S_Area a b u) dAB
+  in
+    G_Div num den
 
 elimDistOnLine :: String -> String -> String -> GeoExpr -> String -> GeoExpr
 elimDistOnLine _ u v r b =
