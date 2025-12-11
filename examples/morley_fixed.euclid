@@ -1,0 +1,31 @@
+-- Morley's Theorem for Right Isosceles Triangle
+-- Vertices: A(0,0), B(1,0), C(0,1)
+
+:set-timeout 120
+:verbose
+
+-- Define sqrt(3) algebraically
+:assume (= (^ s3 2) 3)
+:assume (> s3 0)
+
+-- Coordinates derived manually (Implicit definitions to avoid division):
+-- P (closest to AB): x = (3-s3)/4, y = (s3-1)/4
+:assume (= (* 4 xP) (- 3 s3))
+:assume (= (* 4 yP) (- s3 1))
+
+-- R (closest to AC): x = (s3-1)/4, y = (3-s3)/4
+:assume (= (* 4 xR) (- s3 1))
+:assume (= (* 4 yR) (- 3 s3))
+
+-- Q (closest to BC): x = (s3-1)/2, y = (s3-1)/2
+:assume (= (* 2 xQ) (- s3 1))
+:assume (= (* 2 yQ) (- s3 1))
+
+-- Squared Distances
+:assume (= dPQ2 (+ (^ (- xQ xP) 2) (^ (- yQ yP) 2)))
+:assume (= dQR2 (+ (^ (- xR xQ) 2) (^ (- yR yQ) 2)))
+:assume (= dRP2 (+ (^ (- xP xR) 2) (^ (- yP yR) 2)))
+
+-- Prove Equilateral
+:prove (= dPQ2 dQR2)
+:prove (= dQR2 dRP2)

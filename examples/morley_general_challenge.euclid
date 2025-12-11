@@ -1,0 +1,53 @@
+-- Morley's Theorem - General Case (Reverse Construction)
+-- Strategy: Start with Equilateral Triangle PQR, construct A and B, 
+-- verify AB makes the correct angle.
+--
+-- Vertices of Equilateral Triangle:
+-- Q = (0, 0)
+-- R = (1, 0)
+-- P = (1/2, s/2)   where s = sqrt(3)
+--
+-- Variables: u=tan(a), v=tan(b), w=tan(c)
+-- Constraint: a+b+c = 60 degrees.
+
+:set-timeout 60
+:verbose
+:optimize on
+:set-strategy normal
+
+-- 1. Constants
+:assume (= (^ s 2) 3)
+
+-- Constraint: tan(a+b+c) = tan(60) = s
+-- Formula: (u+v+w - uvw) / (1 - (uv+vw+wu)) = s
+-- Cross-multiplied:
+:assume (= (- (+ (+ u v) w) (* (* u v) w)) (* s (- 1 (+ (+ (* u v) (* v w)) (* w u)))))
+
+-- 2. Define Point A (Intersection of QA and RA)
+-- Line QA: slope tan(60+b) = (s+v)/(1-sv)
+-- Passes through Q(0,0): yA = xA * slope
+:assume (= (* yA (- 1 (* s v))) (* xA (+ s v)))
+
+-- Line RA: slope tan(120-c) = (tan(120)-w)/(1+tan(120)w) = (-s-w)/(1-sw)
+-- Passes through R(1,0): yA = (xA-1) * slope
+:assume (= (* yA (- 1 (* s w))) (* (- xA 1) (- (* -1 s) w)))
+
+
+-- 3. Define Point B (Intersection of RB and PB)
+-- Line RB: slope tan(180+a) = u
+-- Passes through R(1,0): yB = (xB-1) * u
+:assume (= yB (* u (- xB 1)))
+
+-- Line PB: slope tan(240-c) = (s-w)/(1+sw) -- CHECK THIS
+-- tan(240) = tan(60) = s (Quadrant 3, positive tan).
+-- Wait. 240 deg is Q3. tan(240) = s.
+-- tan(240-c) = (s - w) / (1 + sw). Correct.
+-- Passes through P(1/2, s/2): (yB - s/2) = slope * (xB - 1/2)
+-- 2yB - s = slope * (2xB - 1)
+:assume (= (* (- (* 2 yB) s) (+ 1 (* s w))) (* (- (* 2 xB) 1) (- s w)))
+
+
+-- 4. Goal: Prove slope of AB is tan(a+b)
+-- tan(a+b) = (u+v)/(1-uv)
+-- (yB - yA) / (xB - xA) = (u+v) / (1-uv)
+:wu (= (* (- yB yA) (- 1 (* u v))) (* (- xB xA) (+ u v)))

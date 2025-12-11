@@ -623,13 +623,33 @@ parseMacroDef :: MacroMap -> String -> Either String MacroMap
 parseMacroDef current s =
   let tokens = tokenizePrefix s
   in case tokens of
-       [] -> Left "Usage: :macro name (params...) body"
+       [] -> Left "Usage: :macro name [params...] = body"
        (nameTok:rest) -> do
-         (paramsS, rest1) <- first formatError (parseSExpr rest)
-         params <- case paramsS of
-                     List ps -> traverse expectAtom ps
-                     Atom p -> Right [p]
-         (body, rest2) <- first formatError (parseSExpr rest1)
+         let (beforeEq, afterEq) = break (== "=") rest
+         
+         if null afterEq
+           then Left "Expected '=' in macro definition. Usage: :macro name [params...] = body"
+           else return ()
+           
+         let paramTokens = beforeEq
+         let bodyTokens = drop 1 afterEq
+         
+         params <- if not (null paramTokens) && head paramTokens == "("
+                   then do
+                     (sexpr, leftovers) <- first formatError (parseSExpr paramTokens)
+                     if not (null leftovers)
+                       then Left "Invalid parameter list (trailing tokens)"
+                       else case sexpr of
+                              List atoms -> traverse expectAtom atoms
+                              _ -> Left "Parameters must be a list of atoms"
+                   else return paramTokens
+         
+         -- Basic validation
+         if any (\p -> p == "(" || p == ")") params
+           then Left "Invalid parameter names"
+           else return ()
+
+         (body, rest2) <- first formatError (parseSExpr bodyTokens)
          if not (null rest2)
            then Left ("Unexpected tokens after macro body: " ++ unwords rest2)
            else Right (M.insert nameTok (params, body) current)

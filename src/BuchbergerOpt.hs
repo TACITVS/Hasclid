@@ -74,18 +74,7 @@ criterion2 ord pair _ _ =
           in lcm == product
         _ -> False
 
--- =============================================
--- GCD for Monomials (LCM and Mul are in Expr)
--- =============================================
 
-monomialGCD :: Monomial -> Monomial -> Monomial
-monomialGCD (Monomial m1) (Monomial m2) =
-  let allVars = M.keys m1 ++ M.keys m2
-      gcdMap = M.fromList [ (v, min (M.findWithDefault 0 v m1) (M.findWithDefault 0 v m2))
-                          | v <- allVars ]
-      -- Remove zero exponents
-      nonZeroMap = M.filter (> 0) gcdMap
-  in Monomial nonZeroMap
 
 -- =============================================
 -- Critical Pair Creation and Selection

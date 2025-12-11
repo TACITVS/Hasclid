@@ -4,6 +4,7 @@ module Expr where
 
 import Data.List (intercalate, sortBy, nub, maximumBy)
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 import Numeric.Natural (Natural)
 import Data.Ratio ((%), numerator, denominator)
 
@@ -838,3 +839,23 @@ evaluatePoly subM (Poly m) =
 
 toPolySub :: M.Map String Poly -> Expr -> Poly
 toPolySub subM expr = evaluatePoly subM (toPoly expr)
+
+-- =============================================
+-- Shared Polynomial Utilities
+-- =============================================
+
+isConstPoly :: Poly -> Bool
+isConstPoly p = p == polyZero || S.null (getVars p)
+
+getVars :: Poly -> S.Set String
+getVars (Poly m) =
+  S.fromList [ v | (Monomial mono, _) <- M.toList m, (v, _) <- M.toList mono ]
+
+monomialGCD :: Monomial -> Monomial -> Monomial
+monomialGCD (Monomial m1) (Monomial m2) =
+  Monomial $ M.intersectionWith min m1 m2
+
+getMainVar :: Poly -> String
+getMainVar p =
+  let vars = S.toList (getVars p)
+  in if null vars then "" else maximum vars

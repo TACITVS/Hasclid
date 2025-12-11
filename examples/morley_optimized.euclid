@@ -1,0 +1,27 @@
+-- Morley's Theorem - Optimized Algebraic Proof (Right Isosceles)
+-- We prove the algebraic identity required for the geometric theorem.
+
+:set-timeout 60
+:verbose
+:optimize on
+:set-strategy sugar
+
+-- Constants
+:assume (= (^ s3 2) 3)
+:assume (= (+ (- (^ u 2) (* 4 u)) 1) 0)
+
+-- Definition of yR derived from intersection: yR * (1 + u*s3) = u
+:assume (= (* yR (+ 1 (* u s3))) u)
+
+-- 2*xP = s3-1
+:assume (= (* 2 xP) (- s3 1))
+
+-- Terms for distances
+-- 4 * dQR^2 = 4 * 2 * yR^2 * (s3-1)^2 = 8 * yR^2 * (s3-1)^2
+:assume (= distQR2_scaled (* 8 (* (^ yR 2) (^ (- s3 1) 2))))
+
+-- 4 * dPQ^2 = (2*yR - 2*xP)^2 + (2*s3*yR - 2*xP)^2
+:assume (= distPQ2_scaled (+ (^ (- (* 2 yR) (* 2 xP)) 2) (^ (- (* 2 s3 yR) (* 2 xP)) 2)))
+
+-- Goal: Prove equality
+:prove (= distQR2_scaled distPQ2_scaled)
