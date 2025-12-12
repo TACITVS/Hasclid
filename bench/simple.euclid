@@ -1,3 +1,0 @@
-:assume (= x 1)
-:assume (= y (+ x 1))
-:prove (= y 2)

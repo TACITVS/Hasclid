@@ -1,0 +1,15 @@
+-- Erdős-Mordell Lemma (Geometric Form)
+-- Proving: a * RA >= c * db + b * dc
+-- Scaled & Squared: a^2 b^2 c^2 RA^2 >= (c^2 * 2AreaPAC + b^2 * 2AreaPAB)^2
+
+:assume (= a2 (dist2 B C))
+:assume (= b2 (dist2 A C))
+:assume (= c2 (dist2 A B))
+:assume (= RA2 (dist2 P A))
+
+-- Signed 2*Area (Shoelace formula)
+:assume (= TwAreaPAC (+ (* xP (- yA yC)) (+ (* xA (- yC yP)) (* xC (- yP yA)))))
+:assume (= TwAreaPAB (+ (* xP (- yA yB)) (+ (* xA (- yB yP)) (* xB (- yP yA)))))
+
+-- Goal
+:prove (>= (* a2 (* b2 (* c2 RA2))) (^ (+ (* c2 TwAreaPAC) (* b2 TwAreaPAB)) 2))

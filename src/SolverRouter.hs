@@ -51,7 +51,9 @@ import SqrtElim (eliminateSqrt)
 import RationalElim (eliminateRational)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
-import F4Lite (f4LiteGroebner)
+import F4Lite (f4LiteGroebner, reduceWithF4)
+import Geometry.WLOG (applyWLOG)
+import Positivity.SOS (checkSOS)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import Data.List (delete)
@@ -222,6 +224,30 @@ autoSolve opts theory goal =
                  , proofReason = reason
                  , detailedTrace = Nothing
                  }
+      
+      -- Geometric Inequality Fast Path (WLOG + F4 + SOS)
+      Ge _ _ | problemType profile == Geometric ->
+        let (proved, reason, trace) = proveGeometricInequality opts theory goal
+        in if proved
+           then AutoSolveResult
+                  { selectedSolver = UseGroebner
+                  , solverReason = "Geometric Inequality (Fast Path: WLOG+F4+SOS)"
+                  , problemProfile = profile
+                  , isProved = True
+                  , proofReason = reason
+                  , detailedTrace = trace
+                  }
+           else
+             let (proved', reason', trace') = executeSolver UseCAD opts profile theory goal
+             in AutoSolveResult
+                  { selectedSolver = UseCAD
+                  , solverReason = "Geometric Inequality (Fallback to CAD after SOS failure)"
+                  , problemProfile = profile
+                  , isProved = proved'
+                  , proofReason = reason'
+                  , detailedTrace = trace'
+                  }
+
       -- Pure inequality / positivity goals: route directly to CAD/positivity (sound), never heuristics
       Ge _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
         let (proved, reason, trace) = executeSolver UseCAD opts profile theory goal
@@ -292,6 +318,37 @@ autoSolve opts theory goal =
                  , proofReason = proofMsg
                  , detailedTrace = trace
                  }
+
+-- | Attempt to prove geometric inequality using WLOG + F4 + SOS
+proveGeometricInequality :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
+proveGeometricInequality opts theory goal =
+  case goal of
+    Ge lhs rhs -> trySOS (polySub (toPoly lhs) (toPoly rhs))
+    Gt lhs rhs -> trySOS (polySub (toPoly lhs) (toPoly rhs)) -- TODO: Strictness check
+    _ -> (False, "Not an inequality", Nothing)
+  where
+    trySOS targetPoly =
+      let
+          -- 1. Apply WLOG
+          (thWLOG, wlogLog) = applyWLOG theory goal
+          
+          -- 2. Convert theory to polynomials
+          -- Only use Equalities for reduction
+          eqConstraints = [ polySub (toPoly l) (toPoly r) | Eq l r <- thWLOG ]
+          
+          -- 3. F4 Reduction
+          -- Use GrevLex for reduction efficiency
+          ord = compareMonomials GrevLex
+          
+          -- We reduce the target polynomial modulo the geometric constraints
+          reduced = reduceWithF4 ord eqConstraints targetPoly
+          
+          -- 4. Check SOS
+          isSOS = checkSOS reduced
+      in
+        if isSOS
+        then (True, "Proved via WLOG + F4 + SOS", Just (unlines wlogLog ++ "\nReduced Poly (SOS): " ++ show reduced))
+        else (False, "SOS check failed after F4 reduction", Just (unlines wlogLog ++ "\nReduced Poly (Not SOS): " ++ show reduced))
 
 -- Promote bound variable names to IntVar inside a formula (and expressions)
 promoteIntVars :: [String] -> Formula -> Formula

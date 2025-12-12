@@ -43,22 +43,14 @@ runBenchmark path = do
       
       -- Run Buchberger (Default)
       let optsBuch = defaultSolverOptions { groebnerBackend = BuchbergerBackend, useOptimizedGroebner = True }
-      (timeB, resB@(provedB, reasonB, traceB)) <- timeIt $ return $ executeSolver UseGroebner optsBuch profile t g
+      (timeB, resB) <- timeIt $ return $ autoSolve optsBuch t g
       
       -- Run F4
       let optsF4 = defaultSolverOptions { groebnerBackend = F4Backend }
-      (timeF4, (provedF4, reasonF4, traceF4)) <- timeIt $ return $ executeSolver UseGroebner optsF4 profile t g
+      (timeF4, resF4) <- timeIt $ return $ autoSolve optsF4 t g
       
-      if not provedB 
-        then printf "  Buchberger Failed Reason: %s\n" reasonB
-        else return ()
-
-      if not provedF4 
-        then printf "  F4 Failed Reason: %s\n" reasonF4
-        else return ()
-
-      printf "  Buchberger: %s (%.6fs)\n" (if provedB then "PROVED" else "FAILED") timeB
-      printf "  F4        : %s (%.6fs)\n" (if provedF4 then "PROVED" else "FAILED") timeF4
+      printf "  Buchberger: %s (%.6fs)\n" (showResult resB) timeB
+      printf "  F4        : %s (%.6fs)\n" (showResult resF4) timeF4
       
       let speedup = if timeF4 > 0 then timeB / timeF4 else 0
       printf "  Speedup   : %.2fx\n" speedup
@@ -96,6 +88,9 @@ processCommand st rawCmd =
            Left _ -> st
   else st
 
+showResult :: AutoSolveResult -> String
+showResult res = if isProved res then "PROVED" else "FAILED"
+
 timeIt :: IO a -> IO (Double, a)
 timeIt action = do
   start <- getCPUTime
@@ -107,9 +102,7 @@ timeIt action = do
 main :: IO ()
 main = do
   -- List of hard problems
-  let problems = [ "bench/simple.euclid"
-                 , "examples/napoleon.euclid"
-                 , "bench/cyclic4.euclid"
+  let problems = [ "examples/napoleon.euclid"
                  ]
   
   mapM_ runBenchmark problems

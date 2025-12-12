@@ -22,10 +22,11 @@ module F4Lite
   , rowEchelonReduce
   , rowsToPolys
   , f4BatchReduce
+  , reduceWithF4
   ) where
 
 import Expr (Poly(..), Monomial(..), monomialLCM, monomialMul, monomialDiv, getLeadingTermByOrder)
-import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy, sPoly)
+import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..), sPoly, reduce)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List (sortBy, foldl')
@@ -352,3 +353,10 @@ interreduce polys =
       withLT = mapMaybe (\p -> (\(m,_) -> (m,p)) <$> getLeadingTermByOrder ord p) polys
       unique = filter (\(lt,_)-> not (any (\(lt',_) -> lt' /= lt && monomialDiv lt lt' /= Nothing) withLT)) withLT
   in map snd unique
+
+-- | Compute the Groebner Basis using F4 and then reduce a target polynomial.
+--   Useful for simplifying inequality expressions modulo equality constraints.
+reduceWithF4 :: (Monomial -> Monomial -> Ordering) -> [Poly] -> Poly -> Poly
+reduceWithF4 ord theoryPolys target =
+  let basis = f4LiteGroebner ord NormalStrategy True theoryPolys
+  in reduce ord target basis
