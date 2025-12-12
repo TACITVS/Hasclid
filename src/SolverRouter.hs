@@ -323,18 +323,32 @@ autoSolve opts theory goal =
 proveGeometricInequality :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
 proveGeometricInequality opts theory goal =
   case goal of
-    Ge lhs rhs -> trySOS (polySub (toPoly lhs) (toPoly rhs))
-    Gt lhs rhs -> trySOS (polySub (toPoly lhs) (toPoly rhs)) -- TODO: Strictness check
+    Ge lhs rhs -> trySOS (Sub lhs rhs)
+    Gt lhs rhs -> trySOS (Sub lhs rhs) -- TODO: Strictness check
     _ -> (False, "Not an inequality", Nothing)
   where
-    trySOS targetPoly =
+    trySOS targetExpr =
       let
           -- 1. Apply WLOG
           (thWLOG, wlogLog) = applyWLOG theory goal
           
-          -- 2. Convert theory to polynomials
-          -- Only use Equalities for reduction
-          eqConstraints = [ polySub (toPoly l) (toPoly r) | Eq l r <- thWLOG ]
+          -- 2. Substitution (Pre-processing)
+          -- Identify definitions: v = expr
+          subMap = buildSubMap thWLOG
+          
+          isDefinition (Eq (Var _) _) = True
+          isDefinition _ = False
+          
+          -- Apply substitution to remaining constraints
+          -- We filter out definitions because they are inlined
+          eqConstraints = 
+            [ toPolySub subMap (Sub l r) 
+            | eq@(Eq l r) <- thWLOG 
+            , not (isDefinition eq)
+            ]
+          
+          -- Apply to target
+          targetPoly = toPolySub subMap targetExpr
           
           -- 3. F4 Reduction
           -- Use GrevLex for reduction efficiency
@@ -347,7 +361,7 @@ proveGeometricInequality opts theory goal =
           isSOS = checkSOS reduced
       in
         if isSOS
-        then (True, "Proved via WLOG + F4 + SOS", Just (unlines wlogLog ++ "\nReduced Poly (SOS): " ++ show reduced))
+        then (True, "Proved via WLOG + Substitution + F4 + SOS", Just (unlines wlogLog ++ "\nReduced Poly (SOS): " ++ show reduced))
         else (False, "SOS check failed after F4 reduction", Just (unlines wlogLog ++ "\nReduced Poly (Not SOS): " ++ show reduced))
 
 -- Promote bound variable names to IntVar inside a formula (and expressions)
