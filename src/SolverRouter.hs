@@ -21,6 +21,7 @@ module SolverRouter
   ( -- * Automatic Solver Selection
     autoSolve
   , autoSolveWithTrace
+  , executeSolver
 
     -- * Solver Selection Logic
   , SolverChoice(..)
@@ -32,6 +33,7 @@ module SolverRouter
   , formatAutoSolveResult
   , SolverOptions(..)
   , defaultSolverOptions
+  , GroebnerBackend(..)
   , intSolve
   , intSat
   , proveExistentialConstructive
@@ -44,11 +46,12 @@ import Wu (wuProve, wuProveWithTrace, formatWuTrace, proveExistentialWu)
 import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive)
 import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
 import CADLift (proveFormulaCAD)
-import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..))
+import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..), Confidence(..))
 import SqrtElim (eliminateSqrt)
 import RationalElim (eliminateRational)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
+import F4Lite (f4LiteGroebner)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import Data.List (delete)
@@ -82,22 +85,47 @@ data SolverOptions = SolverOptions
   { intOptions :: IntSolveOptions
   , useOptimizedGroebner :: Bool
   , selectionStrategyOpt :: SelectionStrategy
+  , groebnerBackend :: GroebnerBackend
+  , f4UseBatch :: Bool
   } deriving (Show, Eq)
+
+data GroebnerBackend = BuchbergerBackend | F4Backend deriving (Show, Eq)
 
 defaultSolverOptions :: SolverOptions
 defaultSolverOptions = SolverOptions
   { intOptions = defaultIntSolveOptions
   , useOptimizedGroebner = True
   , selectionStrategyOpt = SugarStrategy
+  , groebnerBackend = BuchbergerBackend
+  , f4UseBatch = True
   }
+
+-- | Optimize solver options based on problem profile
+--   Switch to F4 for complex problems where batch reduction pays off.
+optimizeGroebnerOptions :: ProblemProfile -> SolverOptions -> SolverOptions
+optimizeGroebnerOptions profile opts =
+  -- Heuristic for F4:
+  -- 1. High number of constraints (>= 5): Batch reduction is effective.
+  -- 2. Geometric problems with many points (>= 5): Likely generates many polynomials.
+  -- 3. High degree (>= 4): Reductions are expensive, matrix ops might vectorize better (conceptually).
+  let useF4 = numConstraints profile >= 5 ||
+              (problemType profile == Geometric && numPoints (geometricFeatures profile) >= 5) ||
+              maxDegree profile >= 4
+  in if useF4
+     then opts { groebnerBackend = F4Backend }
+     else opts
 
 -- | Pick the Gröbner routine based on solver options
 selectGroebner :: SolverOptions -> ([Poly] -> [Poly])
 selectGroebner opts =
   let ord = compareMonomials GrevLex  -- Use GrevLex for best performance
-  in if useOptimizedGroebner opts
-       then buchbergerWithStrategy ord (selectionStrategyOpt opts)
-       else buchberger
+  in case groebnerBackend opts of
+       F4Backend ->
+         f4LiteGroebner ord (selectionStrategyOpt opts) (f4UseBatch opts)
+       BuchbergerBackend ->
+         if useOptimizedGroebner opts
+           then buchbergerWithStrategy ord (selectionStrategyOpt opts)
+           else buchberger
 
 -- =============================================
 -- Main Automatic Solving Functions
@@ -194,8 +222,29 @@ autoSolve opts theory goal =
                  , proofReason = reason
                  , detailedTrace = Nothing
                  }
+      -- Pure inequality / positivity goals: route directly to CAD/positivity (sound), never heuristics
+      Ge _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
+        let (proved, reason, trace) = executeSolver UseCAD opts profile theory goal
+        in AutoSolveResult
+             { selectedSolver = UseCAD
+             , solverReason = "Inequality/positivity goal routed to CAD (sound positivity path)"
+             , problemProfile = profile
+             , isProved = proved
+             , proofReason = reason
+             , detailedTrace = trace
+             }
+      Gt _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
+        let (proved, reason, trace) = executeSolver UseCAD opts profile theory goal
+        in AutoSolveResult
+             { selectedSolver = UseCAD
+             , solverReason = "Strict inequality goal routed to CAD (sound positivity path)"
+             , problemProfile = profile
+             , isProved = proved
+             , proofReason = reason
+             , detailedTrace = trace
+             }
       _ | containsQuantifier goal || any containsQuantifier theory ->
-            let (proved, reason, trace) = executeSolver UseCAD opts theory goal
+            let (proved, reason, trace) = executeSolver UseCAD opts profile theory goal
             in AutoSolveResult
               { selectedSolver = UseCAD
               , solverReason = "Quantified formula routed to CAD (Full QE support)"
@@ -234,7 +283,7 @@ autoSolve opts theory goal =
             let
               solver = selectAlgebraicSolver profile goal
               solverReason' = "Geometric propagation insufficient. Fallback to PHASE 2: " ++ explainSolverChoice solver profile
-              (proved, proofMsg, trace) = executeSolver solver opts theory goal
+              (proved, proofMsg, trace) = executeSolver solver opts profile theory goal
             in AutoSolveResult
                  { selectedSolver = solver
                  , solverReason = solverReason'
@@ -429,88 +478,80 @@ maybeEvalNumericAngleEquality theory l r =
 
 -- | Execute the selected solver
 -- Returns: (is_proved, reason, optional_trace)
-executeSolver :: SolverChoice -> SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
-executeSolver solver opts theory goal =
+executeSolver :: SolverChoice -> SolverOptions -> ProblemProfile -> Theory -> Formula -> (Bool, String, Maybe String)
+executeSolver solver opts profile theory goal =
   let hasSqrt = containsSqrtFormula goal || any containsSqrtFormula theory
       hasInt = containsIntFormula goal || any containsIntFormula theory
       hasDiv = containsDivFormula goal || any containsDivFormula theory
-      groebner = selectGroebner opts
-  in case solver of
-       UseWu ->
-         if hasInt
-         then runInt opts theory goal
-         else
-         if hasDiv
-         then runCadRational theory goal
-         else
-         if hasSqrt
-         then runCadSqrt theory goal
-         else
-         case goal of
-           Eq _ _ ->
-             let (proved, reason) = wuProve theory goal
-                 trace = wuProveWithTrace theory goal
+      
+      -- Dynamic backend optimization
+      opts' = optimizeGroebnerOptions profile opts
+      groebner = selectGroebner opts'
+  in case goal of
+       -- Fast-path: squares are non-negative
+       Ge (Pow _ 2) (Const c) | c <= 0 -> (True, "Non-negativity of a square (>= 0)", Nothing)
+       Gt (Pow _ 2) (Const c) | c < 0  -> (True, "Strictly positive since square > negative constant", Nothing)
+       _ ->
+         case solver of
+           UseWu ->
+             if hasInt then runInt opts theory goal
+             else if hasDiv then runCadRational theory goal
+             else if hasSqrt then runCadSqrt theory goal
+             else case goal of
+                    Eq _ _ ->
+                      let (proved, reason) = wuProve theory goal
+                          trace = wuProveWithTrace theory goal
+                      in (proved, reason, Just (formatWuTrace trace))
+                    _ -> (False, "Wu's method only supports equality goals", Nothing)
+
+           UseGroebner ->
+             if hasInt then runInt opts theory goal
+             else if hasDiv then runCadRational theory goal
+             else if hasSqrt then runCadSqrt theory goal
+             else case goal of
+                    Eq l r ->
+                      case maybeEvalNumericAngleEquality theory l r of
+                        Just (res, msg) -> (res, msg, Nothing)
+                        Nothing ->
+                          let subM = buildSubMap theory
+                              diffPoly = subPoly (toPolySub subM l) (toPolySub subM r)
+                              isConstPoly (Poly m) = all (\(Monomial vars, _) -> M.null vars) (M.toList m)
+                              constValue (Poly m) = sum (M.elems m)
+                          in if isConstPoly diffPoly
+                             then let c = constValue diffPoly
+                                  in if c == 0
+                                     then (True, "Equality holds after numeric substitution (constant 0)", Nothing)
+                                     else (False, "Constants not equal after substitution (" ++ show c ++ ")", Nothing)
+                             else
+                               let (proved, reason, trace, _) = proveTheoryWithOptions groebner Nothing theory goal
+                               in (proved, reason, Just (formatProofTrace trace))
+                    _ -> runCadRational theory goal
+
+           UseConstructiveWu ->
+             let (proved, reason, trace) = proveExistentialWu theory goal
              in (proved, reason, Just (formatWuTrace trace))
-           _ -> (False, "Wu's method only supports equality goals", Nothing)
 
-       UseGroebner ->
-         if hasInt
-         then runInt opts theory goal
-         else
-         if hasDiv
-         then runCadRational theory goal
-         else
-         if hasSqrt
-         then runCadSqrt theory goal
-         else
-         case goal of
-           Eq l r ->
-             case maybeEvalNumericAngleEquality theory l r of
-               Just (res, msg) -> (res, msg, Nothing)
-               Nothing ->
-                 let subM = buildSubMap theory
-                     diffPoly = subPoly (toPolySub subM l) (toPolySub subM r)
-                     isConstPoly (Poly m) = all (\(Monomial vars, _) -> M.null vars) (M.toList m)
-                     constValue (Poly m) = sum (M.elems m)
-                in if isConstPoly diffPoly
-                   then let c = constValue diffPoly
-                        in if c == 0
-                           then (True, "Equality holds after numeric substitution (constant 0)", Nothing)
-                           else (False, "Constants not equal after substitution (" ++ show c ++ ")", Nothing)
-                   else
-                     let (proved, reason, trace, _) = proveTheoryWithOptions groebner Nothing theory goal
-                     in (proved, reason, Just (formatProofTrace trace))
-           _ -> (False, "Gröbner basis method only supports equality goals", Nothing)
+           UseCAD ->
+             if hasInt then runInt opts theory goal
+             else if hasDiv then runCadRational theory goal
+             else if hasSqrt then runCadSqrt theory goal
+             else if containsQuantifier goal || any containsQuantifier theory
+                  then
+                    let (theory', goal') = preprocessForCAD theory goal
+                        proved = solveQuantifiedFormulaCAD theory' goal'
+                        msgBase = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
+                        msg = msgBase ++ " after rational/sqrt elimination"
+                    in (proved, msg, Nothing)
+                  else
+                    case goal of
+                      Ge l r -> executeCADInequality theory l r False
+                      Gt l r -> executeCADInequality theory l r True
+                      Le l r -> executeCADInequality theory r l False  -- Flip: l <= r becomes r >= l
+                      Lt l r -> executeCADInequality theory r l True   -- Flip: l < r becomes r > l
+                      _ -> (False, "CAD only supports inequality goals (>, >=, <, <=)", Nothing)
 
-       UseConstructiveWu ->
-         let (proved, reason, trace) = proveExistentialWu theory goal
-         in (proved, reason, Just (formatWuTrace trace))
-
-       UseCAD ->
-         if hasInt
-         then runInt opts theory goal
-         else
-         if hasDiv
-         then runCadRational theory goal
-         else
-         if hasSqrt
-         then runCadSqrt theory goal
-         else
-         if containsQuantifier goal || any containsQuantifier theory
-         then
-            let proved = solveQuantifiedFormulaCAD theory goal
-                msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
-            in (proved, msg, Nothing)
-         else
-         case goal of
-           Ge l r -> executeCADInequality theory l r False
-           Gt l r -> executeCADInequality theory l r True
-           Le l r -> executeCADInequality theory r l False  -- Flip: l <= r becomes r >= l
-           Lt l r -> executeCADInequality theory r l True   -- Flip: l < r becomes r > l
-           _ -> (False, "CAD only supports inequality goals (>, >=, <, <=)", Nothing)
-
-       Unsolvable ->
-         (False, "Problem is too complex or type not supported by automatic solver", Nothing)
+           Unsolvable ->
+             (False, "Problem is too complex or type not supported by automatic solver", Nothing)
 
 -- | Execute CAD for an inequality
 executeCADInequality :: Theory -> Expr -> Expr -> Bool -> (Bool, String, Maybe String)
@@ -541,45 +582,63 @@ executeCADInequality theory lhs rhs isStrict =
                     Just (_, coeffs) ->
                       let res = checkPositivityEnhanced diffPoly allowZero
                           zeroRoots = any (== 0) coeffs
-                          ok = if allowZero && zeroRoots then True else isPositive res
-                          msg = if allowZero && zeroRoots
-                                then "Allowing zero root: polynomial is non-negative with roots at 0"
-                                else explanation res
-                      in (ok, msg, Nothing)
+                      in
+                        if confidence res == Heuristic
+                        then
+                          -- Fall back to CAD for a formal answer instead of accepting heuristic sampling
+                          let vars = S.toList (extractPolyVars diffPoly)
+                              constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
+                              holds = evaluateInequalityCAD constraints diffPoly vars
+                              msg = if holds
+                                    then "CAD check (" ++ show (length vars) ++ "D) succeeded (positivity heuristic rejected)"
+                                    else "CAD check (" ++ show (length vars) ++ "D) found countercell (positivity heuristic rejected)"
+                          in (holds, msg, Nothing)
+                        else
+                          let ok = if allowZero && zeroRoots then True else isPositive res
+                              msg = if allowZero && zeroRoots
+                                    then "Allowing zero root: polynomial is non-negative with roots at 0"
+                                    else explanation res
+                          in (ok, msg, Nothing)
                     Nothing ->
                       -- Extract variables from the POLYNOMIAL (after substitution), not the expression
                       let vars = S.toList (extractPolyVars diffPoly)
-                      in if length vars <= 4  -- Extended from 2 to 4 for triangle inequality
-                         then
-                           let constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
-                               holds = evaluateInequalityCAD constraints diffPoly vars
-                               msg = if holds
-                                     then "CAD check (" ++ show (length vars) ++ "D) succeeded"
-                                     else "CAD check (" ++ show (length vars) ++ "D) found countercell"
-                           in (holds, msg, Nothing)
-                         else (False, "Inequality not proved (multivariate CAD with " ++ show (length vars) ++ " vars not supported yet)", Nothing)
+                          constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
+                          holds = evaluateInequalityCAD constraints diffPoly vars
+                          msg = if holds
+                                then "CAD check (" ++ show (length vars) ++ "D) succeeded"
+                                else "CAD check (" ++ show (length vars) ++ "D) found countercell"
+                      in (holds, msg, Nothing)
             _ ->
               case toUnivariate diffPoly of
                 Just (_, coeffs) ->
                   let res = checkPositivityEnhanced diffPoly allowZero
                       zeroRoots = any (== 0) coeffs
-                      ok = if allowZero && zeroRoots then True else isPositive res
-                      msg = if allowZero && zeroRoots
-                            then "Allowing zero root: polynomial is non-negative with roots at 0"
-                            else explanation res
-                  in (ok, msg, Nothing)
+                  in
+                    if confidence res == Heuristic
+                    then
+                      let vars = S.toList (extractPolyVars diffPoly)
+                          constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
+                          holds = evaluateInequalityCAD constraints diffPoly vars
+                          msg = if holds
+                                then "CAD check (" ++ show (length vars) ++ "D) succeeded (positivity heuristic rejected)"
+                                else "CAD check (" ++ show (length vars) ++ "D) found countercell (positivity heuristic rejected)"
+                      in (holds, msg, Nothing)
+                    else
+                      let ok = if allowZero && zeroRoots then True else isPositive res
+                          msg = if allowZero && zeroRoots
+                                then "Allowing zero root: polynomial is non-negative with roots at 0"
+                                else explanation res
+                      in (ok, msg, Nothing)
                 Nothing ->
                   -- Extract variables from the POLYNOMIAL (after substitution), not the expression
                   let vars = S.toList (extractPolyVars diffPoly)
-                  in if length vars <= 4  -- Extended from 2 to 4
-                     then
-                       let constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
-                           holds = evaluateInequalityCAD constraints diffPoly vars
-                           msg = if holds
-                                 then "CAD check (" ++ show (length vars) ++ "D) succeeded"
-                                 else "CAD check (" ++ show (length vars) ++ "D) found countercell"
-                       in (holds, msg, Nothing)
-                     else (False, "Inequality not proved (multivariate CAD with " ++ show (length vars) ++ " vars not supported yet)", Nothing))
+                  in
+                     let constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
+                         holds = evaluateInequalityCAD constraints diffPoly vars
+                         msg = if holds
+                               then "CAD check (" ++ show (length vars) ++ "D) succeeded"
+                               else "CAD check (" ++ show (length vars) ++ "D) found countercell"
+                     in (holds, msg, Nothing))
 
 
 -- | Extract variables from a polynomial (actual free variables after substitution)
@@ -611,6 +670,15 @@ runCadSqrt theory goal =
             then "Proved via CAD with sqrt elimination"
             else "Not proved via CAD with sqrt elimination"
   in (proved, msg, Nothing)
+
+-- Shared preprocessing for CAD/QE: eliminate rationals, then sqrts
+preprocessForCAD :: Theory -> Formula -> (Theory, Formula)
+preprocessForCAD th goal =
+  let (thR, goalR) = eliminateRational th goal
+      hasSqrt = containsSqrtFormula goalR || any containsSqrtFormula thR
+  in if hasSqrt
+     then eliminateSqrt thR goalR
+     else (thR, goalR)
 
 -- Integer fast-path
 runInt :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
