@@ -15,6 +15,7 @@ module Wu
   , CharSet
   , buildCharSet
   , triangularize
+  , reduceWithWu
 
     -- * Pseudo-Division
   , pseudoRemainder
@@ -134,6 +135,15 @@ buildCharSet polys =
     nonTrivial = filter (\p -> p /= polyZero && not (isConstPoly p)) polys
   in 
     triangularize nonTrivial
+
+-- | Reduce a polynomial using Wu's Characteristic Set method.
+-- Returns a list of remainders (one for each geometric branch).
+reduceWithWu :: [Poly] -> Poly -> [Poly]
+reduceWithWu constraints target =
+  let 
+    branches = buildCharSet constraints
+  in 
+    [ fst (pseudoRemainderWithSteps target cs) | (cs, _) <- branches ]
 
 -- | Triangularize with Branching
 triangularize :: [Poly] -> [(CharSet, [DegeneracyCondition])]
