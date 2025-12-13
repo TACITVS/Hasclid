@@ -1,6 +1,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 
-module Main where
+module Main
+  ( main
+  , repl
+  , processLine
+  ) where
 
 import Expr (Formula(Eq, Ge, Gt, Le, Lt), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
 import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea)
@@ -10,10 +14,11 @@ import BuchbergerOpt (SelectionStrategy(..), buchbergerWithStrategy)
 import CounterExample (findCounterExample, formatCounterExample)
 import CAD (discriminant, toRecursive)
 import CADLift (cadDecompose, CADCell(..), formatCADCells, evaluateInequalityCAD)
+import qualified ReplSupport as RS
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Wu (wuProve, wuProveWithTrace, formatWuTrace)
 import Data.Bifunctor (first)
-import SolverRouter (autoSolve, autoSolveWithTrace, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions)
+import SolverRouter (autoSolve, autoSolveWithTrace, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions, GroebnerBackend(..))
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
@@ -137,7 +142,7 @@ loadLemmasFromFile filename = do
   case result of
     Left err -> return $ Left $ "Could not read file: " ++ show err
     Right content -> do
-      let linesOfFile = filter (not . null) $ filter (not . ("--" `isPrefixOf`)) $ map stripComment $ lines content
+      let linesOfFile = filter (not . null) $ filter (not . ("--" `isPrefixOf`)) $ map RS.stripComment $ lines content
       let parseResults = map parseFormulaPrefix linesOfFile
       let (errors, formulas) = partitionEithers parseResults
       if null errors
@@ -162,39 +167,19 @@ parseCoord s
       ('-':rest) -> Mul (Const (-1)) (Var rest)
       _          -> Var s
 
-stripComment :: String -> String
-stripComment = stripLine . removeBlock
-  where
-    -- Remove #| ... |# (non-nested) block comments, even mid-line
-    removeBlock [] = []
-    removeBlock ('#':'|':rest) = removeBlock (dropBlock rest)
-    removeBlock (c:cs) = c : removeBlock cs
-
-    dropBlock [] = []
-    dropBlock ('|':'#':rest) = rest
-    dropBlock (_:cs) = dropBlock cs
-
-    -- Strip line comments: --, //, #, ; (Common Lisp style)
-    stripLine [] = []
-    stripLine ('-':'-':_) = []
-    stripLine ('/':'/':_) = []
-    stripLine ('#':_) = []
-    stripLine (';':_) = []
-    stripLine (c:cs) = c : stripLine cs
-
--- Compute parenthesis balance for multi-line inputs
-parenBalance :: String -> Int
-parenBalance = foldl step 0
-  where
-    step n '(' = n + 1
-    step n ')' = n - 1
-    step n _   = n
-
 -- Read additional lines until parentheses are balanced (after stripping comments)
 readMultiline :: String -> IO String
-readMultiline firstLine = go firstLine (balance firstLine)
+readMultiline firstLine = go firstLine (initialBalance firstLine)
   where
-    balance = parenBalance . stripComment
+    balance = RS.parenBalance . RS.stripComment
+    initialBalance l =
+      let b = balance l
+      in if b == 0 && isCmd l
+           then 1 -- force reading following lines until balanced for multi-line commands
+           else b
+    isCmd l =
+      let t = dropWhile (== ' ') l
+      in (":prove" `isPrefixOf` t) || (":auto" `isPrefixOf` t)
     go acc b
       | b <= 0    = pure acc
       | otherwise = do
@@ -223,7 +208,7 @@ processLine env st input = do
 
 processLineM :: REPLState -> String -> REPLM (REPLState, String)
 processLineM state rawInput = do
-  let input = stripComment rawInput
+  let input = RS.stripComment rawInput
   let newHist = if null input || ":history" `isPrefixOf` input
                 then history state
                 else input : history state
@@ -322,18 +307,38 @@ handleCommand state stateWithHist newHist input = do
                              , solverOptions = updatedOpts }
              , "Buchberger optimization " ++ if newFlag then "ON" else "OFF")
 
+    (":set-gb-backend":name:_) ->
+      let backend = case map toLower name of
+                      "f4"         -> Just F4Backend
+                      "buchberger" -> Just BuchbergerBackend
+                      _            -> Nothing
+      in case backend of
+           Nothing -> pure (stateWithHist, "Unknown backend. Options: buchberger | f4")
+           Just b  ->
+             let opts = solverOptions stateWithHist
+                 newOpts = opts { groebnerBackend = b }
+                 msg = "Groebner backend set to: " ++ (if b == F4Backend then "f4" else "buchberger")
+             in pure (stateWithHist { solverOptions = newOpts }, msg)
+
+    (":set-f4-batch":flag:_) ->
+      let newFlag = map toLower flag `elem` ["on","true","1","yes"]
+          opts = solverOptions stateWithHist
+          newOpts = opts { f4UseBatch = newFlag }
+          msg = "F4 batch reduction " ++ if newFlag then "ENABLED" else "DISABLED"
+      in pure (stateWithHist { solverOptions = newOpts }, msg)
+
     (":set-strategy":name:_) ->
       case map toLower name of
-        "normal" -> 
+        "normal" ->
           let newOpts = (solverOptions stateWithHist) { selectionStrategyOpt = NormalStrategy }
           in pure (stateWithHist { selectionStrategy = NormalStrategy, solverOptions = newOpts }, "Selection strategy set to Normal")
-        "sugar"  ->
+        "sugar" ->
           let newOpts = (solverOptions stateWithHist) { selectionStrategyOpt = SugarStrategy }
           in pure (stateWithHist { selectionStrategy = SugarStrategy, solverOptions = newOpts }, "Selection strategy set to Sugar")
         "minimal" ->
           let newOpts = (solverOptions stateWithHist) { selectionStrategyOpt = MinimalStrategy }
           in pure (stateWithHist { selectionStrategy = MinimalStrategy, solverOptions = newOpts }, "Selection strategy set to Minimal")
-        _        -> pure (stateWithHist, "Unknown strategy. Options: normal | sugar | minimal")
+        _ -> pure (stateWithHist, "Unknown strategy. Options: normal | sugar | minimal")
 
     (":list":_) -> do
       let th = theory state
@@ -387,6 +392,8 @@ handleCommand state stateWithHist newHist input = do
       , "  :set-order <order>      Set term ordering (grevlex|lex|gradedlex)"
       , "  :show-order             Show current term ordering"
       , "  :optimize on|off        Toggle Buchberger optimization"
+      , "  :set-gb-backend name    Set Groebner backend (buchberger|f4)"
+      , "  :set-f4-batch on|off    Toggle F4 modular batch reduction"
       , "  :set-strategy name      Set selection strategy (normal|sugar|minimal)"
       , "  :cache-stats            Show Groebner cache statistics"
       , "  :clear-cache            Clear Groebner cache"
@@ -546,29 +553,29 @@ repl env state = do
   isEOF <- hIsEOF stdin
   if isEOF
     then putStrLn "\n[End of input]"
-    else do
-      eof <- CE.try getLine :: IO (Either CE.IOException String)
-      case eof of
-        Left _ -> putStrLn "\n[End of input]"
-        Right inputLine -> do
-          fullInput <- readMultiline inputLine
-          if not isTerminal then putStrLn ("> " ++ fullInput) else return ()
-          let toks = words fullInput
-              quitCmd = case toks of
-                          (cmd:_) -> cmd `elem` ["exit", "quit", ":q", ":quit"]
-                          _       -> False
-          if quitCmd
-            then putStrLn "Goodbye."
-            else do
-              result <- tryIO (processLine env state fullInput)
-              case result of
-                Left err -> do
-                  putStrLn $ "Error: " ++ show err
-                  repl env state
-                Right (newState, msg) -> do
-                  unless (null msg) (putStrLn msg)
-                  putStrLn ""
-                  repl env newState
+    else
+      (do eof <- CE.try getLine :: IO (Either CE.IOException String)
+          case eof of
+            Left _ -> putStrLn "\n[End of input]"
+            Right inputLine -> do
+              fullInput <- readMultiline inputLine
+              if not isTerminal then putStrLn ("> " ++ fullInput) else return ()
+              let toks = words fullInput
+                  quitCmd = case toks of
+                              (cmd:_) -> cmd `elem` ["exit", "quit", ":q", ":quit"]
+                              _       -> False
+              if quitCmd
+                then putStrLn "Goodbye."
+                else do
+                  result <- tryIO (processLine env state fullInput)
+                  case result of
+                    Left err -> do
+                      putStrLn $ "Error: " ++ show err
+                      repl env state
+                    Right (newState, msg) -> do
+                      unless (null msg) (putStrLn msg)
+                      putStrLn ""
+                      repl env newState)
       `CE.catch` (\e -> do
           let err = show (e :: CE.SomeException)
           putStrLn $ "\n!!! CRITICAL ERROR !!!"
@@ -595,12 +602,12 @@ processFormulaLine env state line =
 
 -- Streaming script processing: prints each result as it is produced
 processScriptStreaming :: REPLEnv -> REPLState -> String -> IO REPLState
-processScriptStreaming env state content = do
-  let cmds = lines content
-  foldM step state cmds
+processScriptStreaming env state content = go state (lines content)
   where
-    step st cmd = do
-      let trimmed = dropWhile (== ' ') cmd
+    go st [] = pure st
+    go st cmds = do
+      let (cmdRaw, rest) = RS.consumeBalancedScript cmds
+          trimmed = dropWhile (== ' ') cmdRaw
       (st', msg) <- case trimmed of
                       "" -> return (st, "")
                       _ | isCommentLine trimmed -> return (st, trimmed)
@@ -618,9 +625,9 @@ processScriptStreaming env state content = do
                           Left err -> return (st, formatError err)
                       _ -> do
                         putStrLn ("> " ++ trimmed)
-                        processLine env st cmd
-      if null msg then return () else putStrLn msg
-      return st'
+                        processLine env st trimmed
+      unless (null msg) (putStrLn msg)
+      go st' rest
 
 isCommentLine :: String -> Bool
 isCommentLine l =
@@ -652,15 +659,15 @@ parseMacroDef current s =
          let paramTokens = beforeEq
          let bodyTokens = drop 1 afterEq
          
-         params <- if not (null paramTokens) && head paramTokens == "("
-                   then do
-                     (sexpr, leftovers) <- first formatError (parseSExpr paramTokens)
-                     if not (null leftovers)
-                       then Left "Invalid parameter list (trailing tokens)"
-                       else case sexpr of
-                              List atoms -> traverse expectAtom atoms
-                              _ -> Left "Parameters must be a list of atoms"
-                   else return paramTokens
+         params <- case paramTokens of
+                     ("(":_) -> do
+                       (sexpr, leftovers) <- first formatError (parseSExpr paramTokens)
+                       if not (null leftovers)
+                         then Left "Invalid parameter list (trailing tokens)"
+                         else case sexpr of
+                                List atoms -> traverse expectAtom atoms
+                                _ -> Left "Parameters must be a list of atoms"
+                     _ -> return paramTokens
          
          -- Basic validation
          if any (\p -> p == "(" || p == ")") params

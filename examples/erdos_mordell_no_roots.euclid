@@ -19,5 +19,14 @@
 :assume (= LHS (^ (+ (^ (+ x 1) 2) (* 3 (^ y 2))) 2))
 :assume (= RHS (* 12 (* (^ y 2) (^ (+ x 1) 2))))
 
-; 2. PROVE
-:prove (>= LHS RHS)
+; 2. Algebraic factorization to avoid any heuristic “sampling”
+;    LHS - RHS = ( (x+1)^2 - 3 y^2 )^2  >= 0
+:assume (= inner (- (^ (+ x 1) 2) (* 3 (^ y 2))))
+:assume (= diff (- LHS RHS))
+:assume (= fact (^ inner 2))
+
+; Show the factorization is exact
+:prove (= diff fact)
+
+; Conclude non-negativity from the square
+:prove (>= fact 0)

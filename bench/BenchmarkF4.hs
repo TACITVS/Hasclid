@@ -103,6 +103,7 @@ main :: IO ()
 main = do
   -- List of hard problems
   let problems = [ "examples/napoleon.euclid"
+                 , "examples/erdos_mordell_lemma_ge.euclid"
                  ]
   
   mapM_ runBenchmark problems

@@ -212,47 +212,7 @@ evaluatePolyInterval (Poly m) bounds =
 -- =============================================
 
 trySamplingHeuristic :: Poly -> Bool -> PositivityResult
-trySamplingHeuristic p allowZero =
-  let vars = extractAllVars p
-      samples = generateSamples vars 100  -- 100 random samples
-      allPositive = all (testPoint p allowZero) samples
-  in
-      if allPositive
-      then PositivityResult True Heuristic SamplingHeuristic
-             ("WARNING: Tested " ++ show (length samples) ++ " random points - all positive. " ++
-              "This is NOT a proof! Use with caution.")
-      else PositivityResult False Heuristic SamplingHeuristic
-             ("Found negative value in " ++ show (length samples) ++ " samples")
-
-generateSamples :: [String] -> Int -> [M.Map String Rational]
-generateSamples vars n =
-  take n $ generateCombinations vars sampleValues
-  where
-    sampleValues = [0, 1, -1, 2, -2, 1%2, -1%2, 3, -3, 1%3, 2%3, -2%3]
-
-generateCombinations :: [String] -> [Rational] -> [M.Map String Rational]
-generateCombinations [] _ = [M.empty]
-generateCombinations (v:vs) vals =
-  [ M.insert v val rest
-  | val <- vals
-  , rest <- generateCombinations vs vals
-  ]
-
-testPoint :: Poly -> Bool -> M.Map String Rational -> Bool
-testPoint p allowZero assignment =
-  case evaluateAt p assignment of
-    Just val -> val > 0 || (allowZero && val >= 0)
-    Nothing -> False  -- Can't evaluate
-
-evaluateAt :: Poly -> M.Map String Rational -> Maybe Rational
-evaluateAt (Poly m) assignment =
-  let results = [ evalTerm mono coeff assignment | (mono, coeff) <- M.toList m ]
-  in if all (\r -> case r of Just _ -> True; Nothing -> False) results
-     then Just $ sum [ val | Just val <- results ]
-     else Nothing
-  where
-    evalTerm (Monomial vars) coeff varVals =
-      let powers = [ varVals M.! v ^ exp | (v, exp) <- M.toList vars, v `M.member` varVals ]
-      in if length powers == M.size vars
-         then Just (coeff * product powers)
-         else Nothing
+trySamplingHeuristic _p _allowZero =
+  -- Disabled: do not attempt unsound sampling; force callers to use CAD/GB.
+  PositivityResult False Heuristic SamplingHeuristic
+    "Heuristic sampling disabled; use a sound solver (CAD/GB)."

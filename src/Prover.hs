@@ -704,6 +704,8 @@ isPolyFormula :: Formula -> Bool
 isPolyFormula (Eq l r) = not (hasNonPolynomial l || hasNonPolynomial r)
 isPolyFormula (Ge l r) = not (hasNonPolynomial l || hasNonPolynomial r)
 isPolyFormula (Gt l r) = not (hasNonPolynomial l || hasNonPolynomial r)
+isPolyFormula (Le l r) = not (hasNonPolynomial l || hasNonPolynomial r)
+isPolyFormula (Lt l r) = not (hasNonPolynomial l || hasNonPolynomial r)
 isPolyFormula (Forall _ f) = isPolyFormula f
 isPolyFormula (Exists _ f) = isPolyFormula f
 isPolyFormula (And f1 f2) = isPolyFormula f1 && isPolyFormula f2
@@ -1717,4 +1719,3 @@ multiCooper env theory goal = cooperLoop env theory
             Right (env', theory') ->
               if env' == envAcc then Right (envAcc, theoryAcc)
               else cooperLoop env' theory'
-

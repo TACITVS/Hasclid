@@ -1,0 +1,72 @@
+; ============================================================================
+; ERDOS–MORDELL INEQUALITY (GENERAL TRIANGLE, AUTOMATIC QE, POLYNOMIAL ONLY)
+; ---------------------------------------------------------------------------
+; Gauge:
+;   B = (0, 0), C = (1, 0), A = (0, 1)  (area normalized; altitude = 1).
+;   Interior point P = (x, y) with 0 < x < 1 and 0 < y < min(x, 1 - x).
+;
+; Distances squared to vertices:
+;   PA2 = x^2 + (y - 1)^2
+;   PB2 = x^2 + y^2
+;   PC2 = (x - 1)^2 + y^2
+;
+; Side distances:
+;   d_a = y
+;   d_b = (1 - x - y) / sqrt(2)  (distance to AC)
+;   d_c = x                      (distance to AB)
+;
+; Inequality:
+;   PA + PB + PC >= 2 * (d_a + d_b + d_c)
+;
+; Algebraic encoding (minimized quantifiers for CAD):
+;   Introduce auxiliaries ra, rb, rc with ra^2 = PA2, etc., ra,rb,rc >= 0.
+;   Let s^2 = 2, s > 0 to encode sqrt(2).
+;   sumR = ra + rb + rc
+;   sumD = y + x + (1 - x - y)/s  (inline d_b to avoid an extra quantified var)
+;   Prove (sumR)^2 >= 4 * (sumD)^2 with CAD via :auto (quantified existential).
+; ============================================================================
+
+:set-timeout 180
+:optimize on
+:set-strategy normal
+
+; Domain constraints: P inside triangle ABC
+:assume (> x 0)
+:assume (< x 1)
+:assume (> y 0)
+:assume (< y x)
+:assume (< y (- 1 x))
+
+; Vertex distances squared
+:assume (= PA2 (+ (^ x 2) (^ (- y 1) 2)))
+:assume (= PB2 (+ (^ x 2) (^ y 2)))
+:assume (= PC2 (+ (^ (- x 1) 2) (^ y 2)))
+
+; sqrt(2) auxiliary
+:assume (= (^ s 2) 2)
+:assume (> s 0)
+
+; Radii (auxiliary square roots)
+:assume (= (^ ra 2) PA2)
+:assume (= (^ rb 2) PB2)
+:assume (= (^ rc 2) PC2)
+:assume (>= ra 0)
+:assume (>= rb 0)
+:assume (>= rc 0)
+
+; Sums (db inlined)
+:assume (= sumR (+ ra (+ rb rc)))
+:assume (= sumD (+ y (+ x (/ (- 1 (+ x y)) s))))
+
+; CAD existential goal: eliminate ra, rb, rc, s automatically
+:auto
+(exists (ra rb rc s)
+  (and
+    (= (^ ra 2) PA2) (>= ra 0)
+    (= (^ rb 2) PB2) (>= rb 0)
+    (= (^ rc 2) PC2) (>= rc 0)
+    (= (^ s 2) 2) (> s 0)
+    (= sumR (+ ra (+ rb rc)))
+    (= sumD (+ y (+ x (/ (- 1 (+ x y)) s))))
+    (>= (^ sumR 2) (* 4 (^ sumD 2)))
+  ))

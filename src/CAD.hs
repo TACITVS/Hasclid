@@ -45,14 +45,6 @@ toRecursive (Poly m) var =
 
     in [ getCoeff k | k <- [0..fromIntegral maxDeg] ]
 
--- | Convert back from Recursive to Flat
-fromRecursive :: RecPoly -> String -> Poly
-fromRecursive coeffs var = 
-    sum [ polyMul c (polyPow (polyFromVar var) (fromIntegral i)) 
-        | (i, c) <- zip [0..] coeffs ]
-  where
-    sum = foldl polyAdd polyZero
-
 -- =============================================
 -- 2. Polynomial Arithmetic on Poly Coefficients
 -- =============================================
@@ -99,10 +91,10 @@ pseudoRem :: RecPoly -> RecPoly -> RecPoly
 pseudoRem f g = normalizeRec (go f)
   where
     gNorm = normalizeRec g
-    df = degRec f
+    _df = degRec f
     dg = degRec gNorm
     l = lcRec gNorm
-    delta = df - dg + 1
+    _delta = _df - dg + 1
     
     go currentF
       | degRec currentF < dg = currentF
@@ -157,7 +149,7 @@ discriminant f var =
 -- Derivative of recursive poly
 derivRec :: RecPoly -> RecPoly
 derivRec [] = []
-derivRec (_:xs) = zipWith (\pow coeff -> polyMul (polyFromConst (fromIntegral pow)) coeff) [1..] xs
+derivRec (_:xs) = zipWith (\pow coeff -> polyMul (polyFromConst (fromIntegral pow)) coeff) [1 :: Int ..] xs
 
 -- =============================================
 -- 5. Principal Subresultant Coefficients (PSC)
@@ -298,8 +290,8 @@ mcCallumProjection polys var =
       --    Use list comprehension with ordering constraint
       --    This computes only res(p,q) where p comes before q in the list
       resultants = [ resultant p q var
-                   | (i, p) <- zip [0..] relevantPolys
-                   , (j, q) <- zip [0..] relevantPolys
+                   | (i, p) <- zip [0 :: Int ..] relevantPolys
+                   , (j, q) <- zip [0 :: Int ..] relevantPolys
                    , i < j  -- Only compute one direction!
                    ]
 

@@ -111,7 +111,7 @@ polyGCD f g
 -- | Polynomial Division (returns Quotient, Remainder)
 -- This is technically pseudo-division unless leading coeffs allow exact division.
 polyDiv :: Poly -> Poly -> Maybe (Poly, Poly)
-polyDiv f g = Just (f, polyZero) -- Placeholder: Use pseudo-division from Wu if needed.
+polyDiv f _g = Just (f, polyZero) -- Placeholder: Use pseudo-division from Wu if needed.
 -- Note: Proper division is implemented in Wu.hs/Prover.hs. We'll reuse that or keep it simple.
 
 -- | Quick heuristic factorization: just monomial extraction
@@ -123,5 +123,4 @@ factorHeuristic p =
   in if m == monomialOne 
      then [sq] 
      else [polyFromMonomial m, sq]
-
 

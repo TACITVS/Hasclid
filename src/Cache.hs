@@ -114,26 +114,3 @@ formatCacheStats s =
        , "Current size:   " ++ "N/A (use :cache-info for size)"
        , "========================"
        ]
-
--- =============================================
--- Cache Information
--- =============================================
-
--- | Get cache size (number of entries)
-cacheSize :: GroebnerCache -> Int
-cacheSize = M.size . cacheMap
-
--- | Get detailed cache information
-cacheInfo :: GroebnerCache -> String
-cacheInfo cache =
-  let size = cacheSize cache
-      s = stats cache
-  in unlines
-       [ "=== Cache Information ==="
-       , "Entries:        " ++ show size
-       , "Total hits:     " ++ show (hits s)
-       , "Total misses:   " ++ show (misses s)
-       , "Total inserts:  " ++ show (inserts s)
-       , "Total clears:   " ++ show (clears s)
-       , "========================="
-       ]

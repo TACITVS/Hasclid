@@ -253,7 +253,7 @@ polyDegreeIn (Poly m) var =
 
 -- | Lift a cell from (n-1)-D to n-D
 liftCell :: [Poly] -> String -> (CADCell, SignAssignment) -> [(CADCell, SignAssignment)]
-liftCell polys var (lowerCell, lowerSigns) =
+liftCell polys var (lowerCell, _lowerSigns) =
   let
       -- Substitute lower cell's sample point into polynomials
       substituted = [ evaluatePolyRational(samplePoint lowerCell) p | p <- polys ]
@@ -278,7 +278,7 @@ liftCell polys var (lowerCell, lowerSigns) =
 
       -- Generate samples: SECTIONS (exact roots) and SECTORS (between)
       -- (sections, sectors)
-      (sectionVals, sectorVals) = generateSamplesClassified sortedValues
+      (_sectionVals, sectorVals) = generateSamplesClassified sortedValues
 
       -- Create SECTION cells (pass the generator polynomials!)
       sectionCells =
@@ -365,8 +365,11 @@ findRootsIn var p =
 refineToExactRoot :: [Rational] -> (Rational, Rational) -> Rational
 refineToExactRoot coeffs (lo, hi) =
   -- Try integer values WITHIN the interval (not outside!)
-  let loInt = ceiling lo  -- First integer >= lo
+  let loInt :: Integer
+      loInt = ceiling lo  -- First integer >= lo
+      hiInt :: Integer
       hiInt = floor hi    -- Last integer <= hi
+      integerCandidates :: [Integer]
       integerCandidates = [loInt .. hiInt]
       exactRoot = filter (\x -> isRoot coeffs (fromIntegral x)) integerCandidates
   in case exactRoot of
@@ -394,7 +397,7 @@ isRoot coeffs x = abs (evalPolyAt coeffs x) < 1/1000000000
 
 -- | Evaluate polynomial at a point (for refinement)
 evalPolyAt :: [Rational] -> Rational -> Rational
-evalPolyAt coeffs x = sum [ c * (x ^ i) | (i, c) <- zip [0..] coeffs ]
+evalPolyAt coeffs x = sum [ c * (x ^ i) | (i, c) <- zip [0 :: Int ..] coeffs ]
 
 -- | Generate samples classified as sections (on roots) and sectors (between roots)
 generateSamplesClassified :: [Rational] -> ([Rational], [Rational])
@@ -436,7 +439,7 @@ cad1D polys var =
       groupedRoots = groupRoots (sortBy (comparing fst) rootsWithSource)
       sortedRoots = map fst groupedRoots
 
-      (sectionVals, sectorVals) = generateSamplesClassified sortedRoots
+      (_sectionVals, sectorVals) = generateSamplesClassified sortedRoots
 
       sectionCells =
         [ create1DCell var val polys (Just gens)
@@ -502,11 +505,11 @@ evaluateInequalityCAD constraints inequality vars =
       inequalityHolds
 
 cellSatisfiesConstraints :: [Poly] -> (CADCell, SignAssignment) -> Bool
-cellSatisfiesConstraints constraints (cell, signs) =
+cellSatisfiesConstraints constraints (_cell, signs) =
   all (\p -> M.lookup p signs == Just Zero) constraints
 
 cellSatisfiesInequality :: Poly -> (CADCell, SignAssignment) -> Bool
-cellSatisfiesInequality ineq (cell, signs) =
+cellSatisfiesInequality ineq (_cell, signs) =
   M.lookup ineq signs == Just Positive || M.lookup ineq signs == Just Zero
 
 -- =============================================
@@ -679,7 +682,7 @@ evaluatePolyRational assignment (Poly m) =
 
 formatCADCells :: [(CADCell, SignAssignment)] -> String
 formatCADCells cells =
-  unlines [ formatCell i cell signs | (i, (cell, signs)) <- zip [1..] cells ]
+  unlines [ formatCell i cell signs | (i, (cell, signs)) <- zip [1 :: Int ..] cells ]
   where
     formatCell i cell signs =
       let typeInfo = case cellType cell of
@@ -697,7 +700,7 @@ formatCADCells cells =
 
     formatSigns signs =
       let signList = M.toList signs
-          formatOne (p, s) = show s
+          formatOne (_, s) = show s
       in unwords (map formatOne (take 3 signList)) ++
          if length signList > 3 then " ..." else ""
 
@@ -739,7 +742,7 @@ solveQuantifiedFormulaCAD theory goal =
 checkImplicitForall :: [String] -> Theory -> Formula -> [EvaluationTree] -> Bool
 checkImplicitForall [] theory goal forest =
     checkExplicitQuantifiers theory goal forest
-checkImplicitForall (v:vs) theory goal forest =
+checkImplicitForall (_:vs) theory goal forest =
     -- Forall v: All branches must satisfy
     all (checkImplicitForallNode vs theory goal) forest
 

@@ -3,13 +3,19 @@
 
 module Modular
   ( probSolve
+  , prime
+  , ModVal
+  , toMod
+  , addM
+  , subM
+  , mulM
+  , divM
+  , invM
   ) where
 
 import Expr
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import Data.List (nub, sortBy)
-import Data.Ord (comparing)
 import Data.Ratio (numerator, denominator)
 import System.Random (mkStdGen, randomRs)
 import Debug.Trace (trace)
@@ -119,53 +125,42 @@ sPolyM f g =
   case (getLM f, getLM g) of
     (Just (lmF, cfF), Just (lmG, cfG)) ->
       let gamma = lcmM lmF lmG
-          -- In a field, we can divide coefficients!
-          -- mF * f - mG * g where mF, mG make leading terms equal to gamma
-          -- Actually, standard is: (gamma/LM(f))/LC(f) * f - ...
-          -- We want LC(S) to cancel.
-          -- S = (gamma/LM(f)) * f - (LC(f)/LC(g)) * (gamma/LM(g)) * g ?
-          -- Easier: Make both monic first? Or just cross multiply coeffs?
-          -- Cross multiply: LC(g) * (gamma/LM(f)) * f  - LC(f) * (gamma/LM(g)) * g
-          
-          Just mF = divMonomial gamma lmF
-          Just mG = divMonomial gamma lmG
-          
-          term1 = polyMMulConst (polyMMul (PolyM (M.singleton mF 1)) f) cfG
-          term2 = polyMMulConst (polyMMul (PolyM (M.singleton mG 1)) g) cfF
-      in polyMSub term1 term2
+      in case (divMonomial gamma lmF, divMonomial gamma lmG) of
+           (Just mF, Just mG) ->
+             let term1 = polyMMulConst (polyMMul (PolyM (M.singleton mF 1)) f) cfG
+                 term2 = polyMMulConst (polyMMul (PolyM (M.singleton mG 1)) g) cfF
+             in polyMSub term1 term2
+           _ -> polyMZero
     _ -> polyMZero
 
 -- Reduction f mod G
 reduceM :: PolyM -> [PolyM] -> PolyM
 reduceM p divs
   | p == polyMZero = polyMZero
-  | otherwise =
-      case getLM p of
+  | otherwise      = go p
+  where
+    go q =
+      case getLM q of
         Nothing -> polyMZero
         Just (lmP, cfP) ->
-          -- Try to find a divisor that reduces the leading term
-          let candidates = [ (g, lmG, cfG) 
-                           | g <- divs
-                           , Just (lmG, cfG) <- [getLM g]
-                           , let Just _ = divMonomial lmP lmG ] 
-          in case candidates of
-               [] -> 
-                 -- No reducers for LT(p). Move LT(p) to result and reduce tail.
-                 -- Optimization: Actually, standard reduction keeps reducing the *whole* polynomial.
-                 -- If LT(p) is irreducible, we can assume it's part of remainder.
-                 -- But we must check if *other* terms reduce.
-                 -- Simplified: just return p (assuming standard GB property).
-                 -- Wait, standard reduction reduces lower terms too.
-                 -- For ideal membership (is 1 in ideal?), reducing LT is sufficient?
-                 -- Yes, if we just want to know if it reduces to 0.
-                 -- If LT cannot be reduced, then P cannot be 0 (unless P=0).
-                 p 
-               ((g, lmG, cfG):_) ->
-                 -- Reduce P by g
-                 let Just mQuot = divMonomial lmP lmG
-                     cQuot = divM (cfP) (cfG) -- Field division
-                     subTerm = polyMMulConst (polyMMul (PolyM (M.singleton mQuot 1)) g) cQuot
-                 in reduceM (polyMSub p subTerm) divs
+          case firstReducer lmP of
+            Nothing -> q
+            Just (g, lmG, cfG) ->
+              case divMonomial lmP lmG of
+                Nothing    -> q
+                Just mQuot ->
+                  let cQuot  = divM cfP cfG
+                      subTerm = polyMMulConst (polyMMul (PolyM (M.singleton mQuot 1)) g) cQuot
+                  in go (polyMSub q subTerm)
+
+    firstReducer lmP =
+      case [ (g, lmG, cfG)
+           | g <- divs
+           , Just (lmG, cfG) <- [getLM g]
+           , Just _ <- [divMonomial lmP lmG]
+           ] of
+        []    -> Nothing
+        (r:_) -> Just r
 
 buchbergerM :: [PolyM] -> [PolyM]
 buchbergerM polys =

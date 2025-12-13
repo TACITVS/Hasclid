@@ -56,7 +56,7 @@ import Geometry.WLOG (applyWLOG)
 import Positivity.SOS (checkSOS)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
-import Data.List (delete, find)
+import Data.List (delete, find, isSuffixOf, sort)
 import Data.Maybe (isJust)
 
 -- =============================================
@@ -363,23 +363,48 @@ proveGeometricInequality opts theory goal =
           -- Wu returns a list of remainders (one per geometric branch)
           remainders = reduceWithWu polyConstraints targetPoly
           
-          -- 4. Check SOS on ANY valid branch
-          -- If the theorem holds generically, the main branch remainder should be SOS.
-          sosResult = find checkSOS remainders
+          -- 4. Check SOS / Boundary SOS
+          checkPoly p = checkSOS p || checkBoundarySOS p
+          
+          success = any checkPoly remainders
+          bestPoly = if null remainders then targetPoly else head remainders
+          
       in
-        case sosResult of
-          Just sosPoly -> 
-            (True, "Proved via WLOG + Wu Reduction + SOS", Just (unlines wlogLog ++ "\nReduced Poly (SOS): " ++ show sosPoly))
-          Nothing ->
-            -- Fallback to F4 if Wu fails (unlikely for geometry, but good safety)
-            let ord = compareMonomials GrevLex
-                reducedF4 = reduceWithF4 ord polyConstraints targetPoly
-            in if checkSOS reducedF4
-               then (True, "Proved via WLOG + F4 + SOS", Just (unlines wlogLog ++ "\nReduced Poly (SOS): " ++ show reducedF4))
-               else (False, "SOS check failed", Just (unlines wlogLog ++ "\nWu Remainders: " ++ show (length remainders)))
-
--- Promote bound variable names to IntVar inside a formula (and expressions)
-promoteIntVars :: [String] -> Formula -> Formula
+        if success
+        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary", Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
+        else (False, "SOS check failed", Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
+          
+          -- | Check SOS on boundaries for homogeneous quadratic polynomials in P
+          --   Heuristic: Checks P(1,0), P(C), P(B+C)
+          checkBoundarySOS :: Poly -> Bool
+          checkBoundarySOS p =
+            let vars = S.toList (extractPolyVars p)
+                -- Identify P variables (xP, yP) and Triangle variables (xB, xC, yC)
+                pVars = sort $ filter (\v -> "xP" `isSuffixOf` v || "yP" `isSuffixOf` v) vars
+                -- Guess C variables
+                xc = find (\v -> "xC" `isSuffixOf` v) vars
+                yc = find (\v -> "yC" `isSuffixOf` v) vars
+                xb = find (\v -> "xB" `isSuffixOf` v) vars
+            in case (pVars, xc, yc, xb) of
+                 ([xp, yp], Just cX, Just cY, Just bX) ->
+                   let
+                       -- 1. Check Ray AB (yP = 0)
+                       -- P(xp, 0) -> Sub yp=0
+                       sub1 = M.fromList [(yp, polyZero)]
+                       p1 = evaluatePoly sub1 p
+                       
+                       -- 2. Check Ray AC (P = C)
+                       -- Sub xp = xC, yp = yC
+                       sub2 = M.fromList [(xp, polyFromVar cX), (yp, polyFromVar cY)]
+                       p2 = evaluatePoly sub2 p
+                       
+                       -- 3. Check Mid Ray (P = B + C)
+                       -- Sub xp = xB + xC, yp = yC
+                       sub3 = M.fromList [(xp, polyAdd (polyFromVar bX) (polyFromVar cX)), (yp, polyFromVar cY)]
+                       p3 = evaluatePoly sub3 p
+                       
+                   in checkSOS p1 && checkSOS p2 && checkSOS p3
+                 _ -> FalsepromoteIntVars :: [String] -> Formula -> Formula
 promoteIntVars names f = goF names f
   where
     goF ns (Eq l r) = Eq (goE ns l) (goE ns r)

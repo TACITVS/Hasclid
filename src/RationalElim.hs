@@ -67,9 +67,6 @@ simpExprArith (Sub (Div a b) (Div c d)) =
 -- Multiplication of fractions: (a/b) * (c/d) → (ac)/(bd)
 simpExprArith (Mul (Div a b) (Div c d)) =
   simpExprArith (Div (Mul a c) (Mul b d))
--- Division of fractions: (a/b) / (c/d) → (ad)/(bc)
-simpExprArith (Div (Div a b) (Div c d)) =
-  simpExprArith (Div (Mul a d) (Mul b c))
 -- IDENTITY: x * (1/x) → 1 (check before general multiplication - direct pattern)
 simpExprArith (Mul a (Div (Const 1) b)) | a == b = Const 1
 simpExprArith (Mul (Div (Const 1) a) b) | a == b = Const 1
