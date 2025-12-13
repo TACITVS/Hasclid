@@ -51,6 +51,8 @@ executable prover
         Wu
         Geometry.WLOG
         Positivity.SOS
+        Positivity.Numerical
+        Positivity.SDP
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7,
@@ -91,6 +93,8 @@ test-suite prover-test
         Wu
         Geometry.WLOG
         Positivity.SOS
+        Positivity.Numerical
+        Positivity.SDP
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7,
