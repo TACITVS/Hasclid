@@ -49,6 +49,8 @@ executable prover
         ReplSupport
         F4Lite
         Wu
+        Geometry.WLOG
+        Positivity.SOS
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7,
@@ -87,6 +89,8 @@ test-suite prover-test
         ReplSupport
         F4Lite
         Wu
+        Geometry.WLOG
+        Positivity.SOS
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7,

@@ -332,7 +332,7 @@ autoSolve opts theory goal =
 
 -- | Attempt to prove geometric inequality using WLOG + F4 + SOS
 proveGeometricInequality :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
-proveGeometricInequality opts theory goal =
+proveGeometricInequality _opts theory goal =
   case goal of
     Ge lhs rhs -> trySOS (Sub lhs rhs)
     Gt lhs rhs -> trySOS (Sub lhs rhs) -- TODO: Strictness check
@@ -349,14 +349,6 @@ proveGeometricInequality opts theory goal =
           
           isDefinition (Eq (Var _) _) = True
           isDefinition _ = False
-          
-          -- Apply substitution to remaining constraints
-          -- We filter out definitions because they are inlined
-          eqConstraints = 
-            [ toPolySub subMap (Sub l r) 
-            | eq@(Eq l r) <- thWLOG 
-            , not (isDefinition eq)
-            ]
           
           -- Apply to target
           targetPoly = toPolySub subMap targetExpr
@@ -378,7 +370,9 @@ proveGeometricInequality opts theory goal =
           checkPoly p = checkSOS p || checkBoundarySOS p
           
           success = any checkPoly remainders
-          bestPoly = if null remainders then targetPoly else head remainders
+          bestPoly = case remainders of
+                       (r:_) -> r
+                       []    -> targetPoly
           
       in
         if success
