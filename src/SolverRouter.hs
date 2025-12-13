@@ -343,15 +343,30 @@ proveGeometricInequality _opts theory goal =
           -- 1. Apply WLOG
           (thWLOG, wlogLog) = applyWLOG theory goal
           
+          -- Smart Squaring Heuristic for Distances
+          findSquareDef v = 
+            case find (\f -> case f of
+                               Eq (Pow (Var v') 2) _ -> v' == v
+                               _ -> False) thWLOG of
+              Just (Eq _ rhs) -> Just rhs
+              _ -> Nothing
+
+          (targetExpr', smartSqLog) = 
+             case goal of
+               Ge (Var a) rhs | Just aSq <- findSquareDef a ->
+                  (Sub aSq (Pow rhs 2), ["Smart Squaring applied: " ++ a ++ "^2 >= (" ++ show rhs ++ ")^2"])
+               Ge lhs (Var b) | Just bSq <- findSquareDef b ->
+                  (Sub (Pow lhs 2) bSq, ["Smart Squaring applied: (" ++ show lhs ++ ")^2 >= " ++ b ++ "^2"])
+               _ -> (targetExpr, [])
+
           -- 2. Substitution (Pre-processing)
-          -- Identify definitions: v = expr
           subMap = buildSubMap thWLOG
           
           isDefinition (Eq (Var _) _) = True
           isDefinition _ = False
           
           -- Apply to target
-          targetPoly = toPolySub subMap targetExpr
+          targetPoly = toPolySub subMap targetExpr'
           
           -- 3. Wu Reduction (The "Wu-SOS Bridge")
           -- We reduce the target polynomial modulo the geometric constraints using Characteristic Sets.
@@ -376,8 +391,8 @@ proveGeometricInequality _opts theory goal =
           
       in
         if success
-        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary", Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
-        else (False, "SOS check failed", Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
+        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary" ++ (if not (null smartSqLog) then " + Smart Squaring" else ""), Just (unlines (wlogLog ++ smartSqLog) ++ "\nReduced Poly: " ++ show bestPoly))
+        else (False, "SOS check failed", Just (unlines (wlogLog ++ smartSqLog) ++ "\nReduced Poly: " ++ show bestPoly))
 
     -- | Check SOS on boundaries for homogeneous quadratic polynomials in P
     --   Heuristic: Checks P(1,0), P(C), P(B+C)
