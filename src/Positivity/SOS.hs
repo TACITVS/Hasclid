@@ -221,4 +221,4 @@ sqrtRat :: Rational -> Rational
 sqrtRat r =
   let n = numerator r
       d = denominator r
-  in (toRational (round (sqrt (fromIntegral n :: Double)))) / (toRational (round (sqrt (fromIntegral d :: Double))))
+  in (toRational (round (sqrt (fromIntegral n :: Double)) :: Integer)) / (toRational (round (sqrt (fromIntegral d :: Double)) :: Integer))

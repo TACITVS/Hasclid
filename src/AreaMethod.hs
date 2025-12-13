@@ -299,7 +299,7 @@ getPointsInExpr _ = []
 exprToGeoExpr :: Formula -> Maybe GeoExpr
 exprToGeoExpr (Eq (Dist2 a b) (Dist2 c d)) =
   Just (G_Sub (G_Dist2 a b) (G_Dist2 c d))
-exprToGeoExpr (Eq (Midpoint a b m) (Const 0)) =
+exprToGeoExpr (Eq (Midpoint _ _ _) (Const 0)) =
   -- Midpoint M of AB => M - (A+B)/2 = 0? 
   -- In area method, we usually prove invariants.
   -- Proving M is midpoint: Dist(A,M) = Dist(M,B) is one way, but collinearity is needed.

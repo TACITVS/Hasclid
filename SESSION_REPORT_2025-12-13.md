@@ -21,8 +21,22 @@ The **Area Method** has been fully integrated into the solver pipeline. This pro
     *   Verified the integration using a test case (`area_test_midpoint.euclid`).
     *   Confirmed that `bench_f4.exe` correctly runs and reports results for both algebraic and geometric solvers.
 
+## Code Quality Improvements
+Achieved a **pristine, warning-free** codebase by resolving all compiler warnings:
+- **`prover.cabal`**: Added missing modules (`Geometry.WLOG`, `Positivity.SOS`) to `other-modules`.
+- **`src/SolverRouter.hs`**: Replaced unsafe partial function calls (`head`) with pattern matching and removed unused variables.
+- **`src/AreaMethod.hs`**: Cleaned up unused variables in pattern matches.
+- **`src/Positivity/SOS.hs`**: Added explicit type annotations to resolve defaulting warnings.
+
 ## Current Status
-The project compiles and runs. The F4 benchmark confirms the stability of the core algebraic engine. The Area Method is active and reachable via the automatic router.
+- **Build**: Clean (0 warnings).
+- **Tests**: All tests passing (`cabal test`).
+- **Benchmark**: `bench_f4.exe` compiles and runs.
+- **Capabilities**: F4, Wu's Method, CAD, and Area Method are all active.
+
+## Known Limitations
+- The **Erdos-Mordell Lemma (Component B)** (`examples/erdos_mordell_lemma_Rb.euclid`) currently **times out** (> 5 minutes) with the existing algebraic solvers (F4/CAD). The Area Method is not yet applicable to this specific inequality problem.
 
 ## Next Steps
-The immediate focus is to achieve a "pristine" codebase by eliminating all compiler warnings (`-Wall`) to ensure long-term maintainability and correctness.
+1.  **Expand Area Method**: Add support for more constructions (circles, geometric ratios) to handle a wider range of theorems.
+2.  **Optimization**: Investigate why Erdos-Mordell is timing out and explore specialized optimizations (e.g., symmetry breaking, specific CAD projection improvements).
