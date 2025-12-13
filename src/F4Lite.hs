@@ -23,6 +23,7 @@ module F4Lite
   , rowsToPolys
   , f4BatchReduce
   , reduceWithF4
+  , reduceWithBasis
   ) where
 
 import Expr (Poly(..), Monomial(..), monomialLCM, monomialMul, monomialDiv, getLeadingTermByOrder)
@@ -360,3 +361,7 @@ reduceWithF4 :: (Monomial -> Monomial -> Ordering) -> [Poly] -> Poly -> Poly
 reduceWithF4 ord theoryPolys target =
   let basis = f4LiteGroebner ord NormalStrategy True theoryPolys
   in reduce ord target basis
+
+-- | Reduce a polynomial using a pre-computed basis
+reduceWithBasis :: (Monomial -> Monomial -> Ordering) -> [Poly] -> Poly -> Poly
+reduceWithBasis ord basis target = reduce ord target basis

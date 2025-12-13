@@ -51,7 +51,7 @@ import SqrtElim (eliminateSqrt)
 import RationalElim (eliminateRational)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
-import F4Lite (f4LiteGroebner, reduceWithF4)
+import F4Lite (f4LiteGroebner, reduceWithF4, reduceWithBasis)
 import Geometry.WLOG (applyWLOG)
 import Positivity.SOS (checkSOS)
 import AreaMethod (proveArea, deriveConstruction)
@@ -387,7 +387,9 @@ proveGeometricInequality _opts theory goal =
           -- We create a reducer that simplifies polynomials modulo the constraints (e.g. s^2 -> 3)
           -- This allows checkSOS to prove "SOS modulo Ideal".
           
-          reducer p = reduceWithF4 (compareMonomials GrevLex) eqConstraints p
+          -- Compute Basis ONCE
+          basis = f4LiteGroebner (compareMonomials GrevLex) SugarStrategy True eqConstraints
+          reducer p = F4Lite.reduceWithBasis (compareMonomials GrevLex) basis p
           
           checkPoly p = checkSOS reducer p || checkBoundarySOS p
           
