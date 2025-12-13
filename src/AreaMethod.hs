@@ -5,6 +5,8 @@ module AreaMethod where
 import Expr
 import Data.Ratio
 import qualified Data.Map.Strict as M
+import Data.List (nub, isPrefixOf, find, (\\))
+import Data.Maybe (mapMaybe)
 
 -- =============================================
 -- 1. Geometric Quantities (Invariants)
@@ -235,3 +237,73 @@ proveArea steps goal =
     case simplified of
       G_Const c | c == 0 -> (True, "Reduced to 0")
       _ -> (False, "Reduced to: " ++ show simplified)
+
+-- =============================================
+-- 5. Theory -> Construction Bridge
+-- =============================================
+
+deriveConstruction :: Theory -> Formula -> Maybe (Construction, GeoExpr)
+deriveConstruction theory goal = do
+  geoGoal <- exprToGeoExpr goal
+  let points = collectPoints theory
+      steps = mapMaybe (theoryToStep theory) points
+      
+      -- Any point in 'points' NOT constructed is a Free point
+      constructedPoints = map getConstructedPoint steps
+      freePoints = points \\ constructedPoints
+      freeSteps = map PointFree freePoints
+      
+      -- Rudimentary topological sort:
+      -- Free points first, then constructed ones.
+      -- A real impl needs full topological sort based on dependencies.
+      -- For now, we assume implicit order or simple cases.
+      fullConstruction = freeSteps ++ steps
+      
+  return (fullConstruction, geoGoal)
+
+getConstructedPoint :: ConstructStep -> String
+getConstructedPoint (PointFree p) = p
+getConstructedPoint (PointInter p _ _ _ _) = p
+getConstructedPoint (PointMid p _ _) = p
+getConstructedPoint (PointFoot p _ _ _) = p
+getConstructedPoint (PointOnLine p _ _ _) = p
+getConstructedPoint (PointInterAng p _ _ _ _ _ _) = p
+
+theoryToStep :: Theory -> String -> Maybe ConstructStep
+theoryToStep theory p =
+  case find (definesPoint p) theory of
+    Just (Eq (Midpoint a b m) (Const 0)) | m == p -> Just (PointMid p a b)
+    _ -> Nothing
+
+definesPoint :: String -> Formula -> Bool
+definesPoint p (Eq (Midpoint _ _ m) _) = m == p
+definesPoint _ _ = False
+
+collectPoints :: Theory -> [String]
+collectPoints = nub . concatMap getPointsInFormula
+
+getPointsInFormula :: Formula -> [String]
+getPointsInFormula (Eq l r) = getPointsInExpr l ++ getPointsInExpr r
+getPointsInFormula _ = []
+
+getPointsInExpr :: Expr -> [String]
+getPointsInExpr (Midpoint a b m) = [a,b,m]
+getPointsInExpr (Dist2 a b) = [a,b]
+getPointsInExpr (Var v) = 
+  if "x" `isPrefixOf` v then [drop 1 v]
+  else if "y" `isPrefixOf` v then [drop 1 v]
+  else []
+getPointsInExpr _ = []
+
+-- Convert goal Formula to GeoExpr (Difference = 0)
+exprToGeoExpr :: Formula -> Maybe GeoExpr
+exprToGeoExpr (Eq (Dist2 a b) (Dist2 c d)) =
+  Just (G_Sub (G_Dist2 a b) (G_Dist2 c d))
+exprToGeoExpr (Eq (Midpoint a b m) (Const 0)) =
+  -- Midpoint M of AB => M - (A+B)/2 = 0? 
+  -- In area method, we usually prove invariants.
+  -- Proving M is midpoint: Dist(A,M) = Dist(M,B) is one way, but collinearity is needed.
+  -- This is tricky.
+  Nothing
+exprToGeoExpr _ = Nothing
+

@@ -49,8 +49,8 @@ runBenchmark path = do
       let optsF4 = defaultSolverOptions { groebnerBackend = F4Backend }
       (timeF4, resF4) <- timeIt $ return $ autoSolve optsF4 t g
       
-      printf "  Buchberger: %s (%.6fs)\n" (showResult resB) timeB
-      printf "  F4        : %s (%.6fs)\n" (showResult resF4) timeF4
+      printf "  Buchberger: %s [%s] (%.6fs)\n" (showResult resB) (show (selectedSolver resB)) timeB
+      printf "  F4        : %s [%s] (%.6fs)\n" (showResult resF4) (show (selectedSolver resF4)) timeF4
       
       let speedup = if timeF4 > 0 then timeB / timeF4 else 0
       printf "  Speedup   : %.2fx\n" speedup
@@ -103,7 +103,8 @@ main :: IO ()
 main = do
   -- List of hard problems
   let problems = [ "examples/napoleon.euclid"
-                 , "examples/erdos_mordell_lemma_ge.euclid"
+                 , "examples/erdos_mordell_lemma_Rb.euclid"
+                 , "examples/morley.euclid"
                  ]
   
   mapM_ runBenchmark problems

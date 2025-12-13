@@ -54,6 +54,7 @@ import TermOrder (TermOrder(..), compareMonomials)
 import F4Lite (f4LiteGroebner, reduceWithF4)
 import Geometry.WLOG (applyWLOG)
 import Positivity.SOS (checkSOS)
+import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import Data.List (delete, find, isSuffixOf, sort)
@@ -70,6 +71,7 @@ data SolverChoice
   | UseGroebner     -- Gröbner basis (general purpose)
   | UseConstructiveWu -- Constructive existence using Wu's Method (Triangularization)
   | UseCAD          -- CAD (for inequalities, limited to 1D-2D)
+  | UseAreaMethod   -- Area Method (geometric invariants)
   | Unsolvable      -- Problem too complex or type not supported
   deriving (Show, Eq)
 
@@ -307,8 +309,17 @@ autoSolve opts theory goal =
           GeoUnknown _ ->
             -- GeoSolver insufficient, fall back to PHASE 2 (algebraic solvers)
             let
-              solver = selectAlgebraicSolver profile goal
-              solverReason' = "Geometric propagation insufficient. Fallback to PHASE 2: " ++ explainSolverChoice solver profile
+              -- Try Area Method applicability first
+              isAreaMethodApplicable = case deriveConstruction theory goal of
+                                         Just _ -> True
+                                         Nothing -> False
+              solver = if isAreaMethodApplicable
+                       then UseAreaMethod
+                       else selectAlgebraicSolver profile goal
+              
+              solverReason' = if isAreaMethodApplicable
+                              then "Area Method Construction derived successfully."
+                              else "Geometric propagation insufficient. Fallback to PHASE 2: " ++ explainSolverChoice solver profile
               (proved, proofMsg, trace) = executeSolver solver opts profile theory goal
             in AutoSolveResult
                  { selectedSolver = solver
@@ -373,38 +384,40 @@ proveGeometricInequality opts theory goal =
         if success
         then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary", Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
         else (False, "SOS check failed", Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
-          
-          -- | Check SOS on boundaries for homogeneous quadratic polynomials in P
-          --   Heuristic: Checks P(1,0), P(C), P(B+C)
-          checkBoundarySOS :: Poly -> Bool
-          checkBoundarySOS p =
-            let vars = S.toList (extractPolyVars p)
-                -- Identify P variables (xP, yP) and Triangle variables (xB, xC, yC)
-                pVars = sort $ filter (\v -> "xP" `isSuffixOf` v || "yP" `isSuffixOf` v) vars
-                -- Guess C variables
-                xc = find (\v -> "xC" `isSuffixOf` v) vars
-                yc = find (\v -> "yC" `isSuffixOf` v) vars
-                xb = find (\v -> "xB" `isSuffixOf` v) vars
-            in case (pVars, xc, yc, xb) of
-                 ([xp, yp], Just cX, Just cY, Just bX) ->
-                   let
-                       -- 1. Check Ray AB (yP = 0)
-                       -- P(xp, 0) -> Sub yp=0
-                       sub1 = M.fromList [(yp, polyZero)]
-                       p1 = evaluatePoly sub1 p
-                       
-                       -- 2. Check Ray AC (P = C)
-                       -- Sub xp = xC, yp = yC
-                       sub2 = M.fromList [(xp, polyFromVar cX), (yp, polyFromVar cY)]
-                       p2 = evaluatePoly sub2 p
-                       
-                       -- 3. Check Mid Ray (P = B + C)
-                       -- Sub xp = xB + xC, yp = yC
-                       sub3 = M.fromList [(xp, polyAdd (polyFromVar bX) (polyFromVar cX)), (yp, polyFromVar cY)]
-                       p3 = evaluatePoly sub3 p
-                       
-                   in checkSOS p1 && checkSOS p2 && checkSOS p3
-                 _ -> FalsepromoteIntVars :: [String] -> Formula -> Formula
+
+    -- | Check SOS on boundaries for homogeneous quadratic polynomials in P
+    --   Heuristic: Checks P(1,0), P(C), P(B+C)
+    checkBoundarySOS :: Poly -> Bool
+    checkBoundarySOS p =
+      let vars = S.toList (extractPolyVars p)
+          -- Identify P variables (xP, yP) and Triangle variables (xB, xC, yC)
+          pVars = sort $ filter (\v -> "xP" `isSuffixOf` v || "yP" `isSuffixOf` v) vars
+          -- Guess C variables
+          xc = find (\v -> "xC" `isSuffixOf` v) vars
+          yc = find (\v -> "yC" `isSuffixOf` v) vars
+          xb = find (\v -> "xB" `isSuffixOf` v) vars
+      in case (pVars, xc, yc, xb) of
+           ([xp, yp], Just cX, Just cY, Just bX) ->
+             let
+                 -- 1. Check Ray AB (yP = 0)
+                 -- P(xp, 0) -> Sub yp=0
+                 sub1 = M.fromList [(yp, polyZero)]
+                 p1 = evaluatePoly sub1 p
+                 
+                 -- 2. Check Ray AC (P = C)
+                 -- Sub xp = xC, yp = yC
+                 sub2 = M.fromList [(xp, polyFromVar cX), (yp, polyFromVar cY)]
+                 p2 = evaluatePoly sub2 p
+                 
+                 -- 3. Check Mid Ray (P = B + C)
+                 -- Sub xp = xB + xC, yp = yC
+                 sub3 = M.fromList [(xp, polyAdd (polyFromVar bX) (polyFromVar cX)), (yp, polyFromVar cY)]
+                 p3 = evaluatePoly sub3 p
+                 
+             in checkSOS p1 && checkSOS p2 && checkSOS p3
+           _ -> False
+
+promoteIntVars :: [String] -> Formula -> Formula
 promoteIntVars names f = goF names f
   where
     goF ns (Eq l r) = Eq (goE ns l) (goE ns r)
@@ -641,6 +654,15 @@ executeSolver solver opts profile theory goal =
              let (proved, reason, trace) = proveExistentialWu theory goal
              in (proved, reason, Just (formatWuTrace trace))
 
+           UseAreaMethod ->
+             case deriveConstruction theory goal of
+               Just (construction, geoGoal) ->
+                 let (proved, reason) = proveArea construction geoGoal
+                     trace = "Construction:\n" ++ show construction ++ "\n\nGoal:\n" ++ show geoGoal
+                 in (proved, "Area Method: " ++ reason, Just trace)
+               Nothing ->
+                 (False, "Area Method failed to derive construction from theory", Nothing)
+
            UseCAD ->
              if hasInt then runInt opts theory goal
              else if hasDiv then runCadRational theory goal
@@ -836,6 +858,8 @@ explainSolverChoice UseCAD profile =
      _ -> "Real algebraic geometry with inequalities")
 explainSolverChoice UseConstructiveWu _ =
   "Constructive Wu: existential/triangularization route chosen for geometry-style goals."
+explainSolverChoice UseAreaMethod _ =
+  "Selected Area Method: Constructive geometric proof using invariants (Area/Pythagoras)."
 
 explainSolverChoice Unsolvable profile =
   case estimatedComplexity profile of
