@@ -1,0 +1,14 @@
+; Test Area Method PointFoot construction derivation
+; D is the foot of the perpendicular from A to BC.
+; We assert this using declarative constraints.
+
+:assume (= (collinear B C D) 0)
+:assume (= (perpendicular A D B C) 0)
+
+; Prove that D is indeed the foot (trivial check of the construction logic)
+; The Area Method should construct D as (PointFoot D A B C)
+; And then eliminate the goal.
+
+:prove (= (perpendicular A D B C) 0)
+:quit
+:quit
