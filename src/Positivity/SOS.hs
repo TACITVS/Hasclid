@@ -10,9 +10,9 @@ import Data.List (sortBy)
 import Data.Ratio (numerator, denominator)
 import TermOrder (compareMonomials, TermOrder(..))
 
--- | Check if polynomial is a Sum of Squares
-checkSOS :: Poly -> Bool
-checkSOS p = isWeightedSOS p || checkSumOfSquares p
+-- | Check if polynomial is a Sum of Squares, potentially modulo an ideal (via reducer)
+checkSOS :: (Poly -> Poly) -> Poly -> Bool
+checkSOS reducer p = isWeightedSOS p || checkSumOfSquares reducer p
 
 -- | Check for weighted sum of even powers (trivial SOS)
 isWeightedSOS :: Poly -> Bool
@@ -70,62 +70,12 @@ findRoot target currentRoot =
 -- ============================================================================
 -- Greedy Sum of Squares Decomposition (Rational Cholesky)
 -- ============================================================================
--- Algorithm:
--- 1. Pick Leading Term LT(P) = c * m.
--- 2. If c <= 0 or m is not a square, return False.
--- 3. Let base = sqrt(m).
--- 4. Gather all terms in P divisible by base: these form the "linear" part L relative to base.
---    Actually, we want to complete the square for the variable block in `base`.
---    Ideally, P = c * (base + ...)^2 + Remainder.
---    Expansion: c * (base^2 + 2*base*Rest + Rest^2) = c*m + 2*c*base*Rest + ...
---    We need to match the "cross terms" involving `base`.
---    Cross terms are terms T in P such that T is divisible by `base`.
---    Let P_div_base = part of P divisible by `base`.
---    Actually, simply:
---    Candidate Square S = (c * base + 1/2 * (terms_divisible_by_base_excluding_LT) / base )^2
---    No, that's not quite right for multivariate.
---
--- Correct Multivariate Cholesky Step:
--- P = A(x) * x_main^2d + B(x) * x_main^d + C(x) ...
--- We eliminate variable by variable? No, monomial by monomial.
---
--- Simplified Greedy:
--- 1. LT(P) = c * m^2. (c > 0).
--- 2. Let root = m.
--- 3. Find terms in P of form k * m * m' where m > m'.
---    These are the potential cross terms 2 * a * b.
---    We construct a polynomial Q = c * m + sum(k_i * m_i).
---    Such that Q^2 / c matches the LT and cross terms.
---    Actually:
---    P = (c_0 m_0 + c_1 m_1 + ...)^2
---    We build the square term iteratively.
---    Term 1: T1 = LT(P). Must be c * m^2.
---    Root term: R1 = m.
---    Square coeff: K = c.
---    We want to subtract K * (m + X)^2.
---    K * (m^2 + 2mX + X^2) = K m^2 + 2K m X + K X^2.
---    We match 2 K m X with terms in P divisible by m.
---    Let `Cross = Terms in P divisible by m (excluding m^2)`.
---    Then 2 K m X = Cross  =>  X = Cross / (2 K m).
---    So subtraction term is: K * (m + Cross / (2Km))^2
---                          = (1/K) * (K m + Cross / (2m))^2
---                          = (1/c) * (c m + Cross / (2m))^2.
---
---    Note: Cross / (2m) must be a valid polynomial!
---    i.e. All terms in `Cross` must be divisible by `m` and yield monomials < m.
---    Wait, `Cross` are terms divisible by `m`. So `Cross/m` is polynomial.
---    We assume `m` is the "half" monomial (sqrt of LT).
---    Terms divisible by `m` must have degree >= deg(m).
---    We subtract, get Remainder.
---    Recurse on Remainder.
---
---    If at any point Remainder LT is not positive square, fail.
---    If Remainder == 0, Success.
 
-checkSumOfSquares :: Poly -> Bool
-checkSumOfSquares p
-  | p == polyZero = True
-  | otherwise =
+checkSumOfSquares :: (Poly -> Poly) -> Poly -> Bool
+checkSumOfSquares reducer pRaw =
+  let p = reducer pRaw -- Reduce initially too? Yes.
+  in if p == polyZero then True
+  else
       case getLeadingTerm p of
         Nothing -> True
         Just (ltM, ltC) ->
@@ -138,42 +88,27 @@ checkSumOfSquares p
                c = ltC               -- The coefficient
                
                -- 2. Find Cross Terms: Terms in P (excluding LT) divisible by m
-               -- Actually, we take ALL terms divisible by m.
-               -- But strictly, we only care about terms that COULD be 2*m*m_i.
-               -- For greedy Cholesky, we take ALL terms divisible by m to clear the column.
                
                (divisible, _rest) = partitionPolyByDivisibility p m
-               
-               -- divisible contains c*m^2 + other_terms * m
-               -- divisible / m = c*m + other_terms
                
                quotient = case polyDivMonomial divisible m of
                             Just q -> q
                             Nothing -> error "Unreachable: partition logic failed"
                
-               -- quotient = c*m + X.
-               -- We want X.
-               -- X = quotient - c*m
-               
                ltPoly = polyFromMonomial m c
                xPoly = polySub quotient ltPoly
                
                -- 3. Construct the Square to subtract
-               -- S = (1/c) * (c*m + X/2)^2
-               --   = (1/c) * (quotient - X/2)^2  <-- No.
-               -- Let's stick to formula: K * (m + X/(2K))^2 = (1/K) * (K*m + X/2)^2
-               -- K = c.
-               -- Inner = c*m + X/2.
                
                xHalf = polyScale xPoly (1/2)
                inner = polyAdd ltPoly xHalf
                
                subtraction = polyScale (polyMul inner inner) (1/c)
                
-               -- 4. Update P
-               newP = polySub p subtraction
+               -- 4. Update P and Reduce
+               newP = reducer (polySub p subtraction)
                
-            in checkSumOfSquares newP
+            in checkSumOfSquares reducer newP
 
 -- | Partition polynomial into (terms divisible by m, terms not divisible)
 partitionPolyByDivisibility :: Poly -> Monomial -> (Poly, Poly)

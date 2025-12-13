@@ -373,16 +373,23 @@ proveGeometricInequality _opts theory goal =
           -- Wu's method is polynomial in complexity vs F4's exponential behavior for this class of problems.
           
           -- Constraints as polynomials
-          polyConstraints = [ toPolySub subMap (Sub l r) 
+          eqConstraints = [ toPolySub subMap (Sub l r) 
                             | eq@(Eq l r) <- thWLOG 
                             , not (isDefinition eq)
                             ]
+          
+          polyConstraints = eqConstraints
           
           -- Wu returns a list of remainders (one per geometric branch)
           remainders = reduceWithWu polyConstraints targetPoly
           
           -- 4. Check SOS / Boundary SOS
-          checkPoly p = checkSOS p || checkBoundarySOS p
+          -- We create a reducer that simplifies polynomials modulo the constraints (e.g. s^2 -> 3)
+          -- This allows checkSOS to prove "SOS modulo Ideal".
+          
+          reducer p = reduceWithF4 (compareMonomials GrevLex) eqConstraints p
+          
+          checkPoly p = checkSOS reducer p || checkBoundarySOS p
           
           success = any checkPoly remainders
           bestPoly = case remainders of
@@ -423,7 +430,7 @@ proveGeometricInequality _opts theory goal =
                  sub3 = M.fromList [(xp, polyAdd (polyFromVar bX) (polyFromVar cX)), (yp, polyFromVar cY)]
                  p3 = evaluatePoly sub3 p
                  
-             in checkSOS p1 && checkSOS p2 && checkSOS p3
+             in checkSOS id p1 && checkSOS id p2 && checkSOS id p3
            _ -> False
 
 promoteIntVars :: [String] -> Formula -> Formula
