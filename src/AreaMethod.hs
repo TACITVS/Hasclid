@@ -271,13 +271,50 @@ getConstructedPoint (PointInterAng p _ _ _ _ _ _) = p
 
 theoryToStep :: Theory -> String -> Maybe ConstructStep
 theoryToStep theory p =
-  case find (definesPoint p) theory of
-    Just (Eq (Midpoint a b m) (Const 0)) | m == p -> Just (PointMid p a b)
+  let relevant = filter (mentionsPoint p) theory
+  in case findMidpoint p relevant of
+       Just step -> Just step
+       Nothing ->
+         case findFoot p relevant of
+           Just step -> Just step
+           Nothing -> findInter p relevant
+
+mentionsPoint :: String -> Formula -> Bool
+mentionsPoint p f = p `elem` getPointsInFormula f
+
+findMidpoint :: String -> [Formula] -> Maybe ConstructStep
+findMidpoint p formulas =
+  case find (isMidpointDef p) formulas of
+    Just (Eq (Midpoint a b _) _) -> Just (PointMid p a b)
     _ -> Nothing
 
+isMidpointDef :: String -> Formula -> Bool
+isMidpointDef p (Eq (Midpoint _ _ m) _) = m == p
+isMidpointDef _ _ = False
+
+findFoot :: String -> [Formula] -> Maybe ConstructStep
+findFoot p formulas =
+  -- Need (Perpendicular C P A B) AND (Collinear A B P)
+  -- P is the foot of perpendicular from C to AB
+  let perps = [ (c, a, b) | Eq (Perpendicular c p' a b) _ <- formulas, p' == p ] ++
+              [ (c, a, b) | Eq (Perpendicular p' c a b) _ <- formulas, p' == p ]
+      colls = [ (u, v) | Eq (Collinear u v p') _ <- formulas, p' == p ]
+  in case [ (c, a, b) | (c, a, b) <- perps, any (\(u,v) -> (u==a && v==b) || (u==b && v==a)) colls ] of
+       ((c, a, b):_) -> Just (PointFoot p c a b)
+       _ -> Nothing
+
+findInter :: String -> [Formula] -> Maybe ConstructStep
+findInter p formulas =
+  -- Need (Collinear A B P) AND (Collinear C D P)
+  -- P is intersection of AB and CD
+  let colls = [ (a, b) | Eq (Collinear a b p') _ <- formulas, p' == p ]
+      pairs = [ ((a,b), (c,d)) | (a,b) <- colls, (c,d) <- colls, a /= c || b /= d, a /= d || b /= c ]
+  in case pairs of
+       (((a,b), (c,d)):_) -> Just (PointInter p a b c d)
+       _ -> Nothing
+
 definesPoint :: String -> Formula -> Bool
-definesPoint p (Eq (Midpoint _ _ m) _) = m == p
-definesPoint _ _ = False
+definesPoint p f = mentionsPoint p f -- Simplified for now, relying on theoryToStep logic
 
 collectPoints :: Theory -> [String]
 collectPoints = nub . concatMap getPointsInFormula
@@ -289,6 +326,9 @@ getPointsInFormula _ = []
 getPointsInExpr :: Expr -> [String]
 getPointsInExpr (Midpoint a b m) = [a,b,m]
 getPointsInExpr (Dist2 a b) = [a,b]
+getPointsInExpr (Collinear a b c) = [a,b,c]
+getPointsInExpr (Perpendicular a b c d) = [a,b,c,d]
+getPointsInExpr (Parallel a b c d) = [a,b,c,d]
 getPointsInExpr (Var v) = 
   if "x" `isPrefixOf` v then [drop 1 v]
   else if "y" `isPrefixOf` v then [drop 1 v]
@@ -299,11 +339,13 @@ getPointsInExpr _ = []
 exprToGeoExpr :: Formula -> Maybe GeoExpr
 exprToGeoExpr (Eq (Dist2 a b) (Dist2 c d)) =
   Just (G_Sub (G_Dist2 a b) (G_Dist2 c d))
+exprToGeoExpr (Eq (Collinear a b c) (Const 0)) =
+  Just (S_Area a b c)
+exprToGeoExpr (Eq (Perpendicular a b c d) (Const 0)) =
+  -- dot(AB, CD) = 0
+  -- 2 * dot(AB, CD) = P_{BCD} - P_{ACD}
+  Just (G_Sub (P_Pyth b c d) (P_Pyth a c d))
 exprToGeoExpr (Eq (Midpoint _ _ _) (Const 0)) =
-  -- Midpoint M of AB => M - (A+B)/2 = 0? 
-  -- In area method, we usually prove invariants.
-  -- Proving M is midpoint: Dist(A,M) = Dist(M,B) is one way, but collinearity is needed.
-  -- This is tricky.
   Nothing
 exprToGeoExpr _ = Nothing
 
