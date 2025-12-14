@@ -29,16 +29,10 @@ parenBalance = foldl step 0
 consumeBalancedScript :: [String] -> (String, [String])
 consumeBalancedScript [] = ("", [])
 consumeBalancedScript (l:ls) =
-  let balance = parenBalance . stripComment
-      initial = let b = balance l
-                in if b == 0 && (isCmd l)
-                     then 1 else b
+  let initial = parenBalance (stripComment l)
   in go l initial ls
   where
     balance = parenBalance . stripComment
-    isCmd ln =
-      let t = dropWhile (== ' ') ln
-      in (":prove" `isPrefixOf` t) || (":auto" `isPrefixOf` t)
     go acc b rest =
       case rest of
         _ | b <= 0 -> (acc, rest)

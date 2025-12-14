@@ -1,0 +1,5 @@
+:verbose
+:prove (forall ((int i 1 3)) (>= (^ i 2) 1))
+:prove (exists ((int j 1 5)) (= (^ j 2) 16))
+:prove (forall ((int k 1 3)) (= k 5))
+:prove (exists ((int m 1 3)) (= m 10))

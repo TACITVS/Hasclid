@@ -201,6 +201,60 @@ preprocessSystem theory formula = go theory formula []
     substitutionCandidate (Eq l r) = isJust (solveLinearSingleVar l r)
     substitutionCandidate _ = False
 
+-- | Expand bounded integer quantifiers (finite domain)
+expandFiniteDomain :: Formula -> Formula
+expandFiniteDomain form = case form of
+  Forall qs body -> expandQuantHelper Forall And (Eq (Const 1) (Const 1)) qs body
+  Exists qs body -> expandQuantHelper Exists Or (Eq (Const 0) (Const 1)) qs body
+  And f1 f2      -> And (expandFiniteDomain f1) (expandFiniteDomain f2)
+  Or f1 f2       -> Or (expandFiniteDomain f1) (expandFiniteDomain f2)
+  Not f          -> Not (expandFiniteDomain f)
+  _              -> form
+
+expandQuantHelper :: ([QuantVar] -> Formula -> Formula) 
+                  -> (Formula -> Formula -> Formula) 
+                  -> Formula 
+                  -> [QuantVar] 
+                  -> Formula 
+                  -> Formula
+expandQuantHelper constructor op emptyVal qs body =
+  let (bounded, unbounded) = L.partition isBoundedConstantInt qs
+      body' = expandFiniteDomain body
+  in if null bounded
+     then constructor unbounded body'
+     else
+       let expanded = expandVars op emptyVal bounded body'
+           final = if null unbounded then expanded else constructor unbounded expanded
+       in final
+
+expandVars :: (Formula -> Formula -> Formula) -> Formula -> [QuantVar] -> Formula -> Formula
+expandVars _ _ [] body = body
+expandVars op emptyVal (q:qs) body =
+  let v = qvName q
+      lo = getConstInt (fromMaybe (IntConst 0) (qvLower q))
+      hi = getConstInt (fromMaybe (IntConst 0) (qvUpper q))
+  in if hi < lo
+     then emptyVal
+     else
+        let expandedInner = expandVars op emptyVal qs body
+            instances = [ substFormula (M.singleton v (IntConst i)) expandedInner | i <- [lo..hi] ]
+        in foldr1 op instances
+
+isBoundedConstantInt :: QuantVar -> Bool
+isBoundedConstantInt (QuantVar _ QuantInt (Just l) (Just h)) = 
+  isConstInt l && isConstInt h && (getConstInt h - getConstInt l <= 100)
+isBoundedConstantInt _ = False
+
+isConstInt :: Expr -> Bool
+isConstInt (IntConst _) = True
+isConstInt (Const r) = denominator r == 1
+isConstInt _ = False
+
+getConstInt :: Expr -> Integer
+getConstInt (IntConst i) = i
+getConstInt (Const r) = numerator r
+getConstInt _ = 0
+
 -- Shared Groebner fallback used by both cached and custom Buchberger flows.
 groebnerFallback
   :: ([Poly] -> [Poly])
@@ -288,11 +342,62 @@ groebnerFallback customBuchberger maybeCache theory formula =
 -- | Prove a formula with optional cache support
 -- Returns: (isProved, reason, trace, updatedCache)
 proveTheoryWithCache :: Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
-proveTheoryWithCache maybeCache theory formula =
-  let baseTrace = emptyTrace { usedAssumptions = theory }
+proveTheoryWithCache maybeCache theoryRaw formulaRaw =
+  let theory = map expandFiniteDomain theoryRaw
+      formula = expandFiniteDomain formulaRaw
+      baseTrace = emptyTrace { usedAssumptions = theory }
       hasInt = containsIntFormula formula || any containsIntFormula theory
       hasDiv = containsDivFormula formula || any containsDivFormula theory
       hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
+      
+      fallThrough baseTrace' hasInt' hasDiv' hasSqrt'
+        | any containsQuantifier theory =
+            (False, "Quantifiers in assumptions are not supported yet.", baseTrace', maybeCache)
+        | hasInt' =
+            let outcome = intSolve defaultIntSolveOptions theory formula
+            in case intResult outcome of
+                 Just True  -> (True, reasonOutcome outcome True, baseTrace', maybeCache)
+                 Just False -> (False, reasonOutcome outcome False, baseTrace', maybeCache)
+                 Nothing    ->
+                   case formula of
+                     Eq _ _ -> 
+                       let (gProved, gReason, gTrace, gCache) = groebnerFallback buchberger maybeCache theory formula
+                       in if gProved 
+                          then (True, "Proved by Algebraic Solver (valid for Integers): " ++ gReason, gTrace, gCache)
+                          else (False, "Integer Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
+                     _ ->
+                       let msg = "Integer domain parsed but solver is incomplete for this goal."
+                                 ++ if intBruteCandidate outcome
+                                    then " A bounded brute-force search is available but currently disabled."
+                                    else ""
+                       in (False, msg, baseTrace', maybeCache)
+        | hasDiv' =
+            let (th', goal') = eliminateRational theory formula
+                hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
+                (th'', goal'') = if hasSqrt'
+                                   then eliminateSqrt th' goal'
+                                   else (th', goal')
+                proved = proveFormulaCAD th'' goal''
+                msg = if proved
+                      then "Proved via CAD with rational" ++
+                           (if hasSqrt' then " and sqrt" else "") ++
+                           " elimination"
+                      else "Not proved via CAD with rational elimination"
+                trace = emptyTrace { usedAssumptions = th'' }
+            in (proved, msg, trace, maybeCache)
+        | hasSqrt' =
+            let (th', goal') = eliminateSqrt theory formula
+                proved = proveFormulaCAD th' goal'
+                msg = if proved
+                      then "Proved via CAD with sqrt elimination"
+                      else "Not proved via CAD with sqrt elimination"
+                trace = emptyTrace { usedAssumptions = th' }
+            in (proved, msg, trace, maybeCache)
+        | containsQuantifier formula =
+            let proved = solveQuantifiedFormulaCAD theory formula
+                msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
+            in (proved, msg, baseTrace', maybeCache)
+        | otherwise = groebnerFallback buchberger maybeCache theory formula
   in
     case formula of
       Forall qs inner
@@ -302,9 +407,9 @@ proveTheoryWithCache maybeCache theory formula =
               Just (res, msg) -> (res, msg, baseTrace, maybeCache)
               Nothing ->
                 let hasIntForm = containsIntFormula inner || any containsIntFormula theory
+                    hasDivForm = containsDivFormula inner || any containsDivFormula theory
                     hasSqrtForm = containsSqrtFormula inner || any containsSqrtFormula theory
                     polyOk = all isPolyFormula (inner : theory)
-                    hasDivForm = containsDivFormula inner || any containsDivFormula theory
                 in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk
                                                      then (False, "Real universal (unbounded) not supported for non-polynomial or mixed-domain goals.", baseTrace, maybeCache)
                                                      else
@@ -369,87 +474,40 @@ proveTheoryWithCache maybeCache theory formula =
         in (False, quantMsg, baseTrace, maybeCache)
 
       _ -> fallThrough baseTrace hasInt hasDiv hasSqrt
-  where
-    fallThrough baseTrace hasInt hasDiv hasSqrt
-      | any containsQuantifier theory =
-          (False, "Quantifiers in assumptions are not supported yet.", baseTrace, maybeCache)
-      | hasInt =
-          let outcome = intSolve defaultIntSolveOptions theory formula
-          in case intResult outcome of
-               Just True  -> (True, reasonOutcome outcome True, baseTrace, maybeCache)
-               Just False -> (False, reasonOutcome outcome False, baseTrace, maybeCache)
-               Nothing    ->
-                 case formula of
-                   Eq _ _ -> 
-                     let (gProved, gReason, gTrace, gCache) = groebnerFallback buchberger maybeCache theory formula
-                     in if gProved 
-                        then (True, "Proved by Algebraic Solver (valid for Integers): " ++ gReason, gTrace, gCache)
-                        else (False, "Integer Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
-                   _ ->
-                     let msg = "Integer domain parsed but solver is incomplete for this goal."
-                               ++ if intBruteCandidate outcome
-                                  then " A bounded brute-force search is available but currently disabled."
-                                  else ""
-                     in (False, msg, baseTrace, maybeCache)
-      | hasDiv =
-          let (th', goal') = eliminateRational theory formula
-              hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
-              (th'', goal'') = if hasSqrt'
-                                 then eliminateSqrt th' goal'
-                                 else (th', goal')
-              proved = proveFormulaCAD th'' goal''
-              msg = if proved
-                    then "Proved via CAD with rational" ++
-                         (if hasSqrt' then " and sqrt" else "") ++
-                         " elimination"
-                    else "Not proved via CAD with rational elimination"
-              trace = emptyTrace { usedAssumptions = th'' }
-          in (proved, msg, trace, maybeCache)
-      | hasSqrt =
-          let (th', goal') = eliminateSqrt theory formula
-              proved = proveFormulaCAD th' goal'
-              msg = if proved
-                    then "Proved via CAD with sqrt elimination"
-                    else "Not proved via CAD with sqrt elimination"
-              trace = emptyTrace { usedAssumptions = th' }
-          in (proved, msg, trace, maybeCache)
-      | containsQuantifier formula =
-          let proved = solveQuantifiedFormulaCAD theory formula
-              msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
-          in (proved, msg, baseTrace, maybeCache)
-      | otherwise = groebnerFallback buchberger maybeCache theory formula
 
 -- | Prove a formula with custom Buchberger function and optional cache support
 -- Returns: (isProved, reason, trace, updatedCache)
 proveTheoryWithOptions :: ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
-proveTheoryWithOptions customBuchberger maybeCache theory formula =
-  let baseTrace = emptyTrace { usedAssumptions = theory }
+proveTheoryWithOptions customBuchberger maybeCache theoryRaw formulaRaw =
+  let theory = map expandFiniteDomain theoryRaw
+      formula = expandFiniteDomain formulaRaw
+      baseTrace = emptyTrace { usedAssumptions = theory }
       hasInt = containsIntFormula formula || any containsIntFormula theory
       hasDiv = containsDivFormula formula || any containsDivFormula theory
       hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
-      fallThrough baseTrace' hasInt' hasDiv' hasSqrt' =
-        if any containsQuantifier theory
-          then (False, "Quantifiers in assumptions are not supported yet.", baseTrace', maybeCache)
-              else if hasInt'
-                then
-                  let outcome = intSolve defaultIntSolveOptions theory formula
-                  in case intResult outcome of
-                       Just True  -> (True, reasonOutcome outcome True, baseTrace', maybeCache)
-                       Just False -> (False, reasonOutcome outcome False, baseTrace', maybeCache)
-                       Nothing    ->
-                         case formula of
-                           Eq _ _ -> 
-                             let (gProved, gReason, gTrace, gCache) = groebnerFallback customBuchberger maybeCache theory formula
-                             in if gProved 
-                                then (True, "Proved by Algebraic Solver (valid for Integers): " ++ gReason, gTrace, gCache)
-                                else (False, "Integer Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
-                           _ ->
-                             let msg = "Integer domain parsed but solver is incomplete for this goal."
-                                       ++ if intBruteCandidate outcome
-                                          then " A bounded brute-force search is available but currently disabled."
-                                          else ""
-                             in (False, msg, baseTrace', maybeCache)        else if hasDiv'
-          then
+      
+      fallThrough baseTrace' hasInt' hasDiv' hasSqrt'
+        | any containsQuantifier theory =
+            (False, "Quantifiers in assumptions are not supported yet.", baseTrace', maybeCache)
+        | hasInt' =
+            let outcome = intSolve defaultIntSolveOptions theory formula
+            in case intResult outcome of
+                 Just True  -> (True, reasonOutcome outcome True, baseTrace', maybeCache)
+                 Just False -> (False, reasonOutcome outcome False, baseTrace', maybeCache)
+                 Nothing    ->
+                   case formula of
+                     Eq _ _ ->
+                       let (gProved, gReason, gTrace, gCache) = groebnerFallback customBuchberger maybeCache theory formula
+                       in if gProved
+                          then (True, "Proved by Algebraic Solver (valid for Integers): " ++ gReason, gTrace, gCache)
+                          else (False, "Integer Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
+                     _ ->
+                       let msg = "Integer domain parsed but solver is incomplete for this goal."
+                                 ++ if intBruteCandidate outcome
+                                    then " A bounded brute-force search is available but currently disabled."
+                                    else ""
+                       in (False, msg, baseTrace', maybeCache)
+        | hasDiv' =
             let (th', goal') = eliminateRational theory formula
                 hasSqrt'' = containsSqrtFormula goal' || any containsSqrtFormula th'
                 (th'', goal'') = if hasSqrt''
@@ -463,8 +521,7 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
                       else "Not proved via CAD with rational elimination"
                 trace = emptyTrace { usedAssumptions = th'' }
             in (proved, msg, trace, maybeCache)
-        else if hasSqrt'
-          then
+        | hasSqrt' =
             let (th', goal') = eliminateSqrt theory formula
                 proved = proveFormulaCAD th' goal'
                 msg = if proved
@@ -472,13 +529,12 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
                       else "Not proved via CAD with sqrt elimination"
                 trace = emptyTrace { usedAssumptions = th' }
             in (proved, msg, trace, maybeCache)
-        else if containsQuantifier formula
-          then
+        | containsQuantifier formula =
             let proved = solveQuantifiedFormulaCAD theory formula
                 msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
             in (proved, msg, baseTrace', maybeCache)
-        else
-          groebnerFallback customBuchberger maybeCache theory formula
+        | otherwise =
+            groebnerFallback customBuchberger maybeCache theory formula
   in
     case formula of
       Forall qs inner
@@ -924,6 +980,22 @@ intEvalFormula (Gt l r) = do
       a <- intEvalExpr l
       b <- intEvalExpr r
       return (a > b)
+intEvalFormula (Le l r) = intEvalFormula (Ge r l)
+intEvalFormula (Lt l r) = intEvalFormula (Gt r l)
+intEvalFormula (And f1 f2) =
+  case (intEvalFormula f1, intEvalFormula f2) of
+    (Just False, _) -> Just False
+    (_, Just False) -> Just False
+    (Just True, Just True) -> Just True
+    _ -> Nothing
+intEvalFormula (Or f1 f2) =
+  case (intEvalFormula f1, intEvalFormula f2) of
+    (Just True, _) -> Just True
+    (_, Just True) -> Just True
+    (Just False, Just False) -> Just False
+    _ -> Nothing
+intEvalFormula (Not f) = fmap not (intEvalFormula f)
+intEvalFormula _ = Nothing
 
 intEvalExpr :: Expr -> Maybe Integer
 intEvalExpr (IntConst n) = Just n
@@ -1109,6 +1181,22 @@ decideWithIntervals env (Eq l r) =
     _ -> Nothing
 decideWithIntervals env (Ge l r) = checkIneq False env l r
 decideWithIntervals env (Gt l r) = checkIneq True env l r
+decideWithIntervals env (Le l r) = checkIneq False env r l
+decideWithIntervals env (Lt l r) = checkIneq True env r l
+decideWithIntervals env (And f1 f2) =
+  case (decideWithIntervals env f1, decideWithIntervals env f2) of
+    (Just False, _) -> Just False
+    (_, Just False) -> Just False
+    (Just True, Just True) -> Just True
+    _ -> Nothing
+decideWithIntervals env (Or f1 f2) =
+  case (decideWithIntervals env f1, decideWithIntervals env f2) of
+    (Just True, _) -> Just True
+    (_, Just True) -> Just True
+    (Just False, Just False) -> Just False
+    _ -> Nothing
+decideWithIntervals env (Not f) = fmap not (decideWithIntervals env f)
+decideWithIntervals _ _ = Nothing
 
 checkIneq :: Bool -> Map.Map String Interval -> Expr -> Expr -> Maybe Bool
 checkIneq strict env l r =
