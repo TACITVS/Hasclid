@@ -25,7 +25,8 @@ When GeoSolver cannot decide, the system automatically selects the optimal algeb
 3.  **CAD (Cylindrical Algebraic Decomposition):** Real inequality solving using polynomial discriminants and sign analysis (1D-2D support).
 4.  **Sturm Sequences:** Real root counting for univariate polynomial inequalities.
 5.  **Integer Solver:** Linear interval solving with optional bounded brute-force search.
-6.  **Modular Arithmetic:** Probabilistic consistency checking over finite fields.
+6.  **SDP Solver (Sum-of-Squares):** Primal-Dual Interior Point Method for proving complex inequalities via Semidefinite Programming (internal backend).
+7.  **Modular Arithmetic:** Probabilistic consistency checking over finite fields.
 
 Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environment to define points, script theorems, and explore algebraic geometry interactively.
 
@@ -51,6 +52,8 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
     *   **Equality**: Automatically reduced using computed Groebner Bases of the hypothesis ideal.
     *   **Inequality**: Verified using root counting (Sturm sequences) and interval bisection.
     *   **Integer Arithmetic**: Specialized handling for integer constraints with algebraic fallback for polynomial identities.
+    *   **Structural Induction**: Automated proofs for universal integer properties (`:induction`).
+    *   **Symbolic Summation**: Support for `(sum i lo hi body)` primitives.
 *   **Interactive REPL**:
     *   **:point**: Define 2D/3D points.
     *   **:assume**: Add arbitrary polynomial constraints.
@@ -142,6 +145,7 @@ Start the REPL with `cabal run prover`.
 *   `:auto (<op> <lhs> <rhs>)`: Explicitly request automatic solver selection (same as direct formula).
 *   `:prove (<op> <lhs> <rhs>)`: Force Gröbner basis solver.
 *   `:wu (<op> <lhs> <rhs>)`: Force Wu's method (works only for equality goals).
+*   `:induction <formula>`: Attempt structural induction proof for `forall ((int n))` goals.
 *   `:lemma (<op> <lhs> <rhs>)`: Proves a statement. If valid, adds it to the persistent knowledge base (Lemmas) for future proofs.
 *   `:counterexample <formula>` or `:ce <formula>`: Search for a counterexample to the given formula.
 *   `:construct <formula>`: Search for a satisfying assignment for the given formula.
