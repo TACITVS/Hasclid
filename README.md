@@ -77,6 +77,14 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
 - **Integer Parsing**: Native support for `(int x)` and `(int-const n)`.
 - **Algebraic Fallback**: Automatically routes hard integer polynomial equalities to the Gröbner basis engine (valid since $\mathbb{Z} \subset \mathbb{R}$).
 
+### Erdos-Mordell Inequality (Generic)
+**Status**: ✅ **PROVED**
+- **Challenge**: Degree 12 polynomial with 4 variables (infeasible for standard CAD).
+- **Solution**: Degree Reduction via Auxiliary Variables.
+    - Introduced variables $R_a, b$ subject to $R_a^2 = x^2+y^2, b^2=u^2+v^2$.
+    - Reduced inequality to Degree 3.
+    - Proved via **CAD** (Cylindrical Algebraic Decomposition) in 6D space.
+
 ### Morley's Theorem (December 2025)
 **First automated proof of Morley's Theorem in HASCLID!**
 
