@@ -8,6 +8,7 @@ import Parser (parseFormulaWithMacros, SExpr(..), MacroMap)
 import ReplSupport (consumeBalancedScript, parenBalance, stripComment)
 import Data.List (isPrefixOf, isInfixOf)
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 
 -- Property 1: toPoly distributes over addition of constants
 prop_toPolyConstAdd :: Integer -> Integer -> Bool
@@ -53,7 +54,7 @@ prop_macro_expansion :: Bool
 prop_macro_expansion =
   let macros :: MacroMap
       macros = M.fromList [("inc", (["x"], List [Atom "+", Atom "x", Atom "1"]))]
-  in case parseFormulaWithMacros macros "(= (inc 1) 2)" of
+  in case parseFormulaWithMacros macros S.empty "(= (inc 1) 2)" of
        Right _ -> True  -- accept any successful parse; shape may vary across parser tweaks
        _ -> False
 

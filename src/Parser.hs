@@ -17,6 +17,7 @@ import Error
 import Data.Char (isDigit)
 import Data.Ratio ((%))
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 
 -- =============================================
 -- S-Expressions
@@ -108,9 +109,6 @@ expandMacros' depth macros expr@(List (Atom name : args)) =
                 -- Only substitute if the atom matches a parameter name
                 subst = M.fromList $ zip params expandedArgs
                 
-                -- Substitute into body, but be careful not to substitute global vars if they clash with params (though unique naming helps)
-                -- Actually, the issue might be that `e1`, `e2` etc in the body are being treated as parameters? No, they are atoms in the body.
-                -- They should be expanded in the next recursive step if they are macros.
                 substitutedBody = substituteSExpr subst body
             in 
                 -- Recursively expand the result
@@ -148,8 +146,8 @@ substituteSExpr subst (List xs) = List (map (substituteSExpr subst) xs)
 -- Expression Parsing
 -- =============================================
 
-exprFromSExpr :: SExpr -> Either ProverError Expr
-exprFromSExpr (Atom t)
+exprFromSExpr :: S.Set String -> SExpr -> Either ProverError Expr
+exprFromSExpr intVars (Atom t)
   | all (\c -> isDigit c || c == '-' || c == '/') t =
       if '/' `elem` t
       then case span (/= '/') t of
@@ -157,17 +155,18 @@ exprFromSExpr (Atom t)
                Left $ ParseError (InvalidNumber t) "Malformed rational number"
              (n, d) -> Right $ Const (read n % read (drop 1 d))
       else Right $ Const (fromInteger (read t) % 1)
+  | S.member t intVars = Right $ IntVar t
   | otherwise = Right $ Var t
 
-exprFromSExpr (List (Atom op : args)) = case op of
+exprFromSExpr intVars (List (Atom op : args)) = case op of
   "+" -> do
-    exprs <- mapM exprFromSExpr args
+    exprs <- mapM (exprFromSExpr intVars) args
     case exprs of
       [] -> Left $ ParseError (WrongArity "+" 1 0) "Addition requires at least 1 argument"
       _ -> Right $ foldl1 Add exprs
 
   "-" -> do
-    exprs <- mapM exprFromSExpr args
+    exprs <- mapM (exprFromSExpr intVars) args
     case exprs of
       [a] -> Right $ Sub (Const 0) a
       [a,b] -> Right $ Sub a b
@@ -175,13 +174,13 @@ exprFromSExpr (List (Atom op : args)) = case op of
                     "Subtraction requires 1 or 2 arguments"
 
   "*" -> do
-    exprs <- mapM exprFromSExpr args
+    exprs <- mapM (exprFromSExpr intVars) args
     case exprs of
       [] -> Left $ ParseError (WrongArity "*" 1 0) "Multiplication requires at least 1 argument"
       _ -> Right $ foldl1 Mul exprs
 
   "/" -> do
-    exprs <- mapM exprFromSExpr args
+    exprs <- mapM (exprFromSExpr intVars) args
     case exprs of
       [a,b] -> Right $ Div a b
       _ -> Left $ ParseError (WrongArity "/" 2 (length args))
@@ -189,7 +188,7 @@ exprFromSExpr (List (Atom op : args)) = case op of
 
   "^" -> case args of
     [a, Atom n] | all isDigit n -> do
-      base <- exprFromSExpr a
+      base <- exprFromSExpr intVars a
       Right $ Pow base (read n)
     [_, Atom n] -> Left $ ParseError (InvalidSyntax "exponent must be natural number")
                           ("Expected natural number exponent, got: " ++ n)
@@ -211,7 +210,7 @@ exprFromSExpr (List (Atom op : args)) = case op of
 
   "sqrt" -> case args of
     [a] -> do
-      e <- exprFromSExpr a
+      e <- exprFromSExpr intVars a
       Right $ Sqrt e
     _ -> Left $ ParseError (WrongArity "sqrt" 1 (length args))
                   "sqrt requires exactly 1 argument"
@@ -233,7 +232,7 @@ exprFromSExpr (List (Atom op : args)) = case op of
 
   "circle" -> case args of
     [Atom p, Atom c, r] -> do
-      radius <- exprFromSExpr r
+      radius <- exprFromSExpr intVars r
       Right $ Circle p c radius
     _ -> Left $ ParseError (WrongArity "circle" 3 (length args))
                   "Usage: (circle P Center Radius)"
@@ -283,7 +282,7 @@ exprFromSExpr (List (Atom op : args)) = case op of
       then Left $ ParseError (InvalidSyntax "matrix must be square") 
                      ("det expects square number of arguments (1, 4, 9, 16...), got " ++ show len)
       else do
-          elements <- mapM exprFromSExpr args
+          elements <- mapM (exprFromSExpr intVars) args
           -- Chunk into rows
           let rows = chunk n elements
           Right $ Determinant rows
@@ -314,43 +313,43 @@ exprFromSExpr (List (Atom op : args)) = case op of
   -- If unknown operator, it might be a macro that wasn't expanded (e.g. wrong arity)
   _ -> Left $ ParseError (UnknownOperator op) ("Unknown operator or macro: " ++ op)
 
-exprFromSExpr _ = Left $ ParseError (InvalidSyntax "invalid S-Expression")
+exprFromSExpr _ _ = Left $ ParseError (InvalidSyntax "invalid S-Expression")
                          "Invalid S-Expression format"
 
 -- Parse strictly with macros
-parseFormulaWithMacros :: MacroMap -> String -> Either ProverError Formula
-parseFormulaWithMacros macros input = do
+parseFormulaWithMacros :: MacroMap -> S.Set String -> String -> Either ProverError Formula
+parseFormulaWithMacros macros intVars input = do
   let tokens = tokenizePrefix input
   (sexpr, rest) <- parseSExpr tokens
   let expanded = expandMacros macros sexpr
-  formula <- formulaFromSExpr macros expanded
+  formula <- formulaFromSExpr macros intVars expanded
   if null rest
      then Right formula
      else Left $ ParseError (ExtraTokens rest) ("Extra tokens after formula: " ++ show rest)
 
 -- Legacy wrapper for compatibility
 parseFormulaPrefix :: String -> Either ProverError Formula
-parseFormulaPrefix = parseFormulaWithMacros M.empty
+parseFormulaPrefix = parseFormulaWithMacros M.empty S.empty
 
 -- NEW: Parse formula and return remaining tokens (for :solve) with macros
-parseFormulaWithRestAndMacros :: MacroMap -> String -> Either ProverError (Formula, [String])
-parseFormulaWithRestAndMacros macros input = do
+parseFormulaWithRestAndMacros :: MacroMap -> S.Set String -> String -> Either ProverError (Formula, [String])
+parseFormulaWithRestAndMacros macros intVars input = do
   let tokens = tokenizePrefix input
   (sexpr, rest) <- parseSExpr tokens
   let expanded = expandMacros macros sexpr
-  formula <- formulaFromSExpr macros expanded
+  formula <- formulaFromSExpr macros intVars expanded
   Right (formula, rest)
 
 -- Legacy wrapper
 parseFormulaWithRest :: String -> Either ProverError (Formula, [String])
-parseFormulaWithRest = parseFormulaWithRestAndMacros M.empty
+parseFormulaWithRest = parseFormulaWithRestAndMacros M.empty S.empty
 
 -- =============================================
 -- Formula parsing helpers (support quantifiers)
 -- =============================================
 
-formulaFromSExpr :: MacroMap -> SExpr -> Either ProverError Formula
-formulaFromSExpr macros sexpr =
+formulaFromSExpr :: MacroMap -> S.Set String -> SExpr -> Either ProverError Formula
+formulaFromSExpr macros intVars sexpr =
   case sexpr of
     List (Atom "angle=abs" : args) ->
       case args of
@@ -363,32 +362,32 @@ formulaFromSExpr macros sexpr =
         _ -> Left $ ParseError (WrongArity "angle=" 6 (length args)) "Usage: (angle= A B C D E F)"
 
     List [Atom "=", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
+      l <- exprFromSExpr intVars lhs
+      r <- exprFromSExpr intVars rhs
       Right $ Eq l r
 
     List [Atom ">=", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
+      l <- exprFromSExpr intVars lhs
+      r <- exprFromSExpr intVars rhs
       Right $ Ge l r
 
     List [Atom ">", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
+      l <- exprFromSExpr intVars lhs
+      r <- exprFromSExpr intVars rhs
       Right $ Gt l r
 
     List [Atom "<=", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
+      l <- exprFromSExpr intVars lhs
+      r <- exprFromSExpr intVars rhs
       Right $ Le l r
 
     List [Atom "<", lhs, rhs] -> do
-      l <- exprFromSExpr lhs
-      r <- exprFromSExpr rhs
+      l <- exprFromSExpr intVars lhs
+      r <- exprFromSExpr intVars rhs
       Right $ Lt l r
 
     List (Atom "and" : args) -> do
-      fs <- mapM (formulaFromSExpr macros) args
+      fs <- mapM (formulaFromSExpr macros intVars) args
       case fs of
         [] -> Left $ ParseError (WrongArity "and" 2 0) "And requires at least 2 arguments (or 1)"
         [x] -> Right x
@@ -396,38 +395,47 @@ formulaFromSExpr macros sexpr =
 
     -- root-between: (root-between var poly lo hi) expands to poly=0 ∧ lo<var ∧ var<hi
     List [Atom "root-between", Atom v, poly, lo, hi] -> do
-      p <- exprFromSExpr poly
-      loE <- exprFromSExpr lo
-      hiE <- exprFromSExpr hi
-      let eqPart = Eq p (Const 0)
-          loPart = Gt (Var v) loE
-          hiPart = Lt (Var v) hiE
+      p <- exprFromSExpr intVars poly
+      loE <- exprFromSExpr intVars lo
+      hiE <- exprFromSExpr intVars hi
+      let vExpr = if S.member v intVars then IntVar v else Var v
+          eqPart = Eq p (Const 0)
+          loPart = Gt vExpr loE
+          hiPart = Lt vExpr hiE
       Right (And eqPart (And loPart hiPart))
 
     List (Atom "or" : args) -> do
-      fs <- mapM (formulaFromSExpr macros) args
+      fs <- mapM (formulaFromSExpr macros intVars) args
       case fs of
         [] -> Left $ ParseError (WrongArity "or" 2 0) "Or requires at least 2 arguments (or 1)"
         [x] -> Right x
         _ -> Right $ foldr1 Or fs
 
     List [Atom "not", arg] -> do
-      f <- formulaFromSExpr macros arg
+      f <- formulaFromSExpr macros intVars arg
       Right $ Not f
 
     List [Atom "implies", p, q] -> do
-      p' <- formulaFromSExpr macros p
-      q' <- formulaFromSExpr macros q
+      p' <- formulaFromSExpr macros intVars p
+      q' <- formulaFromSExpr macros intVars q
       Right $ Or (Not p') q'
 
     List [Atom "forall", binderBlock, body] -> do
-      qs <- parseBinderBlock binderBlock
-      inner <- formulaFromSExpr macros body
+      qs <- parseBinderBlock intVars binderBlock
+      -- Add bound integer variables to the set for the body?
+      -- If declared 'int' in quantifier, it's tracked in QuantVar, but we might want `exprFromSExpr` to know.
+      -- However, `exprFromSExpr` currently handles `IntVar` explicitly if it parses `(int x)`.
+      -- If `(forall ((int n)) ...)` is used, `qs` has type QuantInt.
+      -- Inside body, `n` should be `IntVar "n"`.
+      -- So we should extend `intVars` for the body.
+      let newInts = foldr S.insert intVars [ qvName q | q <- qs, qvType q == QuantInt ]
+      inner <- formulaFromSExpr macros newInts body
       Right $ Forall qs inner
 
     List [Atom "exists", binderBlock, body] -> do
-      qs <- parseBinderBlock binderBlock
-      inner <- formulaFromSExpr macros body
+      qs <- parseBinderBlock intVars binderBlock
+      let newInts = foldr S.insert intVars [ qvName q | q <- qs, qvType q == QuantInt ]
+      inner <- formulaFromSExpr macros newInts body
       Right $ Exists qs inner
 
     List [Atom op, _, _] | op `elem` ["=", ">=", ">", "<=", "<"] ->
@@ -436,29 +444,29 @@ formulaFromSExpr macros sexpr =
     _ -> Left $ ParseError (InvalidSyntax "not a formula")
                   "Expected format: (= lhs rhs) OR (>= lhs rhs) OR (> lhs rhs) OR (<= lhs rhs) OR (< lhs rhs) OR a quantifier (forall/exists)"
 
-parseQuantVar :: SExpr -> Either ProverError QuantVar
-parseQuantVar (Atom v) = Right $ QuantVar v QuantReal Nothing Nothing
-parseQuantVar (List [Atom v]) = Right $ QuantVar v QuantReal Nothing Nothing
-parseQuantVar (List [Atom v, lo, hi]) = do
-  loE <- exprFromSExpr lo
-  hiE <- exprFromSExpr hi
+parseQuantVar :: S.Set String -> SExpr -> Either ProverError QuantVar
+parseQuantVar _ (Atom v) = Right $ QuantVar v QuantReal Nothing Nothing
+parseQuantVar _ (List [Atom v]) = Right $ QuantVar v QuantReal Nothing Nothing
+parseQuantVar intVars (List [Atom v, lo, hi]) = do
+  loE <- exprFromSExpr intVars lo
+  hiE <- exprFromSExpr intVars hi
   Right $ QuantVar v QuantReal (Just loE) (Just hiE)
-parseQuantVar (List [Atom "int", Atom v]) = Right $ QuantVar v QuantInt Nothing Nothing
-parseQuantVar (List [Atom "int", Atom v, lo, hi]) = do
-  loE <- exprFromSExpr lo
-  hiE <- exprFromSExpr hi
+parseQuantVar _ (List [Atom "int", Atom v]) = Right $ QuantVar v QuantInt Nothing Nothing
+parseQuantVar intVars (List [Atom "int", Atom v, lo, hi]) = do
+  loE <- exprFromSExpr intVars lo
+  hiE <- exprFromSExpr intVars hi
   Right $ QuantVar v QuantInt (Just loE) (Just hiE)
-parseQuantVar (List [Atom "real", Atom v]) = Right $ QuantVar v QuantReal Nothing Nothing
-parseQuantVar (List [Atom "real", Atom v, lo, hi]) = do
-  loE <- exprFromSExpr lo
-  hiE <- exprFromSExpr hi
+parseQuantVar _ (List [Atom "real", Atom v]) = Right $ QuantVar v QuantReal Nothing Nothing
+parseQuantVar intVars (List [Atom "real", Atom v, lo, hi]) = do
+  loE <- exprFromSExpr intVars lo
+  hiE <- exprFromSExpr intVars hi
   Right $ QuantVar v QuantReal (Just loE) (Just hiE)
-parseQuantVar bad =
+parseQuantVar _ bad =
   Left $ ParseError (InvalidSyntax "quantifier binder") ("Invalid binder: " ++ show bad ++ ". Expected name or (int name) or (name lo hi).")
 
-parseBinderBlock :: SExpr -> Either ProverError [QuantVar]
-parseBinderBlock (List binders) = mapM parseQuantVar binders
-parseBinderBlock single = mapM parseQuantVar [single]
+parseBinderBlock :: S.Set String -> SExpr -> Either ProverError [QuantVar]
+parseBinderBlock intVars (List binders) = mapM (parseQuantVar intVars) binders
+parseBinderBlock intVars single = mapM (parseQuantVar intVars) [single]
 
 -- Helper: Chunk list into sublists of size n
 chunk :: Int -> [a] -> [[a]]

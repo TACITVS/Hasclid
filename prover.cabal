@@ -20,7 +20,7 @@ extra-source-files: CHANGELOG.md
 common warnings
     ghc-options: -Wall
 
-executable prover
+executable prover-int
     main-is:          Main.hs
     hs-source-dirs:   src
     other-modules:

@@ -1,0 +1,22 @@
+; Level 7: Ptolemy's Theorem (Equality)
+; For cyclic quadrilateral, AC * BD = AB * CD + BC * DA.
+; Squared version to avoid roots: (AC*BD)^2 = (AB*CD + BC*DA)^2.
+
+:point A xA yA
+:point B xB yB
+:point C xC yC
+:point D xD yD
+
+; Concyclic constraint (all on unit circle for simplicity wlog)
+:assume (= (+ (^ xA 2) (^ yA 2)) 1)
+:assume (= (+ (^ xB 2) (^ yB 2)) 1)
+:assume (= (+ (^ xC 2) (^ yC 2)) 1)
+:assume (= (+ (^ xD 2) (^ yD 2)) 1)
+
+; Goal: (AC*BD)^2 = ...
+; p=AC, q=BD, a=AB, b=BC, c=CD, d=DA.
+; (pq)^2 = (ac+bd)^2 => p^2 q^2 = a^2 c^2 + b^2 d^2 + 2abcd.
+; This still has 'abcd' (roots).
+; The fully polynomial version is (p^2 q^2 - a^2 c^2 - b^2 d^2)^2 = 4 a^2 b^2 c^2 d^2.
+
+:prove (= (^ (- (* (dist2 A C) (dist2 B D)) (+ (* (dist2 A B) (dist2 C D)) (* (dist2 B C) (dist2 D A)))) 2) (* 4 (* (dist2 A B) (* (dist2 C D) (* (dist2 B C) (dist2 D A))))))

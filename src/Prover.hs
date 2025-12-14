@@ -128,6 +128,7 @@ partitionTheory (f:fs) =
   let (subs, constrs) = partitionTheory fs
   in case f of
        Eq (Var _) _ -> (f:subs, constrs)
+       Eq (IntVar _) _ -> (f:subs, constrs)
        Eq _ _       -> (subs, f:constrs)
        _            -> (subs, constrs)
 
@@ -378,11 +379,18 @@ proveTheoryWithCache maybeCache theory formula =
                Just True  -> (True, reasonOutcome outcome True, baseTrace, maybeCache)
                Just False -> (False, reasonOutcome outcome False, baseTrace, maybeCache)
                Nothing    ->
-                 let msg = "Integer domain parsed but solver is incomplete for this goal."
-                           ++ if intBruteCandidate outcome
-                              then " A bounded brute-force search is available but currently disabled."
-                              else ""
-                 in (False, msg, baseTrace, maybeCache)
+                 case formula of
+                   Eq _ _ -> 
+                     let (gProved, gReason, gTrace, gCache) = groebnerFallback buchberger maybeCache theory formula
+                     in if gProved 
+                        then (True, "Proved by Algebraic Solver (valid for Integers): " ++ gReason, gTrace, gCache)
+                        else (False, "Integer Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
+                   _ ->
+                     let msg = "Integer domain parsed but solver is incomplete for this goal."
+                               ++ if intBruteCandidate outcome
+                                  then " A bounded brute-force search is available but currently disabled."
+                                  else ""
+                     in (False, msg, baseTrace, maybeCache)
       | hasDiv =
           let (th', goal') = eliminateRational theory formula
               hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
@@ -422,19 +430,25 @@ proveTheoryWithOptions customBuchberger maybeCache theory formula =
       fallThrough baseTrace' hasInt' hasDiv' hasSqrt' =
         if any containsQuantifier theory
           then (False, "Quantifiers in assumptions are not supported yet.", baseTrace', maybeCache)
-        else if hasInt'
-          then
-            let outcome = intSolve defaultIntSolveOptions theory formula
-            in case intResult outcome of
-                 Just True  -> (True, reasonOutcome outcome True, baseTrace', maybeCache)
-                 Just False -> (False, reasonOutcome outcome False, baseTrace', maybeCache)
-                 Nothing    ->
-                   let msg = "Integer domain parsed but solver is incomplete for this goal."
-                             ++ if intBruteCandidate outcome
-                                then " A bounded brute-force search is available but currently disabled."
-                                else ""
-                   in (False, msg, baseTrace', maybeCache)
-        else if hasDiv'
+              else if hasInt'
+                then
+                  let outcome = intSolve defaultIntSolveOptions theory formula
+                  in case intResult outcome of
+                       Just True  -> (True, reasonOutcome outcome True, baseTrace', maybeCache)
+                       Just False -> (False, reasonOutcome outcome False, baseTrace', maybeCache)
+                       Nothing    ->
+                         case formula of
+                           Eq _ _ -> 
+                             let (gProved, gReason, gTrace, gCache) = groebnerFallback customBuchberger maybeCache theory formula
+                             in if gProved 
+                                then (True, "Proved by Algebraic Solver (valid for Integers): " ++ gReason, gTrace, gCache)
+                                else (False, "Integer Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
+                           _ ->
+                             let msg = "Integer domain parsed but solver is incomplete for this goal."
+                                       ++ if intBruteCandidate outcome
+                                          then " A bounded brute-force search is available but currently disabled."
+                                          else ""
+                             in (False, msg, baseTrace', maybeCache)        else if hasDiv'
           then
             let (th', goal') = eliminateRational theory formula
                 hasSqrt'' = containsSqrtFormula goal' || any containsSqrtFormula th'

@@ -1,0 +1,5 @@
+; Level 5: Cauchy-Schwarz Inequality (2D)
+; (a^2 + b^2)(x^2 + y^2) >= (ax + by)^2
+; Simple inequality for CAD/SOS.
+
+:prove (forall (a b x y) (>= (* (+ (^ a 2) (^ b 2)) (+ (^ x 2) (^ y 2))) (^ (+ (* a x) (* b y)) 2)))

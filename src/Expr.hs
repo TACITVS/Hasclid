@@ -536,8 +536,8 @@ fromUnivariate v coeffs =
 toPoly :: Expr -> Poly
 toPoly (Var x)     = polyFromVar x
 toPoly (Const r)   = polyFromConst r
-toPoly (IntVar _)  = error "Integer Error: Integer variables are not supported by polynomial converter yet."
-toPoly (IntConst _) = error "Integer Error: Integer constants are not supported by polynomial converter yet."
+toPoly (IntVar x)  = polyFromVar x
+toPoly (IntConst i) = polyFromConst (fromIntegral i)
 toPoly (Add e1 e2) = polyAdd (toPoly e1) (toPoly e2)
 toPoly (Sub e1 e2) = polySub (toPoly e1) (toPoly e2)
 toPoly (Mul e1 e2) = polyMul (toPoly e1) (toPoly e2)
@@ -819,7 +819,13 @@ containsIntFormula (Exists qs f) =
 -- =============================================
 
 buildSubMap :: Theory -> M.Map String Poly
-buildSubMap theory = M.fromList [ (v, toPoly e) | Eq (Var v) e <- theory ]
+buildSubMap theory = M.fromList $ concat 
+  [ case lhs of
+      Var v -> [(v, toPoly rhs)]
+      IntVar v -> [(v, toPoly rhs)]
+      _ -> []
+  | Eq lhs rhs <- theory 
+  ]
 
 evaluatePoly :: M.Map String Poly -> Poly -> Poly
 evaluatePoly subM (Poly m) =

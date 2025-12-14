@@ -1,0 +1,50 @@
+; Level 4: Nine-Point Circle
+; Midpoints of sides (M_AB, M_BC, M_CA) and feet of altitudes lie on a circle.
+; Simplification: Just prove 3 midpoints and 1 foot are concyclic.
+
+:point A 0 yA
+:point B xB 0
+:point C xC 0
+
+; Midpoints
+:point Mc xMAB yMAB ; on AB
+:point Ma xMBC yMBC ; on BC
+:point Mb xMCA yMCA ; on CA
+
+:assume (= (midpoint A B Mc) 0)
+:assume (= (midpoint B C Ma) 0)
+:assume (= (midpoint C A Mb) 0)
+
+; Foot of altitude from A to BC.
+; BC is on x-axis (y=0). A is (0, yA).
+; Altitude is x=0. Foot is origin? No, A is (0, yA).
+; Let's make general.
+; A=(0,a), B=(b,0), C=(c,0).
+; Foot from A is F=(0,0).
+:point F 0 0
+
+; Check if Mc, Ma, Mb, F are concyclic.
+; Ma is midpoint of BC: ((b+c)/2, 0).
+; Mc is midpoint of AB: (b/2, a/2).
+; Mb is midpoint of AC: (c/2, a/2).
+; F is (0,0).
+
+; Prove concyclic(F, Ma, Mc, Mb) = 0.
+; circle(P,Q,R,S) => det condition.
+; We use 'circle' macro/function if available, or just check distances from circumcenter.
+; Or use Ptolemy on the quad formed by them?
+; Or just check if F is on circle passing through Ma, Mc, Mb.
+
+; Center of circle through Ma((b+c)/2, 0), Mc(b/2, a/2), Mb(c/2, a/2).
+; Midpoint of MaF is ((b+c)/4, 0). Perpendicular bisector x = (b+c)/4.
+; ...
+; Let's just define a generic Circle constraint.
+; Exists O, R such that dist(O,P) = R for all 4 points.
+; We can't use quantifiers yet for this test level comfortably.
+; Let's assume the center N is the midpoint of OH (standard Euler line fact).
+; O = circumcenter of ABC. H = orthocenter.
+; Or simply prove (det ...) = 0 for concyclic.
+; | x^2+y^2  x  y  1 |
+; | ...              | = 0
+
+:prove (= (concyclic F Ma Mc Mb) 0)

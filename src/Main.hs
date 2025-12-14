@@ -25,11 +25,13 @@ import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheS
 import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder, compareMonomials)
 
 import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice)
+import System.Environment (getArgs)
 import Control.Monad (foldM)
 import Data.List (isPrefixOf)
 import Data.Ratio ((%))
 import Data.Char (isDigit, toLower)
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 import qualified Control.Exception as CE
 import System.Timeout (timeout)
 import Control.Monad.Except (ExceptT, runExceptT)
@@ -43,13 +45,20 @@ import Control.Monad (unless)
 
 main :: IO ()
 main = do
-  putStr "==================================================\n"
-  putStrLn "   Hasclid v9.0 - Multi-Solver System"
-  putStrLn "   Intelligent routing: Wu/Grobner/CAD + Router"
-  putStrLn "   Type :help for commands."
-  putStrLn "=================================================="
+  args <- getArgs
   let env = defaultEnv
-  repl env (initialState env)
+  case args of
+    [] -> do
+      putStr "==================================================\n"
+      putStrLn "   Hasclid v9.0 - Multi-Solver System"
+      putStrLn "   Intelligent routing: Wu/Grobner/CAD + Router"
+      putStrLn "   Type :help for commands."
+      putStrLn "=================================================="
+      repl env (initialState env)
+    (fileName:_) -> do
+      content <- readFile fileName
+      _ <- processScriptStreaming env (initialState env) content
+      return ()
 
 -- =============================================
 -- 2. REPL State
@@ -70,6 +79,7 @@ data REPLState = REPLState
   , lastTimeoutSeconds :: Maybe Int -- Tracks last timeout to allow automatic retry escalation
   , solverOptions :: SolverOptions
   , construction :: Construction -- Area Method Construction
+  , intVars :: S.Set String -- Declared Integer Variables
   }
 
 data REPLEnv = REPLEnv
@@ -91,7 +101,7 @@ type REPLM = ReaderT REPLEnv (ExceptT ProverError IO)
 
 initialState :: REPLEnv -> REPLState
 initialState env =
-  REPLState [] [] [] False True emptyCache (envTermOrder env) (envUseOptimized env) (envSelectionStrategy env) M.empty 30 Nothing (envSolverOptions env) []
+  REPLState [] [] [] False True emptyCache (envTermOrder env) (envUseOptimized env) (envSelectionStrategy env) M.empty 30 Nothing (envSolverOptions env) [] S.empty
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -230,11 +240,11 @@ handleCommand state stateWithHist newHist input = do
       pure (state, formatHistory (history state))
 
     (":reset":_) ->
-      pure (stateWithHist { theory = [], groebnerCache = clearCache (groebnerCache state) }
-           , "Active Theory reset (Lemmas preserved, Cache cleared).")
+      pure (stateWithHist { theory = [], groebnerCache = clearCache (groebnerCache state), intVars = S.empty }
+           , "Active Theory reset (Lemmas preserved, Cache cleared, IntVars cleared).")
     (":soft-reset":_) ->
       pure (stateWithHist { theory = [] }
-           , "Active Theory reset (Lemmas preserved, Cache preserved).")
+           , "Active Theory reset (Lemmas preserved, Cache preserved, IntVars preserved).")
     (":clear":_) ->
       pure (envAwareInitial { history = newHist }, "Full System Reset.")
 
@@ -251,6 +261,10 @@ handleCommand state stateWithHist newHist input = do
                 then "Auto-simplification ON: Expressions will be simplified automatically"
                 else "Auto-simplification OFF: Expressions will be shown in raw form"
       pure (stateWithHist { autoSimplify = newAutoSimplify }, msg)
+
+    (":declare-int":vars) -> do
+      let newIntVars = S.union (intVars state) (S.fromList vars)
+      pure (stateWithHist { intVars = newIntVars }, "Declared integer variables: " ++ unwords vars)
 
     (":clear-macros":_) ->
       pure (stateWithHist { macros = M.empty }, "All macros cleared.")
@@ -386,6 +400,7 @@ handleCommand state stateWithHist newHist input = do
       , "  :load-lemmas <file>     Load lemmas from file"
       , "  :verbose                Toggle verbose mode"
       , "  :auto-simplify          Toggle automatic expression simplification"
+      , "  :declare-int v1 v2...   Declare variables as integers"
       , "  :bruteforce on|off      Toggle bounded brute-force fallback for integer goals"
       , "  :set-timeout <seconds>  Set solver timeout (default: 30)"
       , "  :show-timeout           Show current timeout setting"
@@ -433,19 +448,19 @@ handleCommand state stateWithHist newHist input = do
 
     (":assume":_) ->
       let str = drop 8 input
-      in case parseFormulaWithMacros (macros state) str of
+      in case parseFormulaWithMacros (macros state) (intVars state) str of
            Right f -> pure (stateWithHist { theory = f : theory state }, "Assumed: " ++ prettyFormula f)
            Left err -> pure (stateWithHist, formatError err)
 
     (":lemma":_) ->
       let str = drop 7 input
-      in case parseFormulaWithMacros (macros state) str of
+      in case parseFormulaWithMacros (macros state) (intVars state) str of
            Right f -> pure (stateWithHist { lemmas = f : lemmas state }, "Lemma saved: " ++ prettyFormula f)
            Left err -> pure (stateWithHist, formatError err)
 
     (":prove":_) ->
       let str = drop 7 input
-      in case parseFormulaWithMacros (macros state) str of
+      in case parseFormulaWithMacros (macros state) (intVars state) str of
            Left err -> pure (stateWithHist, formatError err)
            Right formula -> do
              let current = solverTimeout state
@@ -465,7 +480,7 @@ handleCommand state stateWithHist newHist input = do
 
     (":wu":_) ->
       let str = drop 4 input
-      in case parseFormulaWithMacros (macros state) str of
+      in case parseFormulaWithMacros (macros state) (intVars state) str of
            Left err -> return (stateWithHist, formatError err)
            Right formula -> case formula of
              Eq _ _ -> do
@@ -487,7 +502,7 @@ handleCommand state stateWithHist newHist input = do
 
     (":auto":_) ->
       let str = drop 6 input
-      in case parseFormulaWithMacros (macros state) str of
+      in case parseFormulaWithMacros (macros state) (intVars state) str of
            Left err -> pure (stateWithHist, formatError err)
            Right formula ->
              let fullContext = theory state ++ lemmas state
@@ -528,7 +543,7 @@ handleCommand state stateWithHist newHist input = do
     (":quit":_) -> pure (stateWithHist, "Goodbye.")
 
     -- If it is not a command, try to parse as a formula and auto-solve
-    _ -> case parseFormulaWithMacros (macros state) input of
+    _ -> case parseFormulaWithMacros (macros state) (intVars state) input of
            Right formula ->
              let fullContext = theory state ++ lemmas state
                  current = solverTimeout state
@@ -593,7 +608,7 @@ processFormulaLine env state line =
   let trimmed = dropWhile (== ' ') line
   in if null trimmed || isCommentLine trimmed
        then return ""
-       else case parseFormulaWithMacros (macros state) trimmed of
+       else case parseFormulaWithMacros (macros state) (intVars state) trimmed of
               Left err -> return $ formatError err
               Right formula -> do
                 let fullContext = theory state ++ lemmas state
@@ -614,7 +629,7 @@ processScriptStreaming env state content = go state (lines content)
                       (c:_) | c /= ':' -> do
                         putStrLn ("> " ++ trimmed)
                         -- Treat as formula line: auto-solve with timeout
-                        case parseFormulaWithMacros (macros st) trimmed of
+                        case parseFormulaWithMacros (macros st) (intVars st) trimmed of
                           Right formula -> do
                             let fullContext = theory st ++ lemmas st
                                 current = solverTimeout st

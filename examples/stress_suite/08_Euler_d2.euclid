@@ -1,0 +1,22 @@
+; Level 8: Euler's Theorem (d^2 = R(R-2r))
+; Distance between circumcenter (O) and incenter (I).
+; R = circumradius, r = inradius.
+; We verify this for a specific parameterized triangle to avoid massive symbolic swell.
+; 3-4-5 Triangle.
+; R = 2.5. r = 1.
+; d^2 = R(R-2r) = 2.5(2.5 - 2) = 2.5 * 0.5 = 1.25.
+; O = (1.5, 2) ? No.
+; A=(0,0), B=(3,0), C=(0,4).
+; Circumcenter O is midpoint of hypotenuse BC: (1.5, 2).
+; Incenter I: (r,r) = (1,1).
+; dist2(O,I) = (1.5-1)^2 + (2-1)^2 = 0.5^2 + 1^2 = 0.25 + 1 = 1.25.
+; Matches.
+
+:point A 0 0
+:point B 3 0
+:point C 0 4
+
+:point O 1.5 2
+:point I 1 1
+
+:prove (= (dist2 O I) 1.25)

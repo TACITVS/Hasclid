@@ -1,0 +1,17 @@
+; Level 10: Erdos-Mordell (Component B)
+; R_b >= d_a + d_c
+; The boss.
+
+:set-timeout 300
+
+:assume (= (^ s 2) 3)
+:assume (> s 0)
+:assume (> y 0)
+:assume (> (+ (- (* s x) y) s) 0)
+:assume (> (+ (- (* (- 0 s) x) y) s) 0)
+:assume (= da y)
+:assume (= dc (/ (+ (- (* s x) y) s) 2))
+:assume (= (^ Rb 2) (+ (^ (+ x 1) 2) (^ y 2)))
+:assume (>= Rb 0)
+
+:prove (>= Rb (+ da dc))

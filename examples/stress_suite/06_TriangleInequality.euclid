@@ -1,0 +1,12 @@
+; Level 6: Triangle Inequality (Smart Squaring)
+; AB + BC >= AC
+; With Smart Squaring, this becomes (AB+BC)^2 >= AC^2 => AB^2 + BC^2 + 2 AB*BC >= AC^2.
+; Which is AB^2 + BC^2 - AC^2 >= -2 AB*BC.
+; If LHS >= 0, trivial. If LHS < 0, we need to square again.
+; Hasclid's smart squaring handles the first step.
+
+:point A 0 0
+:point B xB yB
+:point C xC 0
+
+:prove (>= (+ (sqrt (dist2 A B)) (sqrt (dist2 B C))) (sqrt (dist2 A C)))

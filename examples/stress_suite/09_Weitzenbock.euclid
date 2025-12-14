@@ -1,0 +1,15 @@
+; Level 9: Weitzenbock's Inequality
+; a^2 + b^2 + c^2 >= 4 * sqrt(3) * Area
+; s = sqrt(3).
+; Area = 0.5 * |xA(yB-yC) + xB(yC-yA) + xC(yA-yB)|.
+; WLOG A=(0,0), B=(c,0), C=(x,y).
+; a^2 = (x-c)^2 + y^2. b^2 = x^2 + y^2. c^2 = c^2.
+; Area = 0.5 * |0 + c(y-0) + x(0)| = 0.5 * cy.
+; Target: (x-c)^2 + y^2 + x^2 + y^2 + c^2 >= 4 * s * 0.5 * cy = 2scy.
+; 2x^2 + 2y^2 + 2c^2 - 2cx - 2scy >= 0.
+; x^2 + y^2 + c^2 - cx - scy >= 0.
+
+:assume (= (^ s 2) 3)
+:assume (> s 0)
+
+:prove (forall (c x y) (>= (+ (+ (^ (- x c) 2) (^ y 2)) (+ (+ (^ x 2) (^ y 2)) (^ c 2))) (* 2 (* s (* c y)))))

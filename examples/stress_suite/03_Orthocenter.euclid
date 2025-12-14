@@ -1,0 +1,30 @@
+; Level 3: Orthocenter Existence
+; The three altitudes of a triangle intersect at a single point.
+; Constructive geometry.
+
+:point A 0 yA
+:point B xB 0
+:point C xC 0
+
+; H is intersection of altitude from A (x=0) and altitude from B.
+; Altitude from A is x=0 (since BC is on x-axis).
+; Altitude from B is perp to AC.
+; Slope AC = (0-yA)/(xC-0) = -yA/xC.
+; Slope AltB = xC/yA.
+; Line AltB: y - 0 = (xC/yA)(x - xB) => y*yA = xC(x - xB).
+
+:point H 0 yH
+:assume (= (* yH yA) (* xC (- 0 xB))) ; H lies on AltB (with xH=0)
+
+; Now prove H lies on Altitude from C.
+; AltC perp to AB.
+; Slope AB = (0-yA)/(xB-0) = -yA/xB.
+; Slope AltC = xB/yA.
+; Line AltC: y - 0 = (xB/yA)(x - xC).
+; Check if H(0, yH) satisfies this.
+; yH * yA = xB(0 - xC) = -xB*xC.
+
+; Goal: Prove yH*yA = -xB*xC given yH*yA = xC(-xB).
+; Trivial algebra, but geometry setup is key.
+
+:prove (= (* yH yA) (* xB (- 0 xC)))

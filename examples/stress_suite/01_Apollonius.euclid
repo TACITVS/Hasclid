@@ -1,0 +1,28 @@
+; Level 1: Apollonius Theorem
+; Relation between median and sides of a triangle.
+; Simple equality, should be trivial for F4 or Area Method.
+
+:point A 0 0
+:point B 4 0
+:point C 2 4
+:point M 2 0 ; Midpoint of AB
+
+; Check midpoint
+:assume (= (midpoint A B M) 0)
+
+; Goal: AB^2 + AC^2 = 2(AM^2 + CM^2)
+; Note: M is midpoint of AB? No, standard theorem is median to BC.
+; Let M be midpoint of BC.
+; A=(0,4), B=(-2,0), C=(2,0). M=(0,0).
+; AB^2 = 4+16=20. AC^2=20. Sum=40.
+; AM^2=16. BM^2=4. 2(16+4)=40. Correct.
+
+; Let's use generic coordinates.
+:point A xA yA
+:point B xB yB
+:point C xC yC
+:point M xM yM
+
+:assume (= (midpoint B C M) 0)
+
+:prove (= (+ (dist2 A B) (dist2 A C)) (* 2 (+ (dist2 A M) (dist2 B M))))
