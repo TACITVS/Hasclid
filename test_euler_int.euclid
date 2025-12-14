@@ -1,0 +1,10 @@
+:verbose
+:declare-int a1 a2 a3 a4 b1 b2 b3 b4 N1 N2 c1 c2 c3 c4
+:assume (= N1 (+ (^ a1 2) (^ a2 2) (^ a3 2) (^ a4 2)))
+:assume (= N2 (+ (^ b1 2) (^ b2 2) (^ b3 2) (^ b4 2)))
+:assume (= c1 (- (* a1 b1) (+ (* a2 b2) (* a3 b3) (* a4 b4))))
+:assume (= c2 (+ (* a1 b2) (* a2 b1) (* a3 b4) (- 0 (* a4 b3))))
+:assume (= c3 (+ (* a1 b3) (- 0 (* a2 b4)) (* a3 b1) (* a4 b2)))
+:assume (= c4 (+ (* a1 b4) (* a2 b3) (- 0 (* a3 b2)) (* a4 b1)))
+:list
+:prove (= (* N1 N2) (+ (^ c1 2) (^ c2 2) (^ c3 2) (^ c4 2)))

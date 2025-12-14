@@ -13,7 +13,6 @@ import Data.List (sortBy, foldl', nub)
 import TermOrder (compareMonomials, TermOrder(..))
 import Data.Ratio (numerator, denominator)
 import Numeric.Natural (Natural)
-import Positivity.SDP (solveSDP, GramMatrix)
 
 -- =============================================
 -- 1. Double-Precision Polynomials
@@ -77,31 +76,10 @@ checkSOSNumeric params p =
   let pd = fromPoly params p
   in case cholesky pd [] of
        Just res -> Just res
-       Nothing -> checkSOSSDP pd
-
-checkSOSSDP :: PolyD -> Maybe [PolyD]
-checkSOSSDP (PolyD m) =
-  let 
-      -- Generate basis monomials: All monomials with degree <= half max degree?
-      -- Simplified: Take all monomials M such that M^2 appears in P with positive coeff?
-      -- Better: Newton polytope.
-      -- Heuristic: All monomials m present in P such that deg(m) <= deg(P)/2
-      allMonos = M.keys m
-      maxDeg = maximum (map degree allMonos)
-      halfDeg = maxDeg `div` 2
-      basis = filter (\x -> degree x <= halfDeg) allMonos -- Very rough heuristic
-      
-      -- Convert PolyD to Map Monomial Double
-      target = m
-  in case solveSDP target basis of
-       Just q -> extractSquares q basis
        Nothing -> Nothing
 
 degree :: Monomial -> Integer
 degree (Monomial vars) = sum (map fromIntegral (M.elems vars))
-
-extractSquares :: GramMatrix -> [Monomial] -> Maybe [PolyD]
-extractSquares _ _ = Nothing -- Placeholder for Gram Matrix decomposition
 
 cholesky :: PolyD -> [PolyD] -> Maybe [PolyD]
 cholesky p acc

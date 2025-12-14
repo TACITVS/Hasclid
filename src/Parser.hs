@@ -116,7 +116,10 @@ expandMacros' depth macros expr@(List (Atom name : args)) =
         Nothing -> List (Atom name : map (expandMacros' (depth-1) macros) args)
 
 expandMacros' depth macros (List list) = List (map (expandMacros' depth macros) list)
-expandMacros' _ _ atom = atom
+expandMacros' depth macros atom@(Atom name) =
+  case M.lookup name macros of
+    Just ([], body) -> expandMacros' (depth-1) macros body
+    _ -> atom
 
 -- | Evaluate condition for macros
 evalCondition :: SExpr -> Maybe Bool

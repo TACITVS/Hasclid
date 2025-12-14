@@ -9,10 +9,11 @@ import qualified Data.Map.Strict as M
 import Data.List (sortBy)
 import Data.Ratio (numerator, denominator)
 import TermOrder (compareMonomials, TermOrder(..))
+import Positivity.SDP (checkSOS_SDP)
 
 -- | Check if polynomial is a Sum of Squares, potentially modulo an ideal (via reducer)
 checkSOS :: (Poly -> Poly) -> Poly -> Bool
-checkSOS reducer p = isWeightedSOS p || checkSumOfSquares reducer p
+checkSOS reducer p = isWeightedSOS p || checkSumOfSquares reducer p || checkSOS_SDP (reducer p)
 
 -- | Check for weighted sum of even powers (trivial SOS)
 isWeightedSOS :: Poly -> Bool

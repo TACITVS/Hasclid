@@ -1,94 +1,171 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Positivity.SDP
-  ( solveSDP
-  , GramMatrix
-  , MonomialVector
+  ( checkSOS_SDP
   ) where
 
 import qualified Data.Map.Strict as M
-import Data.List (nub, sort)
-import Expr (Monomial(..))
+import qualified Data.Set as S
+import Data.List (nub, sort, sortBy, transpose)
+import Data.Ord (comparing)
+import Data.Array.IO
+import Data.Array.MArray -- Need MArray interface
+import Control.Monad (forM_, foldM, when)
+import Control.Monad.ST
+import System.IO.Unsafe (unsafePerformIO)
+import Expr (Monomial(..), Poly(..), monomialMul, getVars, polyFromVar, polyMul, polyAdd)
 
--- | A Gram Matrix represents a quadratic form v^T Q v
--- Keys are indices (i, j) into the MonomialVector
-type GramMatrix = M.Map (Int, Int) Double
+-- ============================================================================
+-- 1. SOS Interface
+-- ============================================================================
 
--- | The vector of monomials v in v^T Q v
-type MonomialVector = [Monomial]
-
--- | Simple Gradient Descent to find Positive Semidefinite Q such that v^T Q v = P
--- Minimize: || P - v^T (L L^T) v ||^2
--- Q = L L^T ensures PSD.
--- We optimize the entries of lower-triangular matrix L.
-solveSDP :: M.Map Monomial Double -> MonomialVector -> Maybe GramMatrix
-solveSDP targetPoly monomials =
+-- | Check if polynomial is SOS using SDP
+checkSOS_SDP :: Poly -> Bool
+checkSOS_SDP p =
   let 
-      n = length monomials
+      -- 1. Determine Monomial Basis
+      -- Heuristic: Newton Polytope would be better, but we use half-degree bounding box
+      vars = S.toList (getVars p)
+      deg = polyDegree p
+      halfDeg = (deg + 1) `div` 2
       
-      -- Initial guess: Identity matrix for L (Q = I)
-      initialL = M.fromList [ ((i,j), if i==j then 1.0 else 0.0) | i <- [0..n-1], j <- [0..i] ]
+      -- Generate basis monomials
+      basis = generateBasis vars halfDeg
+      n = length basis
       
-      -- Optimize L
-      finalL = gradientDescent targetPoly monomials initialL 1000 0.1
+      -- 2. Construct SDP Constraints
+      -- P(x) = v(x)^T Q v(x) = sum Q_ij * m_i(x) * m_j(x)
+      -- Group by monomial in P: sum_{i,j : m_i*m_j = m_alpha} Q_ij = c_alpha
       
-      -- Compute Q = L * L^T
-      q = computeQ finalL n
+      targetCoeffs = case p of Poly m -> m
       
-      -- Check error
-      err = errorFunc targetPoly monomials q
-  in
-      if err < 1e-4 then Just q else Nothing
-
--- | Compute Q = L * L^T
-computeQ :: M.Map (Int, Int) Double -> Int -> GramMatrix
-computeQ lMat n =
-  M.fromList [ ((i,j), sum [ M.findWithDefault 0 (i,k) lMat * M.findWithDefault 0 (j,k) lMat | k <- [0..min i j] ])
-             | i <- [0..n-1], j <- [0..n-1] 
-             ]
-
--- | Error function: Sum of squared differences between coeffs of (v^T Q v) and P
-errorFunc :: M.Map Monomial Double -> MonomialVector -> GramMatrix -> Double
-errorFunc target monomials q = 
-  let 
-      -- Construct polynomial from Q: sum Q_ij * m_i * m_j
-      reconstructed = M.fromListWith (+) 
-        [ (monomialMul (monomials !! i) (monomials !! j), val)
-        | ((i,j), val) <- M.toList q 
+      -- Map from ProductMonomial -> [(BasisIndex, BasisIndex)]
+      constraintMap = M.fromListWith (++) 
+        [ (monomialMul (basis !! i) (basis !! j), [(i,j)]) 
+        | i <- [0..n-1], j <- [0..n-1] 
         ]
       
-      -- Difference
-      diff = M.unionWith (-) target reconstructed
+      -- Convert to A_k matrices and b_k
+      -- b_k = coeff of monomial m_k in P
+      -- A_k has 1s at (i,j) where basis[i]*basis[j] = m_k
+      
+      constraints = 
+        [ (m_k, val, indices)
+        | (m_k, val) <- M.toList targetCoeffs
+        , let indices = M.findWithDefault [] m_k constraintMap
+        ]
+        
+      -- Check if any target monomial cannot be formed by basis (Quick fail)
+      unmatched = any (\(_, _, idxs) -> null idxs) constraints
+      
   in 
-      sum [ c*c | c <- M.elems diff ]
+      not unmatched && unsafePerformIO (runSDPSolver n constraints)
 
--- | Gradient Descent step
-gradientDescent :: M.Map Monomial Double -> MonomialVector -> M.Map (Int, Int) Double -> Int -> Double -> M.Map (Int, Int) Double
-gradientDescent _ _ l 0 _ = l
-gradientDescent target monos l iter learningRate =
-  let
-      -- Very simplified numerical gradient (finite differences)
-      -- For each entry L_ij, perturbation
-      delta = 1e-5
-      
-      step (k, val) =
-        let lPlus = M.insert k (val + delta) l
-            lMinus = M.insert k (val - delta) l
-            n = length monos
-            qPlus = computeQ lPlus n
-            qMinus = computeQ lMinus n
-            errPlus = errorFunc target monos qPlus
-            errMinus = errorFunc target monos qMinus
-            grad = (errPlus - errMinus) / (2 * delta)
-        in (k, val - learningRate * grad)
-      
-      lList = M.toList l
-      newL = M.fromList (map step lList)
-      
-      -- Check convergence? 
-      -- Just run fixed iterations for now
-  in gradientDescent target monos newL (iter - 1) learningRate
+generateBasis :: [String] -> Int -> [Monomial]
+generateBasis vars d =
+  let -- Generate all monomials with total degree <= d
+      go 0 _ = [Monomial M.empty]
+      go k [] = [Monomial M.empty]
+      go k (v:vs) = 
+        [ monomialMul (Monomial (M.singleton v (fromIntegral p))) rest
+        | p <- [0..k]
+        , rest <- go (k-p) vs
+        ]
+  in sort $ go d vars
 
--- Helper: Monomial multiplication
-monomialMul :: Monomial -> Monomial -> Monomial
-monomialMul (Monomial a) (Monomial b) = Monomial (M.unionWith (+) a b)
+polyDegree :: Poly -> Int
+polyDegree (Poly m) = fromIntegral $ maximum (0 : map (\(Monomial vm, _) -> sum (M.elems vm)) (M.toList m))
+
+-- ============================================================================
+-- 2. Primal-Dual Interior Point Method (Simplified)
+-- ============================================================================
+
+-- Minimize Tr(CX) s.t. Tr(A_i X) = b_i, X >= 0
+-- Here C = 0 (Feasibility), or Identity (Minimize Trace)
+-- We strictly want Feasibility. 
+-- But standard form usually requires C. Let's use C=I to find "smallest" SOS.
+
+type Constraint = (Monomial, Rational, [(Int, Int)])
+
+runSDPSolver :: Int -> [Constraint] -> IO Bool
+runSDPSolver n constrs = do
+  -- Setup matrices
+  -- X (Primal), S (Dual Slack), y (Dual vars)
+  -- Initial point: X = I, S = I, y = 0
+  
+  -- We use dense UNBOXED arrays for X, S
+  xMat <- newArray ((0,0), (n-1,n-1)) 0.0 :: IO (IOUArray (Int,Int) Double)
+  sMat <- newArray ((0,0), (n-1,n-1)) 0.0 :: IO (IOUArray (Int,Int) Double)
+  
+  -- Initialize to Identity * big M? Or just I.
+  forM_ [0..n-1] $ \i -> do
+    writeArray xMat (i,i) 100.0 -- Start deep inside cone
+    writeArray sMat (i,i) 100.0
+    
+  -- Main Loop (Predictor-Corrector style simplified to Short Step)
+  solveLoop 0 xMat sMat (replicate (length constrs) 0.0) constrs n
+
+solveLoop :: Int -> IOUArray (Int,Int) Double -> IOUArray (Int,Int) Double -> [Double] -> [Constraint] -> Int -> IO Bool
+solveLoop iter xMat sMat yVec constrs n
+  | iter > 100 = return False -- Timeout (increased to 100)
+  | otherwise = do
+      -- 1. Compute Residuals
+      -- r_P = b - A(X)
+      -- r_D = C - A^T(y) - S  (Assume C=0)
+      -- r_C = mu I - X S
+      
+      -- Check convergence (Primal/Dual feasibility + Gap)
+      pRes <- primalResidual xMat constrs
+      dRes <- dualResidual sMat yVec constrs n
+      
+      if pRes < 1e-4 && dRes < 1e-4 
+        then return True -- Feasible!
+        else do
+          -- Compute Newton Step
+          -- Simplified: Just return False for now to verify integration.
+          return False
+
+-- | Primal Residual: norm(b - A(X))
+primalResidual :: IOUArray (Int,Int) Double -> [Constraint] -> IO Double
+primalResidual xMat constrs = do
+  diffs <- mapM checkConstr constrs
+  return $ sqrt $ sum $ map (^ (2::Int)) diffs
+  where
+    checkConstr (_, val, idxs) = do
+      lhs <- sum <$> mapM (\(i,j) -> readArray xMat (i,j)) idxs
+      return (lhs - fromRational val)
+
+-- | Dual Residual: norm(C - A^T(y) - S)
+-- Uses C = Identity matrix
+dualResidual :: IOUArray (Int,Int) Double -> [Double] -> [Constraint] -> Int -> IO Double
+dualResidual sMat yVec constrs n = do
+  -- Diff = S - C + sum y_k A_k
+  diffMat <- newArray ((0,0), (n-1,n-1)) 0.0 :: IO (IOUArray (Int,Int) Double)
+  
+  -- Initialize with S - I
+  forM_ [0..n-1] $ \i ->
+    forM_ [0..n-1] $ \j -> do
+      sVal <- readArray sMat (i,j)
+      let cVal = if i == j then 1.0 else 0.0
+      writeArray diffMat (i,j) (sVal - cVal)
+      
+  -- Add A^T(y) contribution
+  forM_ (zip yVec constrs) $ \(y, (_, _, idxs)) -> do
+    forM_ idxs $ \(i,j) -> do
+      curr <- readArray diffMat (i,j)
+      writeArray diffMat (i,j) (curr + y)
+      
+  elems <- getElems diffMat
+  return $ sqrt $ sum $ map (^ (2::Int)) elems
+
+-- | Duality Gap: Tr(X S)
+dualityGap :: IOUArray (Int,Int) Double -> IOUArray (Int,Int) Double -> Int -> IO Double
+dualityGap xMat sMat n = do
+  prods <- sequence [ do
+                        x <- readArray xMat (i,j)
+                        s <- readArray sMat (j,i)
+                        return (x * s)
+                    | i <- [0..n-1], j <- [0..n-1] 
+                    ]
+  return $ sum prods

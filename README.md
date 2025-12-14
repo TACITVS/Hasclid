@@ -50,6 +50,7 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
 *   **Advanced Proof Logic**:
     *   **Equality**: Automatically reduced using computed Groebner Bases of the hypothesis ideal.
     *   **Inequality**: Verified using root counting (Sturm sequences) and interval bisection.
+    *   **Integer Arithmetic**: Specialized handling for integer constraints with algebraic fallback for polynomial identities.
 *   **Interactive REPL**:
     *   **:point**: Define 2D/3D points.
     *   **:assume**: Add arbitrary polynomial constraints.
@@ -59,9 +60,19 @@ Hasclid operates as a Read-Eval-Print Loop (REPL), providing a flexible environm
     *   **v9.1:** **:verbose** - Show detailed proof explanations.
     *   **v9.1:** **:save-lemmas / :load-lemmas** - Build reusable theorem libraries.
     *   **v9.1:** **root-between** DSL helper: `(root-between x poly lo hi)` expands to `poly=0 ∧ lo < x ∧ x < hi`, useful for picking a specific root (e.g., an interior trisector slope).
+    *   **v9.2:** **:declare-int** - Declare variables as integers to enable specialized integer solving logic.
 *   **Scripting**: Load and verify complex multi-step theorems from `.euclid` files.
 
 ## 🏆 Notable Achievements
+
+### Euler's Four-Square Identity (December 2025)
+**Automated proof of Number Theoretic Identity!**
+
+**Theorem**: The product of two sums of four squares is itself a sum of four squares.
+
+**Status**: ✅ **PROVED** using Integer Sort Support + Algebraic Fallback.
+- **Integer Parsing**: Native support for `(int x)` and `(int-const n)`.
+- **Algebraic Fallback**: Automatically routes hard integer polynomial equalities to the Gröbner basis engine (valid since $\mathbb{Z} \subset \mathbb{R}$).
 
 ### Morley's Theorem (December 2025)
 **First automated proof of Morley's Theorem in HASCLID!**
@@ -122,6 +133,8 @@ Start the REPL with `cabal run prover`.
 *   `:solve <file>`: Solve each formula in the specified file (batch processing).
 *   `:save-lemmas <file>`: Save proven lemmas to a file.
 *   `:load-lemmas <file>`: Load lemmas from a file.
+*   `:declare-int <v1> <v2> ...`: Declare variables as integers.
+    *   *Example:* `:declare-int n m k`
 
 ### Proof & Solver Commands
 *   `(op lhs rhs)`: Entering a raw formula uses automatic solver selection (GeoSolver → best algebraic solver).

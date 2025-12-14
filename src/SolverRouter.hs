@@ -228,13 +228,14 @@ autoSolve opts theory goal =
                  , detailedTrace = Nothing
                  }
       
-      -- Geometric Inequality Fast Path (WLOG + F4 + SOS)
-      Ge _ _ | problemType profile == Geometric ->
-        let (proved, reason, trace) = proveGeometricInequality opts theory goal
+      -- Inequality Fast Path (WLOG + F4 + SOS)
+      -- Prefer SOS for Geometric problems or Algebraic/Mixed problems with > 2 variables
+      Ge _ _ | problemType profile == Geometric || ((problemType profile == PureAlgebraic || problemType profile == Mixed) && numVariables profile > 2) ->
+        let (proved, reason, trace) = proveInequalitySOS opts theory goal
         in if proved
            then AutoSolveResult
                   { selectedSolver = UseGroebner
-                  , solverReason = "Geometric Inequality (Fast Path: WLOG+F4+SOS)"
+                  , solverReason = "Inequality (Fast Path: WLOG+F4+SOS)"
                   , problemProfile = profile
                   , isProved = True
                   , proofReason = reason
@@ -244,7 +245,7 @@ autoSolve opts theory goal =
              let (proved', reason', trace') = executeSolver UseCAD opts profile theory goal
              in AutoSolveResult
                   { selectedSolver = UseCAD
-                  , solverReason = "Geometric Inequality (Fallback to CAD after SOS failure)"
+                  , solverReason = "Inequality (Fallback to CAD after SOS failure)"
                   , problemProfile = profile
                   , isProved = proved'
                   , proofReason = reason'
@@ -331,9 +332,9 @@ autoSolve opts theory goal =
                  , detailedTrace = trace
                  }
 
--- | Attempt to prove geometric inequality using WLOG + F4 + SOS
-proveGeometricInequality :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
-proveGeometricInequality _opts theory goal =
+-- | Attempt to prove inequality using WLOG + F4 + SOS
+proveInequalitySOS :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
+proveInequalitySOS _opts theory goal =
   case goal of
     Ge lhs rhs -> trySOS (Sub lhs rhs)
     Gt lhs rhs -> trySOS (Sub lhs rhs) -- TODO: Strictness check
@@ -513,49 +514,28 @@ autoSolveWithTrace opts theory goal _ =
 -- This is called only if GeoSolver returns GeoUnknown in PHASE 1
 selectAlgebraicSolver :: ProblemProfile -> Formula -> SolverChoice
 selectAlgebraicSolver profile goal
-  -- If sqrt appears, force CAD so we can use polynomialization + CAD
   | containsSqrtFormula goal = UseCAD
-  -- If integers appear, try integer evaluator first (handled in executeSolver); keep router permissive
   | containsIntFormula goal = UseGroebner
-  
-  -- RULE 0: Existential Equalities -> Constructive Wu (Triangularization)
   | isExistentialEquality goal = UseConstructiveWu
-
-  -- RULE 1: Unsupported formula types
+  -- If not equality or inequality, we can't solve it (e.g. strict quantifier that CAD didn't pick up?)
   | not (isEquality goal) && not (isInequality goal) = Unsolvable
 
-  -- RULE 2: Too complex (avoid hanging) - Relaxed for Algebraic Equality
-  | estimatedComplexity profile >= VeryHigh && not (isEquality goal) = Unsolvable
-
-  -- RULE 3: Pure geometric problems → prefer Groebner for small/simple equalities
-  -- Heuristic: small variable/constraint counts benefit from direct algebraic proof
-  | problemType profile == Geometric
-  , isEquality goal
-  , numVariables profile <= 30
-  , numConstraints profile <= 30 = UseGroebner
-  -- Geometric inequalities: route to CAD (avoid Wu)
-  | problemType profile == Geometric
-  , isInequality goal = UseCAD
+  -- Geometric heuristics
+  | problemType profile == Geometric && isEquality goal && numVariables profile <= 30 && numConstraints profile <= 30 = UseGroebner
+  | problemType profile == Geometric && isInequality goal = UseCAD
   | problemType profile == Geometric = UseWu
 
-  -- RULE 4: Inequalities with 1-2 variables → CAD
+  -- Inequality heuristics
   | isInequality goal && numVariables profile <= 2 && not (hasSymbolicParams profile) = UseCAD
+  -- Fallback for hard inequalities: Try SOS (via Groebner) instead of failing
+  | isInequality goal = UseGroebner
 
-  -- RULE 5: Pure algebraic with symbolic parameters → Wu's method
-  -- (Wu handles symbolic parameters better than Gröbner for geometry)
-  | problemType profile == PureAlgebraic && hasSymbolicParams profile &&
-    hasGeometricVars profile = UseWu
-
-  -- RULE 6: Single positivity check (p > 0) → CAD (no variable limit!)
+  -- Algebraic heuristics
+  | problemType profile == PureAlgebraic && hasSymbolicParams profile && hasGeometricVars profile = UseWu
   | problemType profile == SinglePositivity = UseCAD
-
-  -- RULE 7: Pure algebraic equations → Gröbner basis (general purpose)
   | problemType profile == PureAlgebraic = UseGroebner
-
-  -- RULE 8: Mixed equations and inequalities → Use Gröbner for equations part
   | problemType profile == Mixed && isEquality goal = UseGroebner
 
-  -- DEFAULT: Gröbner basis (most reliable general-purpose method)
   | otherwise = UseGroebner
 
 -- | Check if formula is an existential quantification of equalities

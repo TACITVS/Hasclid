@@ -83,16 +83,6 @@ squareFreePart p
 polyFromMonomial :: Monomial -> Poly
 polyFromMonomial m = Poly (M.singleton m 1)
 
--- | Partial derivative with respect to a variable
-polyDerivative :: Poly -> String -> Poly
-polyDerivative (Poly m) var =
-  Poly $ M.fromListWith (+)
-    [ (Monomial (M.update (\e -> if e <= 1 then Nothing else Just (e-1)) var vars), c * fromIntegral e)
-    | (Monomial vars, c) <- M.toList m
-    , let e = M.findWithDefault 0 var vars
-    , e > 0
-    ]
-
 -- | Multivariate Polynomial GCD (Simplified/Euclidean-like for Main Variable)
 -- Full multivariate GCD is hard. We implement a pseudo-GCD.
 -- For optimization, we only handle the case where one divides the other or monomial GCD.

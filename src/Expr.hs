@@ -574,7 +574,11 @@ toPoly (Mul e1 e2) = polyMul (toPoly e1) (toPoly e2)
 toPoly (Div _ _)   = error "Division Error: Division is not supported in polynomial expressions.\nNote: Rational constants like 1/2 are supported, but division of variables is not.\nContext: Attempting to convert Div expression to polynomial."
 toPoly (Pow e n)   = polyPow (toPoly e) n
 toPoly (Sqrt _)    = error "Sqrt Error: Square roots are not supported in polynomial expressions. Rewrite without sqrt or use a geometric/analytic solver."
-toPoly (Sum _ _ _ _) = error "Sum Error: Summation must be expanded or handled by induction before polynomial conversion."
+toPoly s@(Sum _ _ _ _) = 
+  let simp = simplifyExpr s
+  in case simp of
+       Sum _ _ _ _ -> polyFromVar (prettyExpr simp)
+       _ -> toPoly simp
 
 toPoly (Dist2 p1 p2) =
   let x1 = polyFromVar ("x" ++ p1); y1 = polyFromVar ("y" ++ p1); z1 = polyFromVar ("z" ++ p1)
@@ -896,3 +900,27 @@ getMainVar :: Poly -> String
 getMainVar p =
   let vars = S.toList (getVars p)
   in if null vars then "" else maximum vars
+
+-- | Partial derivative with respect to a variable
+polyDerivative :: Poly -> String -> Poly
+polyDerivative (Poly m) var =
+  Poly $ M.fromListWith (+)
+    [ (Monomial (M.update (\e -> if e <= 1 then Nothing else Just (e-1)) var vars), c * fromIntegral e)
+    | (Monomial vars, c) <- M.toList m
+    , let e = M.findWithDefault 0 var vars
+    , e > 0
+    ]
+
+-- | Generic expression traversal (bottom-up)
+mapExpr :: (Expr -> Expr) -> Expr -> Expr
+mapExpr f expr = f $ case expr of
+  Add a b -> Add (mapExpr f a) (mapExpr f b)
+  Sub a b -> Sub (mapExpr f a) (mapExpr f b)
+  Mul a b -> Mul (mapExpr f a) (mapExpr f b)
+  Div a b -> Div (mapExpr f a) (mapExpr f b)
+  Pow a n -> Pow (mapExpr f a) n
+  Sqrt a  -> Sqrt (mapExpr f a)
+  Sum i l h b -> Sum i (mapExpr f l) (mapExpr f h) (mapExpr f b)
+  Determinant m -> Determinant (map (map (mapExpr f)) m)
+  Circle p c r -> Circle p c (mapExpr f r)
+  _ -> expr
