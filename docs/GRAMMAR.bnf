@@ -28,10 +28,17 @@ using Extended Backus-Naur Form (EBNF) notation.
                   | <const>
                   | <arithmetic-op>
                   | <geometric-primitive>
+                  | <integer-expr>
+                  | <sum-expr>
 
 <var>           ::= <identifier>
 
 <const>         ::= <number>
+
+<integer-expr>  ::= "(int" <var> ")"
+                  | "(int-const" <integer> ")"
+
+<sum-expr>      ::= "(sum" <var> <expr> <expr> <expr> ")"
 
 <arithmetic-op> ::= "(" <operator> <expr>+ ")"
 
@@ -73,6 +80,7 @@ using Extended Backus-Naur Form (EBNF) notation.
                   | <lemma-command>
                   | <utility-command>
                   | <advanced-command>
+                  | <integer-command>
 
 -- Geometry Commands
 <geometry-command>
@@ -81,9 +89,14 @@ using Extended Backus-Naur Form (EBNF) notation.
 
 <coord>         ::= <number> | <identifier>
 
+-- Integer Commands
+<integer-command>
+                ::= ":declare-int" <var>+
+
 -- Proof Commands
 <proof-command> ::= <formula>
                   | ":lemma" <formula>
+                  | ":induction" <formula>
                   | ":verbose"
 
 -- Lemma Library Commands

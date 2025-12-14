@@ -265,6 +265,7 @@ elimExpr' (Div a b)
   | otherwise = Div <$> elimExpr' a <*> elimExpr' b
 elimExpr' (Pow e n) = Pow <$> elimExpr' e <*> pure n
 elimExpr' (Sqrt e) = Sqrt <$> elimExpr' e
+elimExpr' (Sum i lo hi body) = Sum i <$> elimExpr' lo <*> elimExpr' hi <*> elimExpr' body
 elimExpr' (Determinant rows) = Determinant <$> mapM (mapM elimExpr') rows
 elimExpr' (Circle p c r) = Circle p c <$> elimExpr' r
 -- Geometric primitives and base cases
@@ -278,6 +279,8 @@ elimExpr' e@(AngleEq2D _ _ _ _ _ _) = return e
 elimExpr' e@(AngleEq2DAbs _ _ _ _ _ _) = return e
 elimExpr' e@(Var _) = return e
 elimExpr' e@(Const _) = return e
+elimExpr' e@(IntVar _) = return e
+elimExpr' e@(IntConst _) = return e
 
 -- | Add constraint that denominator is nonzero: g ≠ 0  ≡  (g > 0 ∨ g < 0)
 addDenominatorNonzero :: Expr -> ElimM ()

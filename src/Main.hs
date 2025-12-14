@@ -9,7 +9,7 @@ module Main
 import Expr (Formula(Eq, Ge, Gt, Le, Lt), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
 import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea)
 import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
-import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger, IntSolveOptions(..))
+import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger, IntSolveOptions(..), proveByInduction)
 import BuchbergerOpt (SelectionStrategy(..), buchbergerWithStrategy)
 import CounterExample (findCounterExample, formatCounterExample)
 import CAD (discriminant, toRecursive)
@@ -526,6 +526,16 @@ handleCommand state stateWithHist newHist input = do
                  Just result ->
                    let msg = formatAutoSolveResult result (verbose state)
                    in pure (stateWithHist, msg)
+
+    (":induction":_) ->
+      let str = drop 11 input
+      in case parseFormulaWithMacros (macros state) (intVars state) str of
+           Left err -> pure (stateWithHist, formatError err)
+           Right formula -> do
+             let fullContext = theory state ++ lemmas state
+             let (proved, reason, _) = proveByInduction fullContext formula
+             let msg = (if proved then "INDUCTION: PROVED\n" else "INDUCTION: NOT PROVED\n") ++ reason
+             pure (stateWithHist, msg)
 
     (":solve":filename:_) -> do
       content <- liftIO $ readFile filename

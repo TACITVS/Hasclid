@@ -21,6 +21,7 @@ module Prover
   , intSolve
   , intSat
   , proveExistentialConstructive
+  , proveByInduction
   ) where
 
 import Expr
@@ -1821,3 +1822,55 @@ multiCooper env theory goal = cooperLoop env theory
             Right (env', theory') ->
               if env' == envAcc then Right (envAcc, theoryAcc)
               else cooperLoop env' theory'
+
+-- | Structural Induction Proof
+proveByInduction :: Theory -> Formula -> (Bool, String, ProofTrace)
+proveByInduction theory formula =
+  case formula of
+    Forall [QuantVar n QuantInt Nothing Nothing] body ->
+      let
+        -- Base Case (n=0)
+        baseSub = M.singleton n (Const 0)
+        baseGoal = substFormula baseSub body
+        (baseOk, baseMsg, baseTrace) = proveTheory theory baseGoal
+        
+        -- Step Case
+        k = n ++ "_k"
+        kExpr = Var k
+        kPlus1 = Add kExpr (Const 1)
+        
+        hyp = substFormula (M.singleton n kExpr) body
+        stepGoalRaw = substFormula (M.singleton n kPlus1) body
+        stepGoal = expandSumStepFormula k kPlus1 stepGoalRaw
+        
+        (stepOk, stepMsg, stepTrace) = proveTheory (hyp : theory) stepGoal
+        
+        fullMsg = "Base Case (n=0): " ++ (if baseOk then "PROVED" else "FAILED") ++ "\n" ++
+                  baseMsg ++ "\n\n" ++
+                  "Step Case (P("++k++") -> P("++k++"+1)): " ++ (if stepOk then "PROVED" else "FAILED") ++ "\n" ++
+                  stepMsg
+                  
+      in (baseOk && stepOk, fullMsg, stepTrace)
+      
+    _ -> (False, "Induction requires 'forall ((int n)) ...' (unbounded integer quantifier)", emptyTrace)
+
+expandSumStepFormula :: String -> Expr -> Formula -> Formula
+expandSumStepFormula kStr kPlus1 form = 
+  let rw e = case e of
+               Sum i lo hi body ->
+                 if hi == kPlus1 
+                 then Add (Sum i lo (Var kStr) body) (substituteExpr i kPlus1 body)
+                 else e
+               _ -> e
+      mapper = mapExpr rw
+  in case form of
+       Eq l r -> Eq (mapper l) (mapper r)
+       Ge l r -> Ge (mapper l) (mapper r)
+       Gt l r -> Gt (mapper l) (mapper r)
+       Le l r -> Le (mapper l) (mapper r)
+       Lt l r -> Lt (mapper l) (mapper r)
+       And a b -> And (expandSumStepFormula kStr kPlus1 a) (expandSumStepFormula kStr kPlus1 b)
+       Or a b -> Or (expandSumStepFormula kStr kPlus1 a) (expandSumStepFormula kStr kPlus1 b)
+       Not a -> Not (expandSumStepFormula kStr kPlus1 a)
+       Forall qs f -> Forall qs (expandSumStepFormula kStr kPlus1 f)
+       Exists qs f -> Exists qs (expandSumStepFormula kStr kPlus1 f)

@@ -77,7 +77,12 @@ data Sign = Negative | Zero | Positive deriving (Show, Eq, Ord)
 cadDecompose :: [Poly] -> [String] -> [(CADCell, SignAssignment)]
 cadDecompose polys vars =
   case vars of
-    [] -> []  -- No variables
+    [] -> -- Base case: 0-dimensional space (point)
+      let sample = M.empty
+          signs = M.fromList [ (p, determineSign p sample) | p <- polys ]
+          vanishing = [ p | (p, s) <- M.toList signs, s == Zero ]
+          cell = CADCell 0 sample Sector vanishing "Universe (0D)"
+      in [(cell, signs)]
     [v] -> cad1D polys v  -- Base case: univariate
     (v:vs) ->  -- Recursive case: multivariate
       let
@@ -626,15 +631,7 @@ formulaToPolys formula =
 
 -- | Convert an expression to a polynomial
 exprToPoly :: Expr -> Poly
-exprToPoly expr =
-  case expr of
-    Const r -> polyFromConst r
-    Var v -> polyFromVar v
-    Add e1 e2 -> polyAdd (exprToPoly e1) (exprToPoly e2)
-    Sub e1 e2 -> polySub (exprToPoly e1) (exprToPoly e2)
-    Mul e1 e2 -> polyMul (exprToPoly e1) (exprToPoly e2)
-    Pow e n -> polyPow (exprToPoly e) (fromIntegral n)
-    _ -> polyZero  -- Unsupported (geometric primitives, etc.)
+exprToPoly = toPoly
 
 -- Extract variables from a polynomial
 extractPolyVars :: Poly -> S.Set String

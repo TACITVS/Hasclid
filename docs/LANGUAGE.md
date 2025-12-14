@@ -129,9 +129,10 @@ Euclid has an implicit type system:
 ### Types
 
 1. **Rational** - Exact rational numbers (ℚ)
-2. **Expression** - Symbolic polynomial expressions
-3. **Point** - Identifier representing a geometric point
-4. **Formula** - Relational expression (equation or inequality)
+2. **Integer** - Exact integers (ℤ)
+3. **Expression** - Symbolic polynomial expressions
+4. **Point** - Identifier representing a geometric point
+5. **Formula** - Relational expression (equation or inequality)
 
 ### Type Rules
 
@@ -140,6 +141,7 @@ Euclid has an implicit type system:
 * : Expr × Expr → Expr
 dist2 : Point × Point → Expr
 = : Expr × Expr → Formula
+int : String → Expr
 ```
 
 ### Implicit Coercions
@@ -162,6 +164,8 @@ dist2 : Point × Point → Expr
          | (/ <expr> <expr>)        -- Division
          | (^ <expr> <nat>)         -- Power
          | <geometric-primitive>    -- Geometry
+         | (int <var>)              -- Integer Variable
+         | (int-const <int>)        -- Integer Constant
 ```
 
 ### Arithmetic Operators
@@ -174,6 +178,7 @@ dist2 : Point × Point → Expr
 | `/` | 2 | `(/ 10 3)` | Division: 10/3 |
 | `^` | 2 | `(^ x 3)` | Power: x³ |
 | `x`, `y`, `z` | 1 | `(x A)` | Coordinate x of point A |
+| `sum` | 4 | `(sum i 1 n i)` | Summation $\sum_{i=1}^n i$ |
 
 **Note:** Exponent must be a natural number constant.
 
@@ -461,6 +466,22 @@ Proves the formula and stores it for future use.
 :lemma (= (dist2 A B) 9)
 ```
 
+#### Prove by Induction
+```lisp
+:induction <formula>
+```
+
+Attempts to prove a universal property `(forall ((int n)) P(n))` using structural induction.
+- **Base Case:** Proves `P(0)`.
+- **Step Case:** Assumes `P(k)`, proves `P(k+1)`.
+- Automatically handles `sum` recurrence relations.
+
+**Example:**
+```lisp
+:declare-int n
+:induction (forall ((int n)) (= (sum i 0 n i) (/ (* n (+ n 1)) 2)))
+```
+
 #### Toggle Verbose Mode
 ```lisp
 :verbose
@@ -528,6 +549,8 @@ Removes all stored lemmas (assumptions remain).
 | Command | Description |
 |---------|-------------|
 | `:help` | Show all commands |
+| `:load-lemmas <file>` | Load lemmas from a file |
+| `:declare-int <vars>` | Declare variables as integers |
 | `:list` | List assumptions and lemmas |
 | `:history` | Show command history |
 | `:clean` / `:cls` | Clear screen |
@@ -609,7 +632,15 @@ These are substituted before proof.
 
 ### 9.4 Constraint Assumptions
 
-Non-substitution assumptions (e.g., `(= (midpoint A B M) 0)`) become **ideal generators** for Gröbner basis computation.
+Constraint assumptions non-substitution assumptions (e.g., `(= (midpoint A B M) 0)`) become **ideal generators** for Gröbner basis computation.
+
+### 9.5 Integer Arithmetic
+
+Variables declared as **integers** (`:declare-int` or `(int x)`) restrict the domain to $\mathbb{Z}$.
+
+**Proof Strategy:**
+1.  **Linear Solver:** Uses Interval Analysis and a tailored Simplex-like method for linear integer arithmetic.
+2.  **Algebraic Fallback:** For polynomial equalities (e.g., $x^4 + y^4 = z^4$), the system falls back to the **Gröbner Basis** engine. Since $\mathbb{Z} \subset \mathbb{R}$, any algebraic identity proving true over $\mathbb{R}$ is automatically true over $\mathbb{Z}$.
 
 ---
 
