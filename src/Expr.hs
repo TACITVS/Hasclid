@@ -36,6 +36,7 @@ data Expr
   | AngleEq2DAbs String String String String String String -- ∠ABC ≡ ∠DEF up to reflection (2D)
   -- High-level algebraic primitives
   | Determinant [[Expr]]                   -- Lazy determinant of a matrix
+  | Sum String Expr Expr Expr              -- Summation: sum index low high body
   deriving (Eq, Ord, Show)
 
 -- | Quantifier domain
@@ -87,6 +88,7 @@ prettyExpr (Determinant rows) =
   case rows of
     (r0:_) -> "(det " ++ show (length rows) ++ "x" ++ show (length r0) ++ ")"
     []     -> "(det 0x0)"
+prettyExpr (Sum v lo hi body) = "(sum " ++ v ++ " " ++ prettyExpr lo ++ " " ++ prettyExpr hi ++ " " ++ prettyExpr body ++ ")"
 
 prettyRational :: Rational -> String
 prettyRational r
@@ -276,6 +278,11 @@ substituteExpr var val (Mul e1 e2) = Mul (substituteExpr var val e1) (substitute
 substituteExpr var val (Div e1 e2) = Div (substituteExpr var val e1) (substituteExpr var val e2)
 substituteExpr var val (Pow e n) = Pow (substituteExpr var val e) n
 substituteExpr var val (Sqrt e) = Sqrt (substituteExpr var val e)
+substituteExpr var val (Sum i lo hi body) =
+  let lo' = substituteExpr var val lo
+      hi' = substituteExpr var val hi
+      body' = if i == var then body else substituteExpr var val body
+  in Sum i lo' hi' body'
 substituteExpr _ _ e = e
 
 -- | Substitute multiple variables
@@ -290,6 +297,12 @@ substituteAll subMap (Mul e1 e2) = Mul (substituteAll subMap e1) (substituteAll 
 substituteAll subMap (Div e1 e2) = Div (substituteAll subMap e1) (substituteAll subMap e2)
 substituteAll subMap (Pow e n) = Pow (substituteAll subMap e) n
 substituteAll subMap (Sqrt e) = Sqrt (substituteAll subMap e)
+substituteAll subMap (Sum i lo hi body) =
+  let lo' = substituteAll subMap lo
+      hi' = substituteAll subMap hi
+      subMap' = M.delete i subMap
+      body' = substituteAll subMap' body
+  in Sum i lo' hi' body'
 substituteAll _ e = e
 
 -- | Check if two expressions are symbolically equal
@@ -316,6 +329,7 @@ hasNonPolynomial (Add e1 e2) = hasNonPolynomial e1 || hasNonPolynomial e2
 hasNonPolynomial (Sub e1 e2) = hasNonPolynomial e1 || hasNonPolynomial e2
 hasNonPolynomial (Mul e1 e2) = hasNonPolynomial e1 || hasNonPolynomial e2
 hasNonPolynomial (Pow e _) = hasNonPolynomial e
+hasNonPolynomial (Sum _ _ _ _) = True
 hasNonPolynomial _ = False
 
 -- Simplify an Expr by applying algebraic rules
@@ -384,6 +398,22 @@ simplifyExpr (Sqrt e) =
             then Const (fromIntegral rn % fromIntegral rd)
             else Sqrt s
        _ -> Sqrt s
+simplifyExpr (Sum i lo hi body) =
+  let lo' = simplifyExpr lo
+      hi' = simplifyExpr hi
+      body' = simplifyExpr body
+      
+      asInt (IntConst n) = Just n
+      asInt (Const r) | denominator r == 1 = Just (numerator r)
+      asInt _ = Nothing
+      
+  in case (asInt lo', asInt hi') of
+       (Just l, Just h) ->
+          if l > h then Const 0
+          else
+            let terms = [ substituteExpr i (IntConst k) body' | k <- [l..h] ]
+            in simplifyExpr (foldl Add (Const 0) terms)
+       _ -> Sum i lo' hi' body'
 simplifyExpr e@(IntVar _) = e
 simplifyExpr e@(IntConst _) = e
 
@@ -544,6 +574,7 @@ toPoly (Mul e1 e2) = polyMul (toPoly e1) (toPoly e2)
 toPoly (Div _ _)   = error "Division Error: Division is not supported in polynomial expressions.\nNote: Rational constants like 1/2 are supported, but division of variables is not.\nContext: Attempting to convert Div expression to polynomial."
 toPoly (Pow e n)   = polyPow (toPoly e) n
 toPoly (Sqrt _)    = error "Sqrt Error: Square roots are not supported in polynomial expressions. Rewrite without sqrt or use a geometric/analytic solver."
+toPoly (Sum _ _ _ _) = error "Sum Error: Summation must be expanded or handled by induction before polynomial conversion."
 
 toPoly (Dist2 p1 p2) =
   let x1 = polyFromVar ("x" ++ p1); y1 = polyFromVar ("y" ++ p1); z1 = polyFromVar ("z" ++ p1)

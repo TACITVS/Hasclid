@@ -287,6 +287,14 @@ exprFromSExpr intVars (List (Atom op : args)) = case op of
           let rows = chunk n elements
           Right $ Determinant rows
 
+  "sum" -> case args of
+    [Atom var, lo, hi, body] -> do
+      l <- exprFromSExpr intVars lo
+      h <- exprFromSExpr intVars hi
+      b <- exprFromSExpr (S.insert var intVars) body
+      Right $ Sum var l h b
+    _ -> Left $ ParseError (WrongArity "sum" 4 (length args)) "Usage: (sum var lo hi body)"
+
   "x" -> case args of
     [Atom p] -> Right $ Var ("x" ++ p)
     _ -> Left $ ParseError (WrongArity "x" 1 (length args)) "Usage: (x Point)"
