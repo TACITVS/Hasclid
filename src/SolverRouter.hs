@@ -54,11 +54,12 @@ import TermOrder (TermOrder(..), compareMonomials)
 import F4Lite (f4LiteGroebner, reduceWithF4, reduceWithBasis)
 import Geometry.WLOG (applyWLOG)
 import Positivity.SOS (checkSOS)
+import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD)
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
-import Data.List (delete, find, isSuffixOf, sort)
-import Data.Maybe (isJust)
+import Data.List (delete, find, isSuffixOf, sort, foldl')
+import Data.Maybe (isJust, mapMaybe)
 
 -- =============================================
 -- Data Types
@@ -391,7 +392,33 @@ proveGeometricInequality _opts theory goal =
           basis = f4LiteGroebner (compareMonomials GrevLex) SugarStrategy True eqConstraints
           reducer p = F4Lite.reduceWithBasis (compareMonomials GrevLex) basis p
           
-          checkPoly p = checkSOS reducer p || checkBoundarySOS p
+          -- Numerical SOS Guidance
+          -- 1. Extract parameters values
+          paramMap = buildParamMap thWLOG
+          
+          -- 2. Try Numerical Cholesky
+          numericalSquares = 
+            if M.null paramMap && not (null (symbolicParams (analyzeProblem theory goal))) then Nothing -- Failed to resolve params
+            else checkSOSNumeric paramMap targetPoly
+            
+          -- 3. If numerical success, reconstruct and verify
+          verifiedNumerical = 
+            case numericalSquares of
+              Just sqs ->
+                let 
+                    -- Reconstruct symbolic squares
+                    -- Assume 's' is the main parameter for now
+                    paramName = if M.member "s" paramMap then "s" else "p" -- heuristics
+                    paramVal = M.findWithDefault 1.0 paramName paramMap
+                    
+                    recSqs = map (reconstructPoly paramName paramVal) sqs
+                    
+                    sumSq = foldl' polyAdd polyZero (map (\q -> polyMul q q) recSqs)
+                    remainder = reducer (subPoly targetPoly sumSq)
+                in remainder == polyZero
+              Nothing -> False
+
+          checkPoly p = verifiedNumerical || checkSOS reducer p || checkBoundarySOS p
           
           success = any checkPoly remainders
           bestPoly = case remainders of
@@ -400,8 +427,14 @@ proveGeometricInequality _opts theory goal =
           
       in
         if success
-        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary" ++ (if not (null smartSqLog) then " + Smart Squaring" else ""), Just (unlines (wlogLog ++ smartSqLog) ++ "\nReduced Poly: " ++ show bestPoly))
+        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary" ++ (if verifiedNumerical then " + Numerical Guidance" else "") ++ (if not (null smartSqLog) then " + Smart Squaring" else ""), Just (unlines (wlogLog ++ smartSqLog) ++ "\nReduced Poly: " ++ show bestPoly))
         else (False, "SOS check failed", Just (unlines (wlogLog ++ smartSqLog) ++ "\nReduced Poly: " ++ show bestPoly))
+
+    -- | Build parameter map from theory (e.g. s^2 = 3 -> s = 1.732)
+    buildParamMap :: Theory -> M.Map String Double
+    buildParamMap theory = 
+      let eqs = [ (v, c) | Eq (Pow (Var v) 2) (Const c) <- theory, c > 0 ]
+      in M.fromList [ (v, sqrt (fromRational c)) | (v, c) <- eqs ]
 
     -- | Check SOS on boundaries for homogeneous quadratic polynomials in P
     --   Heuristic: Checks P(1,0), P(C), P(B+C)

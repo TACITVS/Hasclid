@@ -337,6 +337,7 @@ getPointsInExpr _ = []
 
 -- Convert goal Formula to GeoExpr (Difference = 0)
 exprToGeoExpr :: Formula -> Maybe GeoExpr
+
 exprToGeoExpr (Eq (Dist2 a b) (Dist2 c d)) =
   Just (G_Sub (G_Dist2 a b) (G_Dist2 c d))
 exprToGeoExpr (Eq (Collinear a b c) (Const 0)) =
