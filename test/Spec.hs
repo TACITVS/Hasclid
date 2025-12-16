@@ -9,7 +9,7 @@ import BuchbergerOpt (reduce, buchbergerWithStrategyT, SelectionStrategy(..))
 import CAD (discriminant, resultant)
 import CADLift (cadDecompose)
 import Positivity (checkPositivityEnhanced, isPositive)
-import Prover (intSolve, intResult, defaultIntSolveOptions)
+import Prover (intSolve, intResult, defaultIntSolveOptions, proveTheoryE, ProofResult(..), ProofTrace(..))
 import Parser (parseFormulaWithMacros, SExpr(..), MacroMap)
 import ReplSupport (consumeBalancedScript, parenBalance, stripComment)
 import Timeout
@@ -230,6 +230,34 @@ spec = do
         let cells = cadDecompose [polyFromConst 1] ["x"]
         -- Constant polynomial has no roots, just one sector
         length cells `shouldBe` 1
+
+  describe "Either-based Error Handling" $ do
+    it "proveTheoryE returns Right for provable theorems" $ do
+      -- Simple tautology: 1 = 1
+      let goal = Eq (Const 1) (Const 1)
+          result = proveTheoryE [] goal
+      case result of
+        Right proof -> proved proof `shouldBe` True
+        Left _ -> expectationFailure "Expected Right but got Left"
+
+    it "proveTheoryE returns Right (with False) for unprovable statements" $ do
+      -- False statement: 1 = 2
+      let goal = Eq (Const 1) (Const 2)
+          result = proveTheoryE [] goal
+      case result of
+        Right proof -> proved proof `shouldBe` False
+        Left _ -> expectationFailure "Expected Right but got Left"
+
+    it "proveTheoryE includes proof trace" $ do
+      -- x = 1, prove x + 1 = 2
+      let theory = [Eq (Var "x") (Const 1)]
+          goal = Eq (Add (Var "x") (Const 1)) (Const 2)
+          result = proveTheoryE theory goal
+      case result of
+        Right proof -> do
+          proved proof `shouldBe` True
+          length (steps (trace proof)) `shouldSatisfy` (> 0)
+        Left _ -> expectationFailure "Expected Right but got Left"
 
 -- Helper functions for Either and Maybe checks
 isRight :: Either a b -> Bool
