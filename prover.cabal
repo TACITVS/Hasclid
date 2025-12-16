@@ -34,6 +34,8 @@ executable prover-int
         Error
         Expr
         GeoSolver
+        IntSolver
+        Lagrange
         Modular
         Parser
         PolynomialFactor
@@ -77,6 +79,8 @@ test-suite prover-test
         Error
         Expr
         GeoSolver
+        IntSolver
+        Lagrange
         Modular
         Parser
         PolynomialFactor
@@ -100,6 +104,7 @@ test-suite prover-test
         base >= 4.16 && < 5,
         containers ^>=0.6.7,
         mtl ^>=2.3,
+        hspec ^>=2.11,
         QuickCheck ^>=2.14,
         random ^>=1.2,
         array
