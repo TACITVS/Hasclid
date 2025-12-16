@@ -1,0 +1,28 @@
+:verbose
+:set-timeout 180
+
+:point P x y
+
+-- 1. Auxiliary Variables for Distances
+-- (Implicitly Reals)
+
+:assume (= (^ Ra 2) (+ (^ x 2) (^ y 2)))
+:assume (>= Ra 0)
+:assume (= (^ b 2) (+ (^ u 2) (^ v 2)))
+:assume (>= b 0)
+
+-- 2. Area Terms
+:macro term_c = y
+:macro term_b = (- (* x v) (* y u))
+
+-- 3. Inequality Form (Degree 3 in x,y,u,v,Ra,b)
+-- Ra * b >= term_c + term_b
+:macro FinalPoly = (- (* Ra b) (+ term_c term_b))
+
+-- Constraints
+:assume (> v 0)
+:assume (> y 0)
+:assume (> term_b 0)
+
+-- We need to prove FinalPoly >= 0
+:auto (>= FinalPoly 0)

@@ -664,8 +664,9 @@ executeSolver solver opts profile theory goal =
              else case goal of
                     Eq _ _ ->
                       let (proved, reason) = wuProve theory goal
-                          trace = wuProveWithTrace theory goal
-                      in (proved, reason, Just (formatWuTrace trace))
+                      in case wuProveWithTrace theory goal of
+                           Left _ -> (proved, reason, Nothing)
+                           Right trace -> (proved, reason, Just (formatWuTrace trace))
                     _ -> (False, "Wu's method only supports equality goals", Nothing)
 
            UseGroebner ->

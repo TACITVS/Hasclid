@@ -26,7 +26,9 @@
       "Bash(cmd.exe /c \"taskkill /F /IM prover.exe 2>&1 || echo No prover running\")",
       "Bash(git log:*)",
       "Bash(wait)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(timeout 45 bash -c \"echo '':set-timeout 30\n:point A 0 0\n:point B 1 0\n:prove (= (dist2 A B) 1)\n:q'' | cabal run prover-int 2>&1\")",
+      "Bash(cabal test:*)"
     ],
     "deny": [],
     "ask": []

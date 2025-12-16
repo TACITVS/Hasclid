@@ -30,7 +30,7 @@ consumeBalancedScript :: [String] -> (String, [String])
 consumeBalancedScript [] = ("", [])
 consumeBalancedScript (l:ls) =
   let initial = parenBalance (stripComment l)
-  in go l initial ls
+  in go (stripComment l) initial ls
   where
     balance = parenBalance . stripComment
     go acc b rest =
@@ -38,6 +38,6 @@ consumeBalancedScript (l:ls) =
         _ | b <= 0 -> (acc, rest)
         [] -> (acc, [])
         (ln:lns) ->
-          let acc' = acc ++ "\n" ++ ln
+          let acc' = acc ++ "\n" ++ stripComment ln
               b' = b + balance ln
           in go acc' b' lns
