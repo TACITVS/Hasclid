@@ -5,15 +5,19 @@ module BuchbergerOpt
   , MonomialOrder
   , buchbergerOptimized
   , buchbergerWithStrategy
+  , buchbergerWithStrategyT
   , reduce
   , sPoly
   ) where
 
 import Expr
+import Timeout
 import qualified Data.Map.Strict as M
 import Data.List (nub, minimumBy)
 import Data.Ord (comparing)
 import Numeric.Natural
+import Control.Monad.IO.Class (liftIO)
+import System.IO.Unsafe (unsafePerformIO)
 
 -- =============================================
 -- Term Ordering Type
@@ -143,6 +147,52 @@ buchbergerWithStrategy ord strategy polys =
                       newPairs = [(r, b) | b <- basis, b /= r]
                       newCriticalPairs = concatMap (\(a,b) -> maybe [] (:[]) (makeCriticalPair cmp a b)) newPairs
                   in go cmp newBasis (remaining ++ newCriticalPairs) (pair : processed)
+
+    generatePairs :: MonomialOrder -> [Poly] -> [CriticalPair]
+    generatePairs cmp bs =
+      concatMap (\(f, g) -> maybe [] (:[]) (makeCriticalPair cmp f g))
+                [(f, g) | f <- bs, g <- bs, f /= g]
+
+-- | Timeout-aware version of Buchberger algorithm
+-- Checks timeout before processing each critical pair
+buchbergerWithStrategyT :: MonomialOrder -> SelectionStrategy -> [Poly] -> TimeoutM [Poly]
+buchbergerWithStrategyT ord strategy polys =
+  let initial = filter (/= polyZero) polys
+      initialPairs = generatePairs ord initial
+  in go ord initial initialPairs []
+  where
+    go :: MonomialOrder -> [Poly] -> [CriticalPair] -> [CriticalPair] -> TimeoutM [Poly]
+    go _ basis [] _ = return basis  -- No more pairs, done!
+    go cmp basis pairs processed = do
+      -- Check for timeout before processing next pair
+      timedOut <- checkTimeout
+      if timedOut
+        then error "Buchberger computation timeout exceeded"
+        else case selectPair strategy pairs of
+          Nothing -> return basis
+          Just (pair, remaining) ->
+            let (f, g) = pairPolys pair
+            in
+              -- Apply Buchberger criteria
+              if criterion1 cmp f g || criterion2 cmp pair basis processed
+              then
+                -- Skip this pair (criteria say it's useless)
+                go cmp basis remaining (pair : processed)
+              else
+                -- Compute S-polynomial and reduce
+                let s = sPoly cmp f g
+                    r = reduce cmp s basis
+                in
+                  if r == polyZero
+                  then
+                    -- Remainder is zero, continue
+                    go cmp basis remaining (pair : processed)
+                  else
+                    -- Non-zero remainder, add to basis and generate new pairs
+                    let newBasis = nub (r : basis)
+                        newPairs = [(r, b) | b <- basis, b /= r]
+                        newCriticalPairs = concatMap (\(a,b) -> maybe [] (:[]) (makeCriticalPair cmp a b)) newPairs
+                    in go cmp newBasis (remaining ++ newCriticalPairs) (pair : processed)
 
     generatePairs :: MonomialOrder -> [Poly] -> [CriticalPair]
     generatePairs cmp bs =

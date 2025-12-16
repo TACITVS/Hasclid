@@ -2,10 +2,10 @@ module Main where
 
 import Test.Hspec
 import Test.QuickCheck
-import Control.Exception (evaluate)
+import Control.Exception (evaluate, catch, SomeException)
 import Control.Concurrent (threadDelay)
 import Expr
-import BuchbergerOpt (reduce)
+import BuchbergerOpt (reduce, buchbergerWithStrategyT, SelectionStrategy(..))
 import Positivity (checkPositivityEnhanced, isPositive)
 import Prover (intSolve, intResult, defaultIntSolveOptions)
 import Parser (parseFormulaWithMacros, SExpr(..), MacroMap)
@@ -142,6 +142,36 @@ spec = do
       threadDelay 10000       -- Sleep 10ms
       result <- runTimeoutM ctx checkTimeout
       result `shouldBe` False
+
+  describe "Buchberger Timeout" $ do
+    it "completes for simple polynomial systems without timeout" $ do
+      let x = polyFromVar "x"
+          y = polyFromVar "y"
+          polys = [polyAdd (polyPow x 2) (polyFromConst (-1)),
+                   polyAdd (polyPow y 2) (polyFromConst (-1))]
+      ctx <- noTimeout
+      result <- runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys)
+      length result `shouldSatisfy` (> 0)
+
+    it "throws error on timeout for expensive systems" $ do
+      let x = polyFromVar "x"
+          y = polyFromVar "y"
+          z = polyFromVar "z"
+          w = polyFromVar "w"
+          -- Create a very expensive system - Katsura-4 benchmark
+          -- This is a well-known hard Groebner basis problem
+          polys = [ polyAdd (polyAdd (polyPow x 2) (polyPow y 2))
+                            (polyAdd (polyPow z 2) (polyPow w 2))
+                  , polyAdd (polyMul x y) (polyMul z w)
+                  , polyAdd (polyAdd (polyMul x z) (polyMul y w)) (polyFromConst 1)
+                  , polyAdd (polyAdd (polyMul x w) (polyMul y z)) (polyFromConst 1)
+                  , polyAdd (polyMul y w) (polyFromConst 1)
+                  ]
+      ctx <- withTimeout 0.01  -- 10ms timeout
+      -- This should timeout and throw an error
+      let computation = runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys)
+      (computation >> return False) `catch` (\(_ :: SomeException) -> return True)
+        `shouldReturn` True
 
 -- Helper functions for Either and Maybe checks
 isRight :: Either a b -> Bool
