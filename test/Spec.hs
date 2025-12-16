@@ -13,6 +13,10 @@ import Prover (intSolve, intResult, defaultIntSolveOptions, proveTheoryE, ProofR
 import Parser (parseFormulaWithMacros, SExpr(..), MacroMap)
 import ReplSupport (consumeBalancedScript, parenBalance, stripComment)
 import Timeout
+import Wu (wuProveE, WuResult(..))
+import Lagrange (solve4Squares, solve4SquaresE)
+import SolverRouter (autoSolve, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions, SolverChoice(..))
+import Error (ProverError(..), ProofErrorType(..), formatError)
 import Data.List (isPrefixOf, isInfixOf)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -258,6 +262,110 @@ spec = do
           proved proof `shouldBe` True
           length (steps (trace proof)) `shouldSatisfy` (> 0)
         Left _ -> expectationFailure "Expected Right but got Left"
+
+  describe "Wu's Method Error Handling" $ do
+    it "returns Left for unsupported formula (inequality)" $ do
+      let goal = Gt (Var "x") (Const 0)  -- Inequality, not supported by Wu
+          result = wuProveE [] goal
+      case result of
+        Left (ProofError (UnsupportedFormula _) _) -> return ()
+        Left err -> expectationFailure $ "Expected UnsupportedFormula but got: " ++ formatError err
+        Right _ -> expectationFailure "Expected Left but got Right"
+
+    it "returns Right for supported formula (equality)" $ do
+      let goal = Eq (Var "x") (Const 0)
+          result = wuProveE [] goal
+      case result of
+        Right _ -> return ()
+        Left err -> expectationFailure $ "Expected Right but got Left: " ++ formatError err
+
+  describe "Lagrange Four Squares" $ do
+    it "returns error for negative number" $ do
+      let result = solve4SquaresE (-5)
+      case result of
+        Left (MathematicalError _) -> return ()
+        Left err -> expectationFailure $ "Expected MathematicalError but got: " ++ formatError err
+        Right _ -> expectationFailure "Expected Left but got Right"
+
+    it "correctly solves for zero" $ do
+      solve4SquaresE 0 `shouldBe` Right [0,0,0,0]
+
+    it "correctly solves for small positive integers" $ do
+      -- 1 = 1^2 + 0^2 + 0^2 + 0^2
+      case solve4SquaresE 1 of
+        Right result -> do
+          let sumSquares = sum (map (^(2::Int)) result)
+          sumSquares `shouldBe` 1
+        Left err -> expectationFailure $ "Expected Right but got Left: " ++ formatError err
+
+    it "legacy API throws error for negative" $ do
+      evaluate (solve4Squares (-5)) `shouldThrow` anyException
+
+  describe "SolverRouter" $ do
+    it "routes equality goals to appropriate solver" $ do
+      let goal = Eq (Add (Var "x") (Const 1)) (Const 2)
+          result = autoSolve defaultSolverOptions [Eq (Var "x") (Const 1)] goal
+      selectedSolver result `shouldSatisfy` (\s -> s `elem` [UseWu, UseGroebner, UseGeoSolver])
+
+    it "handles simple true equality" $ do
+      let goal = Eq (Const 1) (Const 1)
+          result = autoSolve defaultSolverOptions [] goal
+      isProved result `shouldBe` True
+
+    it "handles simple false equality" $ do
+      let goal = Eq (Const 1) (Const 2)
+          result = autoSolve defaultSolverOptions [] goal
+      isProved result `shouldBe` False
+
+    it "routes inequality goals to CAD" $ do
+      let goal = Gt (Add (Var "x") (Const 1)) (Const 0)
+          result = autoSolve defaultSolverOptions [] goal
+      -- Should use CAD for inequalities, not Wu
+      selectedSolver result `shouldNotBe` UseWu
+
+  describe "Polynomial Operations Extended" $ do
+    it "polynomial multiplication is commutative" $ do
+      let p1 = polyAdd (polyFromVar "x") (polyFromConst 1)
+          p2 = polyAdd (polyFromVar "y") (polyFromConst 2)
+      polyMul p1 p2 `shouldBe` polyMul p2 p1
+
+    it "polynomial addition is associative" $ do
+      let p1 = polyFromVar "x"
+          p2 = polyFromVar "y"
+          p3 = polyFromConst 1
+      polyAdd (polyAdd p1 p2) p3 `shouldBe` polyAdd p1 (polyAdd p2 p3)
+
+    it "polynomial multiplication by zero yields zero" $ do
+      let p = polyAdd (polyFromVar "x") (polyFromConst 5)
+      polyMul p polyZero `shouldBe` polyZero
+
+    it "polynomial power works correctly" $ do
+      let p = polyAdd (polyFromVar "x") (polyFromConst 1)
+          -- (x+1)^2 = x^2 + 2x + 1
+          squared = polyPow p 2
+          expected = polyAdd (polyAdd (polyPow (polyFromVar "x") 2)
+                             (polyMul (polyFromConst 2) (polyFromVar "x")))
+                             (polyFromConst 1)
+      squared `shouldBe` expected
+
+  describe "Expression Conversion" $ do
+    it "converts simple variable to polynomial" $ do
+      toPoly (Var "x") `shouldBe` polyFromVar "x"
+
+    it "converts addition correctly" $ do
+      let expr = Add (Var "x") (Const 1)
+          expected = polyAdd (polyFromVar "x") (polyFromConst 1)
+      toPoly expr `shouldBe` expected
+
+    it "converts multiplication correctly" $ do
+      let expr = Mul (Var "x") (Var "y")
+          expected = polyMul (polyFromVar "x") (polyFromVar "y")
+      toPoly expr `shouldBe` expected
+
+    it "handles nested expressions" $ do
+      let expr = Add (Mul (Var "x") (Var "x")) (Const 1)
+          expected = polyAdd (polyPow (polyFromVar "x") 2) (polyFromConst 1)
+      toPoly expr `shouldBe` expected
 
 -- Helper functions for Either and Maybe checks
 isRight :: Either a b -> Bool
