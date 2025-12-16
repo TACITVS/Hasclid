@@ -20,12 +20,15 @@ import Error (ProverError(..), ProofErrorType(..), formatError)
 import Data.List (isPrefixOf, isInfixOf)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import qualified ExamplesSpec
 
 main :: IO ()
-main = hspec spec
+main = hspec $ do
+  coreSpec
+  ExamplesSpec.spec
 
-spec :: Spec
-spec = do
+coreSpec :: Spec
+coreSpec = do
   describe "Polynomial Arithmetic" $ do
     it "toPoly distributes over constant addition (samples)" $ do
       let prop a b = toPoly (Add (Const (fromInteger a)) (Const (fromInteger b))) ==
