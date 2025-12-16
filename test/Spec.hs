@@ -3,12 +3,14 @@ module Main where
 import Test.Hspec
 import Test.QuickCheck
 import Control.Exception (evaluate)
+import Control.Concurrent (threadDelay)
 import Expr
 import BuchbergerOpt (reduce)
 import Positivity (checkPositivityEnhanced, isPositive)
 import Prover (intSolve, intResult, defaultIntSolveOptions)
 import Parser (parseFormulaWithMacros, SExpr(..), MacroMap)
 import ReplSupport (consumeBalancedScript, parenBalance, stripComment)
+import Timeout
 import Data.List (isPrefixOf, isInfixOf)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -115,7 +117,33 @@ spec = do
         ("(exists (u v)" `isInfixOf` cmd1) `shouldBe` True
         parenBalance cmd1 `shouldBe` 0
 
--- Helper functions for Either checks
+  describe "Timeout Infrastructure" $ do
+    it "creates timeout context with deadline" $ do
+      ctx <- withTimeout 1.0
+      deadline ctx `shouldSatisfy` isJust
+
+    it "creates no-timeout context" $ do
+      ctx <- noTimeout
+      deadline ctx `shouldBe` Nothing
+
+    it "detects timeout expiration" $ do
+      ctx <- withTimeout 0.1  -- 100ms timeout
+      threadDelay 150000      -- Sleep 150ms
+      result <- runTimeoutM ctx checkTimeout
+      result `shouldBe` True
+
+    it "does not timeout before deadline" $ do
+      ctx <- withTimeout 1.0  -- 1 second timeout
+      result <- runTimeoutM ctx checkTimeout
+      result `shouldBe` False
+
+    it "no-timeout never times out" $ do
+      ctx <- noTimeout
+      threadDelay 10000       -- Sleep 10ms
+      result <- runTimeoutM ctx checkTimeout
+      result `shouldBe` False
+
+-- Helper functions for Either and Maybe checks
 isRight :: Either a b -> Bool
 isRight (Right _) = True
 isRight _ = False
@@ -123,3 +151,7 @@ isRight _ = False
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True
 isLeft _ = False
+
+isJust :: Maybe a -> Bool
+isJust (Just _) = True
+isJust Nothing = False
