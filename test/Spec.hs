@@ -51,6 +51,19 @@ spec = do
           macros = M.fromList [("inc", (["x"], List [Atom "+", Atom "x", Atom "1"]))]
       parseFormulaWithMacros macros S.empty "(= (inc 1) 2)" `shouldSatisfy` isRight
 
+    it "detects infinite macro recursion" $ do
+      let macros :: MacroMap
+          macros = M.fromList [("inf", ([], List [Atom "inf"]))]
+      parseFormulaWithMacros macros S.empty "(= (inf) 0)" `shouldSatisfy` isLeft
+
+    it "allows deep but finite macro expansion" $ do
+      -- Create a chain of macros that expands deeply but finitely
+      let macros :: MacroMap
+          macros = M.fromList [("nest", (["x"], List [Atom "+", Atom "x", Atom "1"]))]
+          -- (nest (nest (nest ... (nest 0)...))) with many levels
+          deepExpr = foldl (\acc _ -> "(nest " ++ acc ++ ")") "0" [1..100::Int]
+      parseFormulaWithMacros macros S.empty ("(= " ++ deepExpr ++ " 100)") `shouldSatisfy` isRight
+
     context "when handling comments and multi-line input" $ do
       it "ignores comments in paren balance" $ do
         let l1 = ":prove (>= (+ x 1) 0)  -- comment with ) )"
@@ -72,7 +85,11 @@ spec = do
         ("(exists (u v)" `isInfixOf` cmd1) `shouldBe` True
         parenBalance cmd1 `shouldBe` 0
 
--- Helper function for Either checks
+-- Helper functions for Either checks
 isRight :: Either a b -> Bool
 isRight (Right _) = True
 isRight _ = False
+
+isLeft :: Either a b -> Bool
+isLeft (Left _) = True
+isLeft _ = False

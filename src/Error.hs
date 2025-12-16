@@ -34,6 +34,7 @@ data ParseErrorType
   | InvalidNumber String                    -- Malformed number
   | EmptyExpression                         -- Empty input
   | ExtraTokens [String]                    -- Leftover tokens after parsing
+  | MacroExpansionDepthExceeded Int         -- Macro expansion exceeded depth limit
   deriving (Eq, Show, Generic)
 
 data ProofErrorType
@@ -102,6 +103,9 @@ formatParseError EmptyExpression =
   "Empty expression (nothing to parse)"
 formatParseError (ExtraTokens tokens) =
   "Extra tokens after formula: " ++ show tokens
+formatParseError (MacroExpansionDepthExceeded depth) =
+  "Macro expansion exceeded depth limit (" ++ show depth ++ " levels). " ++
+  "Possible infinite recursion in macro definitions."
 
 -- Format Proof Errors
 formatProofError :: ProofErrorType -> String
