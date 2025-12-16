@@ -9,7 +9,9 @@ module Main
 import Expr (Formula(Eq, Ge, Gt, Le, Lt), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
 import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea)
 import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
-import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger, IntSolveOptions(..), proveByInduction)
+import IntSolver (IntSolveOptions(..))
+import Lagrange (solve4Squares)
+import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger, proveByInduction)
 import BuchbergerOpt (SelectionStrategy(..), buchbergerWithStrategy)
 import CounterExample (findCounterExample, formatCounterExample)
 import CAD (discriminant, toRecursive)
@@ -543,6 +545,13 @@ handleCommand state stateWithHist newHist input = do
       results <- liftIO $ mapM (processFormulaLine env stateWithHist) formulas
       let msgs = unlines results
       pure (stateWithHist, msgs)
+
+    (":lagrange":nStr:_) -> 
+      if all isDigit nStr then
+        let n = read nStr
+            sol = solve4Squares n
+        in pure (stateWithHist, "Lagrange sum of 4 squares for " ++ nStr ++ ": " ++ show sol)
+      else pure (stateWithHist, "Usage: :lagrange <positive_integer>")
 
     (":load":filename:_) -> do
       content <- liftIO $ readFile filename

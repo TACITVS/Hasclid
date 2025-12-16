@@ -8,6 +8,7 @@ Wu's Method with Factorization and Branching.
 module Wu
   ( -- * Main Wu Proof Function
     wuProve
+  , wuProveE
   , wuProveWithTrace
   , proveExistentialWu
 
@@ -28,9 +29,11 @@ module Wu
     -- * Wu Proof Trace
   , WuTrace(..)
   , formatWuTrace
+  , WuResult(..)
   ) where
 
 import Expr
+import Error
 import PolynomialFactor (factorHeuristic, factorPoly)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -76,37 +79,56 @@ data WuBranchTrace = WuBranchTrace
 -- Main Wu Proving Functions
 -- =============================================
 
+-- | Result of Wu's method proof attempt (Either-based API)
+data WuResult = WuResult
+  { wuProved :: Bool      -- Was the theorem proved?
+  , wuReason :: String    -- Explanation
+  , wuTrace :: WuTrace    -- Detailed proof trace
+  } deriving (Show, Eq)
+
+-- | Legacy tuple-based API for backward compatibility
 wuProve :: Theory -> Formula -> (Bool, String)
-wuProve theory goal = 
-  let trace = wuProveWithTrace theory goal
-  in (isProved trace, proofReason trace)
+wuProve theory goal =
+  case wuProveWithTrace theory goal of
+    Left err -> (False, formatError err)
+    Right trace -> (isProved trace, proofReason trace)
 
-wuProveWithTrace :: Theory -> Formula -> WuTrace
-wuProveWithTrace theory goal = 
-  let 
-    hypPolys = extractHypothesisPolys theory
-    concPoly = extractConclusionPoly goal
+-- | Either-based version of wuProve (recommended API)
+-- Returns Either ProverError WuResult for better error handling
+wuProveE :: Theory -> Formula -> Either ProverError WuResult
+wuProveE theory goal =
+  case wuProveWithTrace theory goal of
+    Left err -> Left err
+    Right trace -> Right $ WuResult (isProved trace) (proofReason trace) trace
 
-    -- Build ALL characteristic sets (branches)
-    branchesList = buildCharSet hypPolys
+wuProveWithTrace :: Theory -> Formula -> Either ProverError WuTrace
+wuProveWithTrace theory goal =
+  case extractConclusionPoly goal of
+    Left err -> Left err
+    Right concPoly ->
+      let
+        hypPolys = extractHypothesisPolys theory
 
-    -- Prove for each branch
-    branchTraces = zipWith (proveBranch concPoly) [1..] branchesList
+        -- Build ALL characteristic sets (branches)
+        branchesList = buildCharSet hypPolys
 
-    allProved = all branchProved branchTraces
-    reason = if allProved 
-             then "Conclusion holds for all " ++ show (length branchTraces) ++ " branches."
-             else "Conclusion failed on " ++ show (length (filter (not . branchProved) branchTraces)) ++ " branch(es)."
-  in 
-    WuTrace 
-      { inputTheory = theory
-      , inputGoal = goal
-      , hypothesisPolys = hypPolys
-      , conclusionPoly = concPoly
-      , branches = branchTraces
-      , isProved = allProved
-      , proofReason = reason
-      }
+        -- Prove for each branch
+        branchTraces = zipWith (proveBranch concPoly) [1..] branchesList
+
+        allProved = all branchProved branchTraces
+        reason = if allProved
+                 then "Conclusion holds for all " ++ show (length branchTraces) ++ " branches."
+                 else "Conclusion failed on " ++ show (length (filter (not . branchProved) branchTraces)) ++ " branch(es)."
+      in
+        Right $ WuTrace
+          { inputTheory = theory
+          , inputGoal = goal
+          , hypothesisPolys = hypPolys
+          , conclusionPoly = concPoly
+          , branches = branchTraces
+          , isProved = allProved
+          , proofReason = reason
+          }
 
 proveBranch :: Poly -> Int -> (CharSet, [DegeneracyCondition]) -> WuBranchTrace
 proveBranch concPoly bid (charSet, degConds) = 
@@ -288,12 +310,13 @@ extractHypothesisPolys theory =
   let subMap = buildSubMap theory 
   in [ toPolySub subMap (Sub l r) | Eq l r <- theory ]
 
-extractConclusionPoly :: Formula -> Poly
-extractConclusionPoly (Eq l r) = 
-  let subMap = M.empty 
-  in toPolySub subMap (Sub l r)
-extractConclusionPoly _ = 
-  error "Wu's method only supports equality goals (not inequalities)"
+extractConclusionPoly :: Formula -> Either ProverError Poly
+extractConclusionPoly (Eq l r) =
+  let subMap = M.empty
+  in Right $ toPolySub subMap (Sub l r)
+extractConclusionPoly _ =
+  Left $ ProofError (UnsupportedFormula "Wu's method only supports equality goals (not inequalities)")
+                    "Try using a different solver or rewrite as an equality"
 
 -- =============================================
 -- Degeneracy Checking

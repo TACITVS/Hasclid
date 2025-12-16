@@ -22,6 +22,8 @@ data ProverError
   | DivisionByZero String                   -- Division by zero
   | FileError String                        -- File I/O errors
   | CADError String                         -- CAD computation errors
+  | UnsupportedOperation String             -- Operation not supported in context
+  | MathematicalError String                -- Mathematical impossibility
   | InternalError String                    -- Should never happen
   deriving (Eq, Show, Generic)
 
@@ -43,6 +45,7 @@ data ProofErrorType
   | SturmFailed Int                         -- Sturm check failed (# roots)
   | MultivariateFallback                    -- Can't handle multivariate
   | ConstantNegative Rational               -- Constant is negative
+  | UnsupportedFormula String               -- Formula not supported by solver
   deriving (Eq, Show, Generic)
 
 data ValidationErrorType
@@ -79,6 +82,12 @@ formatError (FileError msg) =
 
 formatError (CADError msg) =
   "CAD Computation Error: " ++ msg
+
+formatError (UnsupportedOperation msg) =
+  "Unsupported Operation: " ++ msg
+
+formatError (MathematicalError msg) =
+  "Mathematical Error: " ++ msg
 
 formatError (InternalError msg) =
   "Internal Error (this should not happen!): " ++ msg ++ "\n" ++
@@ -119,6 +128,8 @@ formatProofError MultivariateFallback =
   "Cannot prove multivariate inequality (Sturm requires univariate polynomial)"
 formatProofError (ConstantNegative val) =
   "Constant value is negative: " ++ show val
+formatProofError (UnsupportedFormula msg) =
+  "Formula not supported by this solver: " ++ msg
 
 -- Format Validation Errors
 formatValidationError :: ValidationErrorType -> String

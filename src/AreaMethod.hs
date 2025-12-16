@@ -1,8 +1,17 @@
 {-# LANGUAGE DeriveGeneric #-}
 
-module AreaMethod where
+module AreaMethod
+  ( proveArea
+  , proveAreaE
+  , AreaResult(..)
+  , GeoExpr(..)
+  , Construction
+  , ConstructStep(..)
+  , deriveConstruction
+  ) where
 
 import Expr
+import Error
 import Data.Ratio
 import qualified Data.Map.Strict as M
 import Data.List (nub, isPrefixOf, find, (\\))
@@ -228,6 +237,13 @@ elimDistOnLine _ u v r b =
 -- 4. Proof Engine
 -- =============================================
 
+-- | Result of Area Method proof attempt (Either-based API)
+data AreaResult = AreaResult
+  { areaProved :: Bool      -- Was the theorem proved?
+  , areaReason :: String    -- Explanation
+  } deriving (Show, Eq)
+
+-- | Legacy tuple-based API for backward compatibility
 proveArea :: Construction -> GeoExpr -> (Bool, String)
 proveArea steps goal =
   let
@@ -237,6 +253,13 @@ proveArea steps goal =
     case simplified of
       G_Const c | c == 0 -> (True, "Reduced to 0")
       _ -> (False, "Reduced to: " ++ show simplified)
+
+-- | Either-based version of proveArea (recommended API)
+-- Returns Either ProverError AreaResult for better error handling
+proveAreaE :: Construction -> GeoExpr -> Either ProverError AreaResult
+proveAreaE steps goal =
+  let (proved, reason) = proveArea steps goal
+  in Right $ AreaResult proved reason
 
 -- =============================================
 -- 5. Theory -> Construction Bridge
