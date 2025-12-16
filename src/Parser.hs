@@ -58,68 +58,74 @@ parseList (t:ts)
 -- =============================================
 
 -- | Recursively expand macros in an S-Expression with depth limit
-expandMacros :: MacroMap -> SExpr -> SExpr
+expandMacros :: MacroMap -> SExpr -> Either ProverError SExpr
 expandMacros macros sexpr = expandMacros' 1000 macros sexpr
 
-expandMacros' :: Int -> MacroMap -> SExpr -> SExpr
-expandMacros' 0 _ _ = error "Macro expansion depth limit exceeded (possible infinite recursion)"
+expandMacros' :: Int -> MacroMap -> SExpr -> Either ProverError SExpr
+expandMacros' 0 _ _ = Left $ ParseError (MacroExpansionDepthExceeded 1000)
+                        "Macro expansion exceeded 1000 levels (check for recursive macros)"
 expandMacros' depth macros expr@(List (Atom name : args)) =
   case name of
     -- Special Form: IF
     -- Usage: (if (= a b) trueBranch falseBranch)
     "if" ->
         case args of
-            [cond, trueBranch, falseBranch] ->
+            [cond, trueBranch, falseBranch] -> do
                 -- Evaluate condition
-                case evalCondition (expandMacros' (depth-1) macros cond) of
+                expandedCond <- expandMacros' (depth-1) macros cond
+                case evalCondition expandedCond of
                     Just True -> expandMacros' (depth-1) macros trueBranch
                     Just False -> expandMacros' (depth-1) macros falseBranch
-                    Nothing -> List (Atom "if" : map (expandMacros' (depth-1) macros) args) -- Keep as is if undecidable
-            _ -> expr -- Wrong arity
+                    Nothing -> do
+                        expandedArgs <- traverse (expandMacros' (depth-1) macros) args
+                        return $ List (Atom "if" : expandedArgs)
+            _ -> return expr -- Wrong arity
 
     -- Special Form: Arithmetic (compile-time)
     -- Only reduces if arguments are integer literals
-    op | op `elem` ["+", "-", "*"] ->
-        let expandedArgs = map (expandMacros' (depth-1) macros) args
-        in case mapM toInt expandedArgs of
-             Just nums -> Atom (show (foldl1 (opFunc op) nums))
-             Nothing -> List (Atom op : expandedArgs)
+    op | op `elem` ["+", "-", "*"] -> do
+        expandedArgs <- traverse (expandMacros' (depth-1) macros) args
+        case traverse toInt expandedArgs of
+             Just nums -> return $ Atom (show (foldl1 (opFunc op) nums))
+             Nothing -> return $ List (Atom op : expandedArgs)
 
     -- Special Form: Indexer (compile-time string concatenation)
     -- Usage: (idx P 1) -> P1
     "idx" ->
         case args of
-            [Atom prefix, indexExpr] ->
-                let expandedIndex = expandMacros' (depth-1) macros indexExpr
-                in case toInt expandedIndex of
-                     Just n -> Atom (prefix ++ show n)
-                     Nothing -> List (Atom "idx" : [Atom prefix, expandedIndex])
-            _ -> expr
+            [Atom prefix, indexExpr] -> do
+                expandedIndex <- expandMacros' (depth-1) macros indexExpr
+                case toInt expandedIndex of
+                     Just n -> return $ Atom (prefix ++ show n)
+                     Nothing -> return $ List (Atom "idx" : [Atom prefix, expandedIndex])
+            _ -> return expr
 
     _ ->
       case M.lookup name macros of
         Just (params, body) ->
           if length params /= length args
-          then List (Atom name : map (expandMacros' (depth-1) macros) args)
-          else
-            let 
+          then do
+              expandedArgs <- traverse (expandMacros' (depth-1) macros) args
+              return $ List (Atom name : expandedArgs)
+          else do
                 -- Expand arguments first (eager evaluation of args)
-                expandedArgs = map (expandMacros' (depth-1) macros) args
+                expandedArgs <- traverse (expandMacros' (depth-1) macros) args
                 -- Create substitution map: param -> expanded arg
-                -- Only substitute if the atom matches a parameter name
-                subst = M.fromList $ zip params expandedArgs
-                
-                substitutedBody = substituteSExpr subst body
-            in 
+                let subst = M.fromList $ zip params expandedArgs
+                let substitutedBody = substituteSExpr subst body
                 -- Recursively expand the result
                 expandMacros' (depth-1) macros substitutedBody
-        Nothing -> List (Atom name : map (expandMacros' (depth-1) macros) args)
+        Nothing -> do
+            expandedArgs <- traverse (expandMacros' (depth-1) macros) args
+            return $ List (Atom name : expandedArgs)
 
-expandMacros' depth macros (List list) = List (map (expandMacros' depth macros) list)
+expandMacros' depth macros (List list) = do
+    expandedList <- traverse (expandMacros' depth macros) list
+    return $ List expandedList
 expandMacros' depth macros atom@(Atom name) =
   case M.lookup name macros of
     Just ([], body) -> expandMacros' (depth-1) macros body
-    _ -> atom
+    _ -> return atom
 
 -- | Evaluate condition for macros
 evalCondition :: SExpr -> Maybe Bool
@@ -188,6 +194,13 @@ exprFromSExpr intVars (List (Atom op : args)) = case op of
       [a,b] -> Right $ Div a b
       _ -> Left $ ParseError (WrongArity "/" 2 (length args))
                     "Division requires exactly 2 arguments"
+
+  "mod" -> do
+    exprs <- mapM (exprFromSExpr intVars) args
+    case exprs of
+      [a,b] -> Right $ Mod a b
+      _ -> Left $ ParseError (WrongArity "mod" 2 (length args))
+                    "Mod requires exactly 2 arguments"
 
   "^" -> case args of
     [a, Atom n] | all isDigit n -> do
@@ -332,7 +345,7 @@ parseFormulaWithMacros :: MacroMap -> S.Set String -> String -> Either ProverErr
 parseFormulaWithMacros macros intVars input = do
   let tokens = tokenizePrefix input
   (sexpr, rest) <- parseSExpr tokens
-  let expanded = expandMacros macros sexpr
+  expanded <- expandMacros macros sexpr
   formula <- formulaFromSExpr macros intVars expanded
   if null rest
      then Right formula
@@ -347,7 +360,7 @@ parseFormulaWithRestAndMacros :: MacroMap -> S.Set String -> String -> Either Pr
 parseFormulaWithRestAndMacros macros intVars input = do
   let tokens = tokenizePrefix input
   (sexpr, rest) <- parseSExpr tokens
-  let expanded = expandMacros macros sexpr
+  expanded <- expandMacros macros sexpr
   formula <- formulaFromSExpr macros intVars expanded
   Right (formula, rest)
 
@@ -396,6 +409,11 @@ formulaFromSExpr macros intVars sexpr =
       l <- exprFromSExpr intVars lhs
       r <- exprFromSExpr intVars rhs
       Right $ Lt l r
+
+    List [Atom "divides", lhs, rhs] -> do
+      l <- exprFromSExpr intVars lhs
+      r <- exprFromSExpr intVars rhs
+      Right $ Divides l r
 
     List (Atom "and" : args) -> do
       fs <- mapM (formulaFromSExpr macros intVars) args

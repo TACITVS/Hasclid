@@ -47,6 +47,7 @@ executable prover-int
         SqrtElim
         Sturm
         TermOrder
+        Timeout
         Validation
         ReplSupport
         F4Lite
@@ -60,7 +61,8 @@ executable prover-int
         containers ^>=0.6.7,
         mtl ^>=2.3,
         random ^>=1.2,
-        array
+        array,
+        time ^>=1.12
     default-language: GHC2021
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
@@ -92,6 +94,7 @@ test-suite prover-test
         SqrtElim
         Sturm
         TermOrder
+        Timeout
         Validation
         ReplSupport
         F4Lite
@@ -107,6 +110,7 @@ test-suite prover-test
         hspec ^>=2.11,
         QuickCheck ^>=2.14,
         random ^>=1.2,
-        array
+        array,
+        time ^>=1.12
     default-language: GHC2021
     ghc-options: -Wall -Wno-unused-imports -Wno-incomplete-patterns -Wno-name-shadowing
