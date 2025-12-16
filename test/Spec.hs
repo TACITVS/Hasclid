@@ -2,6 +2,7 @@ module Main where
 
 import Test.Hspec
 import Test.QuickCheck
+import Control.Exception (evaluate)
 import Expr
 import BuchbergerOpt (reduce)
 import Positivity (checkPositivityEnhanced, isPositive)
@@ -32,6 +33,35 @@ spec = do
     it "detects simple positive polynomial x^2 + 1" $ do
       let p = polyAdd (polyPow (polyFromVar "x") 2) (polyFromConst 1)
       isPositive (checkPositivityEnhanced p True) `shouldBe` True
+
+  describe "Expression Simplification" $ do
+    describe "division-by-zero handling" $ do
+      it "detects division by literal zero (Const)" $ do
+        let expr = Div (Const 1) (Const 0)
+        evaluate (simplifyExpr expr) `shouldThrow` anyException
+
+      it "detects division by literal zero (IntConst)" $ do
+        let expr = Div (IntConst 5) (IntConst 0)
+        evaluate (simplifyExpr expr) `shouldThrow` anyException
+
+      it "detects modulo by literal zero (Const)" $ do
+        let expr = Mod (Const 5) (Const 0)
+        evaluate (simplifyExpr expr) `shouldThrow` anyException
+
+      it "detects modulo by literal zero (IntConst)" $ do
+        let expr = Mod (IntConst 10) (IntConst 0)
+        evaluate (simplifyExpr expr) `shouldThrow` anyException
+
+      it "allows symbolic division" $ do
+        let expr = Div (Const 1) (Var "x")
+        simplifyExpr expr `shouldBe` Div (Const 1) (Var "x")
+
+      it "simplifies division by non-zero constant" $ do
+        simplifyExpr (Div (Const 6) (Const 2)) `shouldBe` Const 3
+
+      it "simplifies nested division correctly" $ do
+        simplifyExpr (Div (Div (Const 12) (Const 3)) (Const 2))
+          `shouldBe` Const 2
 
   describe "Integer Solver" $ do
     it "proves trivial integer equality 1 = 1" $ do

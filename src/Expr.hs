@@ -7,6 +7,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Numeric.Natural (Natural)
 import Data.Ratio ((%), numerator, denominator)
+import Error (ProverError(..), formatError)
 
 -- =============================================
 -- Symbolic Expressions (AST)
@@ -21,6 +22,7 @@ data Expr
   | Sub Expr Expr
   | Mul Expr Expr
   | Div Expr Expr
+  | Mod Expr Expr               -- Modulo operation (a mod b)
   | Pow Expr Natural
   | Sqrt Expr
   -- Geometric primitives
@@ -57,6 +59,7 @@ data Formula
   | Gt Expr Expr    -- Greater Than (>)
   | Le Expr Expr    -- Less or Equal (<=)
   | Lt Expr Expr    -- Less Than (<)
+  | Divides Expr Expr -- Divisibility (a | b)
   | And Formula Formula
   | Or Formula Formula
   | Not Formula
@@ -73,6 +76,7 @@ prettyExpr (Add e1 e2)  = "(" ++ prettyExpr e1 ++ " + " ++ prettyExpr e2 ++ ")"
 prettyExpr (Sub e1 e2)  = "(- " ++ prettyExpr e1 ++ " " ++ prettyExpr e2 ++ ")"
 prettyExpr (Mul e1 e2)  = "(* " ++ prettyExpr e1 ++ " " ++ prettyExpr e2 ++ ")"
 prettyExpr (Div e1 e2)  = "(/ " ++ prettyExpr e1 ++ " " ++ prettyExpr e2 ++ ")"
+prettyExpr (Mod e1 e2)  = "(mod " ++ prettyExpr e1 ++ " " ++ prettyExpr e2 ++ ")"
 prettyExpr (Pow e n)    = "(^ " ++ prettyExpr e ++ " " ++ show n ++ ")"
 prettyExpr (Sqrt e)     = "(sqrt " ++ prettyExpr e ++ ")"
 prettyExpr (Dist2 p1 p2) = "(dist2 " ++ p1 ++ " " ++ p2 ++ ")"
@@ -113,6 +117,7 @@ prettyFormula (Ge l r) = "(>= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 prettyFormula (Gt l r) = "(> " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 prettyFormula (Le l r) = "(<= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 prettyFormula (Lt l r) = "(< " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
+prettyFormula (Divides l r) = "(divides " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 prettyFormula (And f1 f2) = "(and " ++ prettyFormula f1 ++ " " ++ prettyFormula f2 ++ ")"
 prettyFormula (Or f1 f2) = "(or " ++ prettyFormula f1 ++ " " ++ prettyFormula f2 ++ ")"
 prettyFormula (Not f) = "(not " ++ prettyFormula f ++ ")"
@@ -276,6 +281,7 @@ substituteExpr var val (Add e1 e2) = Add (substituteExpr var val e1) (substitute
 substituteExpr var val (Sub e1 e2) = Sub (substituteExpr var val e1) (substituteExpr var val e2)
 substituteExpr var val (Mul e1 e2) = Mul (substituteExpr var val e1) (substituteExpr var val e2)
 substituteExpr var val (Div e1 e2) = Div (substituteExpr var val e1) (substituteExpr var val e2)
+substituteExpr var val (Mod e1 e2) = Mod (substituteExpr var val e1) (substituteExpr var val e2)
 substituteExpr var val (Pow e n) = Pow (substituteExpr var val e) n
 substituteExpr var val (Sqrt e) = Sqrt (substituteExpr var val e)
 substituteExpr var val (Sum i lo hi body) =
@@ -295,6 +301,7 @@ substituteAll subMap (Add e1 e2) = Add (substituteAll subMap e1) (substituteAll 
 substituteAll subMap (Sub e1 e2) = Sub (substituteAll subMap e1) (substituteAll subMap e2)
 substituteAll subMap (Mul e1 e2) = Mul (substituteAll subMap e1) (substituteAll subMap e2)
 substituteAll subMap (Div e1 e2) = Div (substituteAll subMap e1) (substituteAll subMap e2)
+substituteAll subMap (Mod e1 e2) = Mod (substituteAll subMap e1) (substituteAll subMap e2)
 substituteAll subMap (Pow e n) = Pow (substituteAll subMap e) n
 substituteAll subMap (Sqrt e) = Sqrt (substituteAll subMap e)
 substituteAll subMap (Sum i lo hi body) =
@@ -322,6 +329,7 @@ exprEqualsSymbolic e1 e2 =
 
 hasNonPolynomial :: Expr -> Bool
 hasNonPolynomial (Div _ _) = True
+hasNonPolynomial (Mod _ _) = True
 hasNonPolynomial (Sqrt _) = True
 hasNonPolynomial (IntVar _) = True
 hasNonPolynomial (IntConst _) = True
@@ -369,13 +377,37 @@ simplifyExpr (Div e1 e2) =
   let s1 = simplifyExpr e1
       s2 = simplifyExpr e2
   in case (s1, s2) of
-       (Const 0, _) -> Const 0              -- 0 / e = 0
+       -- Check for division by zero FIRST
+       (_, Const 0) -> error $ formatError (DivisionByZero
+                        "Attempted to simplify division by zero constant")
+       (_, IntConst 0) -> error $ formatError (DivisionByZero
+                           "Attempted to simplify division by zero integer")
+       (Const 0, _) -> Const 0              -- 0 / e = 0 (only if e /= 0, already checked)
        (e, Const 1) -> e                    -- e / 1 = e
-       (Const r1, Const r2) | r2 /= 0 -> Const (r1 / r2)
+       (e, IntConst 1) -> e                 -- e / 1 = e
+       (Const r1, Const r2) -> Const (r1 / r2)  -- r2 /= 0 guaranteed by guards
+       (e, Const c) -> Mul e (Const (1 / c))     -- c /= 0 guaranteed by guards
+       (e, IntConst c) -> Mul e (Const (1 % c))  -- c /= 0 guaranteed by guards
        (Div a b, c) -> simplifyExpr (Div a (Mul b c))  -- (a/b)/c = a/(bc)
        (a, Div b c) -> simplifyExpr (Div (Mul a c) b)  -- a/(b/c) = (ac)/b
-       _ | s1 == s2 -> Const 1              -- e / e = 1
+       _ | s1 == s2 && s1 /= Const 0 && s1 /= IntConst 0 -> Const 1  -- e / e = 1 if e /= 0
        _ -> Div s1 s2
+
+simplifyExpr (Mod e1 e2) =
+  let s1 = simplifyExpr e1
+      s2 = simplifyExpr e2
+  in case (s1, s2) of
+       -- Check for modulo by zero FIRST
+       (_, Const 0) -> error $ formatError (DivisionByZero
+                        "Attempted modulo by zero constant")
+       (_, IntConst 0) -> error $ formatError (DivisionByZero
+                           "Attempted modulo by zero integer")
+       (e, Const 1) -> Const 0              -- e mod 1 = 0
+       (e, IntConst 1) -> Const 0
+       (Const r1, Const r2) | denominator r1 == 1 && denominator r2 == 1 ->
+           Const (fromIntegral (numerator r1 `mod` numerator r2))  -- r2 /= 0 guaranteed
+       (IntConst i1, IntConst i2) -> IntConst (i1 `mod` i2)  -- i2 /= 0 guaranteed
+       _ -> Mod s1 s2
 
 simplifyExpr (Pow _ 0) = Const 1            -- e^0 = 1
 simplifyExpr (Pow e 1) = simplifyExpr e     -- e^1 = e
@@ -505,6 +537,7 @@ normalizeCommAssoc (Mul a b) =
                   (c, (o:os)) -> foldl Mul (Mul (Const c) o) os
   in rebuilt
 normalizeCommAssoc (Div a b) = Div (normalizeCommAssoc a) (normalizeCommAssoc b)
+normalizeCommAssoc (Mod a b) = Mod (normalizeCommAssoc a) (normalizeCommAssoc b)
 normalizeCommAssoc (Pow e n) = Pow (normalizeCommAssoc e) n
 normalizeCommAssoc (Sqrt e) = Sqrt (normalizeCommAssoc e)
 normalizeCommAssoc (Determinant rows) = Determinant (map (map normalizeCommAssoc) rows)
@@ -571,7 +604,16 @@ toPoly (IntConst i) = polyFromConst (fromIntegral i)
 toPoly (Add e1 e2) = polyAdd (toPoly e1) (toPoly e2)
 toPoly (Sub e1 e2) = polySub (toPoly e1) (toPoly e2)
 toPoly (Mul e1 e2) = polyMul (toPoly e1) (toPoly e2)
-toPoly (Div _ _)   = error "Division Error: Division is not supported in polynomial expressions.\nNote: Rational constants like 1/2 are supported, but division of variables is not.\nContext: Attempting to convert Div expression to polynomial."
+toPoly (Div e1 e2)   = 
+  let simp = simplifyExpr (Div e1 e2)
+  in case simp of
+       Div _ _ -> error "Division Error: Division is not supported in polynomial expressions.\nNote: Rational constants like 1/2 are supported, but division of variables is not.\nContext: Attempting to convert Div expression to polynomial."
+       _ -> toPoly simp
+toPoly (Mod e1 e2) =
+  let simp = simplifyExpr (Mod e1 e2)
+  in case simp of
+       Mod _ _ -> error "Modulo Error: Modulo is not supported in polynomial expressions unless simplifiable to constant."
+       _ -> toPoly simp
 toPoly (Pow e n)   = polyPow (toPoly e) n
 toPoly (Sqrt _)    = error "Sqrt Error: Square roots are not supported in polynomial expressions. Rewrite without sqrt or use a geometric/analytic solver."
 toPoly s@(Sum _ _ _ _) = 
@@ -727,6 +769,7 @@ containsSqrtExpr (Add a b) = containsSqrtExpr a || containsSqrtExpr b
 containsSqrtExpr (Sub a b) = containsSqrtExpr a || containsSqrtExpr b
 containsSqrtExpr (Mul a b) = containsSqrtExpr a || containsSqrtExpr b
 containsSqrtExpr (Div a b) = containsSqrtExpr a || containsSqrtExpr b
+containsSqrtExpr (Mod a b) = containsSqrtExpr a || containsSqrtExpr b
 containsSqrtExpr (Pow e _) = containsSqrtExpr e
 containsSqrtExpr (Determinant rows) = any containsSqrtExpr (concat rows)
 containsSqrtExpr (Circle _ _ e) = containsSqrtExpr e
@@ -743,6 +786,7 @@ containsIntExpr (Add a b) = containsIntExpr a || containsIntExpr b
 containsIntExpr (Sub a b) = containsIntExpr a || containsIntExpr b
 containsIntExpr (Mul a b) = containsIntExpr a || containsIntExpr b
 containsIntExpr (Div a b) = containsIntExpr a || containsIntExpr b
+containsIntExpr (Mod a b) = containsIntExpr a || containsIntExpr b
 containsIntExpr (Pow e _) = containsIntExpr e
 containsIntExpr (Sqrt e) = containsIntExpr e
 containsIntExpr (Determinant rows) = any containsIntExpr (concat rows)
@@ -756,6 +800,7 @@ substituteInts sub (Ge l r) = Ge (substituteIntsExpr sub l) (substituteIntsExpr 
 substituteInts sub (Gt l r) = Gt (substituteIntsExpr sub l) (substituteIntsExpr sub r)
 substituteInts sub (Le l r) = Le (substituteIntsExpr sub l) (substituteIntsExpr sub r)
 substituteInts sub (Lt l r) = Lt (substituteIntsExpr sub l) (substituteIntsExpr sub r)
+substituteInts sub (Divides l r) = Divides (substituteIntsExpr sub l) (substituteIntsExpr sub r)
 substituteInts sub (And f1 f2) = And (substituteInts sub f1) (substituteInts sub f2)
 substituteInts sub (Or f1 f2) = Or (substituteInts sub f1) (substituteInts sub f2)
 substituteInts sub (Not f) = Not (substituteInts sub f)
@@ -775,6 +820,7 @@ substituteIntsExpr sub (Add a b) = Add (substituteIntsExpr sub a) (substituteInt
 substituteIntsExpr sub (Sub a b) = Sub (substituteIntsExpr sub a) (substituteIntsExpr sub b)
 substituteIntsExpr sub (Mul a b) = Mul (substituteIntsExpr sub a) (substituteIntsExpr sub b)
 substituteIntsExpr sub (Div a b) = Div (substituteIntsExpr sub a) (substituteIntsExpr sub b)
+substituteIntsExpr sub (Mod a b) = Mod (substituteIntsExpr sub a) (substituteIntsExpr sub b)
 substituteIntsExpr sub (Pow e n) = Pow (substituteIntsExpr sub e) n
 substituteIntsExpr sub (Sqrt e) = Sqrt (substituteIntsExpr sub e)
 substituteIntsExpr _ e = e
@@ -785,6 +831,7 @@ containsSqrtFormula (Ge l r) = containsSqrtExpr l || containsSqrtExpr r
 containsSqrtFormula (Gt l r) = containsSqrtExpr l || containsSqrtExpr r
 containsSqrtFormula (Le l r) = containsSqrtExpr l || containsSqrtExpr r
 containsSqrtFormula (Lt l r) = containsSqrtExpr l || containsSqrtExpr r
+containsSqrtFormula (Divides l r) = containsSqrtExpr l || containsSqrtExpr r
 containsSqrtFormula (And f1 f2) = containsSqrtFormula f1 || containsSqrtFormula f2
 containsSqrtFormula (Or f1 f2) = containsSqrtFormula f1 || containsSqrtFormula f2
 containsSqrtFormula (Not f) = containsSqrtFormula f
@@ -794,6 +841,7 @@ containsSqrtFormula (Exists _ f) = containsSqrtFormula f
 -- | Check if expression contains division (for rational elimination)
 containsDivExpr :: Expr -> Bool
 containsDivExpr (Div _ _) = True
+containsDivExpr (Mod _ _) = True
 containsDivExpr (Add a b) = containsDivExpr a || containsDivExpr b
 containsDivExpr (Sub a b) = containsDivExpr a || containsDivExpr b
 containsDivExpr (Mul a b) = containsDivExpr a || containsDivExpr b
@@ -809,6 +857,7 @@ containsDivFormula (Ge l r) = containsDivExpr l || containsDivExpr r
 containsDivFormula (Gt l r) = containsDivExpr l || containsDivExpr r
 containsDivFormula (Le l r) = containsDivExpr l || containsDivExpr r
 containsDivFormula (Lt l r) = containsDivExpr l || containsDivExpr r
+containsDivFormula (Divides l r) = containsDivExpr l || containsDivExpr r
 containsDivFormula (And f1 f2) = containsDivFormula f1 || containsDivFormula f2
 containsDivFormula (Or f1 f2) = containsDivFormula f1 || containsDivFormula f2
 containsDivFormula (Not f) = containsDivFormula f
@@ -833,6 +882,7 @@ type Theory = [Formula]
 containsQuantifier :: Formula -> Bool
 containsQuantifier (Forall _ _) = True
 containsQuantifier (Exists _ _) = True
+containsQuantifier (Divides _ _) = False
 containsQuantifier _ = False
 
 containsIntFormula :: Formula -> Bool
@@ -841,6 +891,7 @@ containsIntFormula (Ge l r) = containsIntExpr l || containsIntExpr r
 containsIntFormula (Gt l r) = containsIntExpr l || containsIntExpr r
 containsIntFormula (Le l r) = containsIntExpr l || containsIntExpr r
 containsIntFormula (Lt l r) = containsIntExpr l || containsIntExpr r
+containsIntFormula (Divides l r) = containsIntExpr l || containsIntExpr r
 containsIntFormula (And f1 f2) = containsIntFormula f1 || containsIntFormula f2
 containsIntFormula (Or f1 f2) = containsIntFormula f1 || containsIntFormula f2
 containsIntFormula (Not f) = containsIntFormula f
@@ -918,6 +969,7 @@ mapExpr f expr = f $ case expr of
   Sub a b -> Sub (mapExpr f a) (mapExpr f b)
   Mul a b -> Mul (mapExpr f a) (mapExpr f b)
   Div a b -> Div (mapExpr f a) (mapExpr f b)
+  Mod a b -> Mod (mapExpr f a) (mapExpr f b)
   Pow a n -> Pow (mapExpr f a) n
   Sqrt a  -> Sqrt (mapExpr f a)
   Sum i l h b -> Sum i (mapExpr f l) (mapExpr f h) (mapExpr f b)
