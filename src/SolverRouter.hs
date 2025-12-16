@@ -20,6 +20,7 @@ All existing commands (:prove, :wu, :cad) remain unchanged.
 module SolverRouter
   ( -- * Automatic Solver Selection
     autoSolve
+  , autoSolveE
   , autoSolveWithTrace
   , executeSolver
 
@@ -40,10 +41,11 @@ module SolverRouter
   ) where
 
 import Expr
+import Error
 import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..))
 import Wu (wuProve, wuProveWithTrace, formatWuTrace, proveExistentialWu, reduceWithWu)
-import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive)
+import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive, intBoundsFromQ)
 import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
 import CADLift (proveFormulaCAD)
 import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..), Confidence(..))
@@ -155,12 +157,13 @@ autoSolve opts theory goal =
   in
     case goal of
       Exists qs inner
-        | all (\q -> qvType q == QuantInt) qs
-        , not (any containsQuantifier theory) ->
+        | all (\q -> qvType q == QuantInt) qs ->
             let intNames = map qvName qs
                 theoryInt = map (promoteIntVars intNames) theory
                 innerInt = promoteIntVars intNames inner
-                outcome = intSat (intOptions opts) (theoryInt ++ [innerInt])
+                bounds = concatMap intBoundsFromQ qs
+                boundsInt = map (promoteIntVars intNames) bounds
+                outcome = intSat (intOptions opts) (theoryInt ++ boundsInt ++ [innerInt])
                 proved = intResult outcome == Just True
                 reason = case intResult outcome of
                            Just True  -> "Integer existential proved satisfiable. " ++ reasonOutcome outcome True
@@ -332,6 +335,11 @@ autoSolve opts theory goal =
                  , detailedTrace = trace
                  }
 
+-- | Either-based version of autoSolve (recommended API)
+-- Returns Either ProverError AutoSolveResult for better error handling
+autoSolveE :: SolverOptions -> Theory -> Formula -> Either ProverError AutoSolveResult
+autoSolveE opts theory goal = Right $ autoSolve opts theory goal
+
 -- | Attempt to prove inequality using WLOG + F4 + SOS
 proveInequalitySOS :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
 proveInequalitySOS _opts theory goal =
@@ -477,6 +485,7 @@ promoteIntVars names f = goF names f
     goF ns (Gt l r) = Gt (goE ns l) (goE ns r)
     goF ns (Le l r) = Le (goE ns l) (goE ns r)
     goF ns (Lt l r) = Lt (goE ns l) (goE ns r)
+    goF ns (Divides l r) = Divides (goE ns l) (goE ns r)
     goF ns (And a b) = And (goF ns a) (goF ns b)
     goF ns (Or a b) = Or (goF ns a) (goF ns b)
     goF ns (Not x) = Not (goF ns x)
@@ -495,6 +504,7 @@ promoteIntVars names f = goF names f
     goE ns (Sub a b) = Sub (goE ns a) (goE ns b)
     goE ns (Mul a b) = Mul (goE ns a) (goE ns b)
     goE ns (Div a b) = Div (goE ns a) (goE ns b)
+    goE ns (Mod a b) = Mod (goE ns a) (goE ns b)
     goE ns (Pow e n) = Pow (goE ns e) n
     goE ns (Sqrt e) = Sqrt (goE ns e)
     goE ns (Determinant rows) = Determinant (map (map (goE ns)) rows)

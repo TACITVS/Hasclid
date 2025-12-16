@@ -8,6 +8,7 @@ Wu's Method with Factorization and Branching.
 module Wu
   ( -- * Main Wu Proof Function
     wuProve
+  , wuProveE
   , wuProveWithTrace
   , proveExistentialWu
 
@@ -28,9 +29,11 @@ module Wu
     -- * Wu Proof Trace
   , WuTrace(..)
   , formatWuTrace
+  , WuResult(..)
   ) where
 
 import Expr
+import Error
 import PolynomialFactor (factorHeuristic, factorPoly)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -76,10 +79,25 @@ data WuBranchTrace = WuBranchTrace
 -- Main Wu Proving Functions
 -- =============================================
 
+-- | Result of Wu's method proof attempt (Either-based API)
+data WuResult = WuResult
+  { wuProved :: Bool      -- Was the theorem proved?
+  , wuReason :: String    -- Explanation
+  , wuTrace :: WuTrace    -- Detailed proof trace
+  } deriving (Show, Eq)
+
+-- | Legacy tuple-based API for backward compatibility
 wuProve :: Theory -> Formula -> (Bool, String)
-wuProve theory goal = 
+wuProve theory goal =
   let trace = wuProveWithTrace theory goal
   in (isProved trace, proofReason trace)
+
+-- | Either-based version of wuProve (recommended API)
+-- Returns Either ProverError WuResult for better error handling
+wuProveE :: Theory -> Formula -> Either ProverError WuResult
+wuProveE theory goal =
+  let trace = wuProveWithTrace theory goal
+  in Right $ WuResult (isProved trace) (proofReason trace) trace
 
 wuProveWithTrace :: Theory -> Formula -> WuTrace
 wuProveWithTrace theory goal = 
