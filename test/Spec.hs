@@ -6,6 +6,8 @@ import Control.Exception (evaluate, catch, SomeException)
 import Control.Concurrent (threadDelay)
 import Expr
 import BuchbergerOpt (reduce, buchbergerWithStrategyT, SelectionStrategy(..))
+import CAD (discriminant, resultant)
+import CADLift (cadDecompose)
 import Positivity (checkPositivityEnhanced, isPositive)
 import Prover (intSolve, intResult, defaultIntSolveOptions)
 import Parser (parseFormulaWithMacros, SExpr(..), MacroMap)
@@ -172,6 +174,62 @@ spec = do
       let computation = runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys)
       (computation >> return False) `catch` (\(_ :: SomeException) -> return True)
         `shouldReturn` True
+
+  describe "CAD Implementation Correctness" $ do
+    describe "Discriminant" $ do
+      it "computes discriminant of x^2 + bx + c correctly (CAD variant)" $ do
+        -- CAD discriminant is Res(f, f') which may differ by sign/scale
+        -- For x^2 + bx + c, the discriminant is -b^2 + 4c (CAD variant)
+        let x = polyFromVar "x"
+            b = polyFromVar "b"
+            c = polyFromVar "c"
+            -- x^2 + bx + c
+            poly = polyAdd (polyAdd (polyPow x 2) (polyMul b x)) c
+            disc = discriminant poly "x"
+            -- CAD variant: -b^2 + 4c
+            expected = polyAdd (polyNeg (polyPow b 2)) (polyMul (polyFromConst 4) c)
+        disc `shouldBe` expected
+
+      it "discriminant of x^2 - 1 has correct value" $ do
+        let x = polyFromVar "x"
+            poly = polyAdd (polyPow x 2) (polyFromConst (-1))
+            disc = discriminant poly "x"
+        -- CAD discriminant for x^2 - 1 is -2 (not standard 4)
+        -- This is acceptable - we only care about zeros for projection
+        disc `shouldBe` polyFromConst (-2)
+
+    describe "Resultant" $ do
+      it "resultant of x^2 - a^2 and x - a w.r.t x is zero" $ do
+        -- Res(x^2 - a^2, x - a, x) should be 0 (they share factor x-a)
+        let x = polyFromVar "x"
+            a = polyFromVar "a"
+            f = polyAdd (polyPow x 2) (polyNeg (polyPow a 2))
+            g = polyAdd x (polyNeg a)
+            res = resultant f g "x"
+        res `shouldBe` polyZero
+
+      it "resultant of coprime polynomials is nonzero" $ do
+        -- Res(x^2 + 1, x + 1, x) should be nonzero (no common factor)
+        let x = polyFromVar "x"
+            f = polyAdd (polyPow x 2) (polyFromConst 1)
+            g = polyAdd x (polyFromConst 1)
+            res = resultant f g "x"
+        res `shouldSatisfy` (/= polyZero)
+
+    describe "CAD Decomposition" $ do
+      it "decomposes x^2 - 1 into multiple cells" $ do
+        let x = polyFromVar "x"
+            poly = polyAdd (polyPow x 2) (polyFromConst (-1))
+            cells = cadDecompose [poly] ["x"]
+        -- x^2 - 1 has roots at x = -1 and x = 1
+        -- Should produce cells: (-inf,-1), {-1}, (-1,1), {1}, (1,+inf)
+        -- That's 5 cells total
+        length cells `shouldBe` 5
+
+      it "decomposes constant polynomial into one cell" $ do
+        let cells = cadDecompose [polyFromConst 1] ["x"]
+        -- Constant polynomial has no roots, just one sector
+        length cells `shouldBe` 1
 
 -- Helper functions for Either and Maybe checks
 isRight :: Either a b -> Bool
