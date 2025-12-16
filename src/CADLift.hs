@@ -1,5 +1,6 @@
 module CADLift
   ( cadDecompose
+  , cadDecomposeT
   , cadDecomposeTree
   , cadDecomposeEarlyStop
   , optimizeVariableOrder
@@ -22,6 +23,7 @@ module CADLift
 import Expr
 import CAD (completeProjection, mcCallumProjection)
 import Sturm (isolateRoots)
+import Timeout
 import qualified Data.Map.Strict as M
 import Data.List (nub, sort, sortBy, partition)
 import Data.Ord (comparing)
@@ -96,6 +98,34 @@ cadDecompose polys vars =
           liftedCells = concatMap (liftCell polys v) lowerCells
       in
           liftedCells
+
+-- | Timeout-aware version of CAD decomposition
+-- Checks timeout before recursive calls and lifting operations
+cadDecomposeT :: [Poly] -> [String] -> TimeoutM [(CADCell, SignAssignment)]
+cadDecomposeT polys vars = do
+  -- Check timeout before starting decomposition
+  timedOut <- checkTimeout
+  if timedOut
+    then error "CAD decomposition timeout exceeded"
+    else case vars of
+      [] -> -- Base case: 0-dimensional space (point)
+        let sample = M.empty
+            signs = M.fromList [ (p, determineSign p sample) | p <- polys ]
+            vanishing = [ p | (p, s) <- M.toList signs, s == Zero ]
+            cell = CADCell 0 sample Sector vanishing "Universe (0D)"
+        in return [(cell, signs)]
+      [v] -> return $ cad1D polys v  -- Base case: univariate
+      (v:vs) ->  -- Recursive case: multivariate
+        do
+          -- Phase 1: Project to lower dimension
+          let projectedPolys = projectPolynomials polys v
+
+          -- Phase 2: Recursively decompose lower dimension (with timeout)
+          lowerCells <- cadDecomposeT projectedPolys vs
+
+          -- Phase 3: Lift to current dimension (with timeout)
+          liftedCells <- fmap concat $ mapM (liftCellT polys v) lowerCells
+          return liftedCells
 
 -- | Hierarchical CAD decomposition (Tree structure)
 --   Vars should be ordered [Top, ..., Bottom] (e.g. [y, x])
@@ -297,6 +327,51 @@ liftCell polys var (lowerCell, _lowerSigns) =
   in
       -- Return sections AND sectors, interleaved properly
       interleave sectorCells sectionCells
+
+-- | Timeout-aware version of liftCell
+-- Checks timeout before lifting operation
+liftCellT :: [Poly] -> String -> (CADCell, SignAssignment) -> TimeoutM [(CADCell, SignAssignment)]
+liftCellT polys var (lowerCell, _lowerSigns) = do
+  -- Check timeout before lifting
+  timedOut <- checkTimeout
+  if timedOut
+    then error "CAD lift operation timeout exceeded"
+    else
+      let
+          -- Substitute lower cell's sample point into polynomials
+          substituted = [ evaluatePolyRational(samplePoint lowerCell) p | p <- polys ]
+
+          -- Find critical values (roots) in current variable
+          rootsWithSource :: [(Rational, Poly)]
+          rootsWithSource = concat
+            [ [ (r, p) | r <- findRootsIn var subP ]
+            | (p, subP) <- zip polys substituted ]
+
+          -- Group by root value
+          groupedRoots :: [(Rational, [Poly])]
+          groupedRoots =
+             let sorted = sortBy (comparing fst) rootsWithSource
+                 grouped = groupRoots sorted
+             in grouped
+
+          -- Sort values
+          sortedValues = map fst groupedRoots
+
+          -- Generate samples: SECTIONS and SECTORS
+          (_sectionVals, sectorVals) = generateSamplesClassified sortedValues
+
+          -- Create SECTION cells
+          sectionCells =
+            [ createLiftedCell lowerCell var val polys (Just generators)
+            | (val, generators) <- groupedRoots ]
+
+          -- Create SECTOR cells
+          sectorCells =
+            [ createLiftedCell lowerCell var val polys Nothing
+            | val <- sectorVals ]
+      in
+          -- Return sections AND sectors, interleaved properly
+          return $ interleave sectorCells sectionCells
 
 -- Helper to group roots by value (with small tolerance or exact equality)
 groupRoots :: [(Rational, Poly)] -> [(Rational, [Poly])]
