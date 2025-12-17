@@ -136,6 +136,24 @@ selectGroebner opts =
            else buchberger
 
 -- =============================================
+-- Helper Functions for Formula Manipulation
+-- =============================================
+
+-- | Flatten And formulas into a list of conjuncts
+flattenAndRouter :: Formula -> [Formula]
+flattenAndRouter (And f1 f2) = flattenAndRouter f1 ++ flattenAndRouter f2
+flattenAndRouter f = [f]
+
+-- | Convert And goal to theory constraints + single goal
+-- If goal is (And f1 (And f2 f3)), convert to theory [f1, f2] and goal f3
+convertAndGoalRouter :: Theory -> Formula -> (Theory, Formula)
+convertAndGoalRouter theory goal =
+  case flattenAndRouter goal of
+    [] -> (theory, goal)  -- Shouldn't happen
+    [single] -> (theory, single)
+    formulas -> (theory ++ init formulas, last formulas)
+
+-- =============================================
 -- Main Automatic Solving Functions
 -- =============================================
 
@@ -152,8 +170,11 @@ selectGroebner opts =
 autoSolve :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> AutoSolveResult
 autoSolve opts pointSubs theory goal =
   let
+    -- Convert And goal to theory constraints + single goal
+    (theoryWithAnd, singleGoal) = convertAndGoalRouter theory goal
+
     -- INTELLIGENT PREPROCESSING: Automatically detect 2D, substitute known values (including point coordinates)
-    preprocessResult = preprocess pointSubs theory goal
+    preprocessResult = preprocess pointSubs theoryWithAnd singleGoal
     theory' = preprocessedTheory preprocessResult
     goal' = preprocessedGoal preprocessResult
 

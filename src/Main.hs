@@ -180,6 +180,20 @@ expandGeometricGoal f =
     (first:rest) -> foldl And first rest  -- Combine with And
     [] -> f  -- Should not happen
 
+-- | Flatten And formulas into a list of conjuncts
+flattenAnd :: Formula -> [Formula]
+flattenAnd (And f1 f2) = flattenAnd f1 ++ flattenAnd f2
+flattenAnd f = [f]
+
+-- | Convert And goal to theory constraints + single goal
+-- If goal is (And f1 (And f2 f3)), convert to theory [f1, f2] and goal f3
+convertAndGoal :: Theory -> Formula -> (Theory, Formula)
+convertAndGoal theory goal =
+  case flattenAnd goal of
+    [] -> (theory, goal)  -- Shouldn't happen
+    [single] -> (theory, single)
+    formulas -> (theory ++ init formulas, last formulas)
+
 serializeLemma :: Formula -> String
 serializeLemma (Eq l r) = "(= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 serializeLemma (Ge l r) = "(>= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
@@ -516,8 +530,10 @@ handleCommand state stateWithHist newHist input = do
            Right formula -> do
              let expandedFormula = expandGeometricGoal formula
                  fullContext = theory state ++ lemmas state
+                 -- Convert And goal to theory + single goal
+                 (contextWithAnd, singleGoal) = convertAndGoal fullContext expandedFormula
                  -- Apply preprocessing (including point substitutions)
-                 preprocessResult = preprocess (pointSubs state) fullContext expandedFormula
+                 preprocessResult = preprocess (pointSubs state) contextWithAnd singleGoal
                  theory' = preprocessedTheory preprocessResult
                  goal' = preprocessedGoal preprocessResult
                  current = solverTimeout state
@@ -538,30 +554,34 @@ handleCommand state stateWithHist newHist input = do
       let str = drop 4 input
       in case parseFormulaWithMacros (macros state) (intVars state) str of
            Left err -> return (stateWithHist, formatError err)
-           Right formula -> case formula of
-             Eq _ _ -> do
-               let fullContext = theory state ++ lemmas state
-                   -- Apply preprocessing (including point substitutions)
-                   preprocessResult = preprocess (pointSubs state) fullContext formula
-                   theory' = preprocessedTheory preprocessResult
-                   goal' = preprocessedGoal preprocessResult
-                   current = solverTimeout state
-               maybeResult <- liftIO $ runWithTimeout current $ do
-                 let (isProved, reason) = wuProve theory' goal'
-                 let traceResult = wuProveWithTrace theory' goal'
-                 let traceStr = case traceResult of
-                                 Left _ -> ""
-                                 Right wuTrace -> if verbose state then "\n\n" ++ formatWuTrace wuTrace else ""
-                 let msg = if isProved
-                           then "WU'S METHOD: PROVED\n" ++ reason ++ traceStr
-                           else "WU'S METHOD: NOT PROVED\n" ++ reason ++ traceStr
-                 _ <- CE.evaluate (length msg)
-                 return (stateWithHist, msg)
+           Right formula -> do
+             let expandedFormula = expandGeometricGoal formula
+                 fullContext = theory state ++ lemmas state
+                 -- Convert And goal to theory + single goal
+                 (contextWithAnd, singleGoal) = convertAndGoal fullContext expandedFormula
+             case singleGoal of
+               Eq _ _ -> do
+                 let -- Apply preprocessing (including point substitutions)
+                     preprocessResult = preprocess (pointSubs state) contextWithAnd singleGoal
+                     theory' = preprocessedTheory preprocessResult
+                     goal' = preprocessedGoal preprocessResult
+                     current = solverTimeout state
+                 maybeResult <- liftIO $ runWithTimeout current $ do
+                   let (isProved, reason) = wuProve theory' goal'
+                   let traceResult = wuProveWithTrace theory' goal'
+                   let traceStr = case traceResult of
+                                   Left _ -> ""
+                                   Right wuTrace -> if verbose state then "\n\n" ++ formatWuTrace wuTrace else ""
+                   let msg = if isProved
+                             then "WU'S METHOD: PROVED\n" ++ reason ++ traceStr
+                             else "WU'S METHOD: NOT PROVED\n" ++ reason ++ traceStr
+                   _ <- CE.evaluate (length msg)
+                   return (stateWithHist, msg)
 
-               case maybeResult of
-                 Just res -> pure res
-                 Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-             _ -> pure (stateWithHist, "ERROR: Wu's method only supports equality goals (not inequalities)\nUsage: :wu (= expr1 expr2)")
+                 case maybeResult of
+                   Just res -> pure res
+                   Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+               _ -> pure (stateWithHist, "ERROR: Wu's method only supports equality goals (not inequalities)\nUsage: :wu (= expr1 expr2)")
 
     (":auto":_) ->
       let str = drop 6 input
