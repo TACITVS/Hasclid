@@ -42,6 +42,7 @@ module SolverRouter
 
 import Expr
 import Error
+import Preprocessing (preprocess, PreprocessingResult(..))
 import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..))
 import Wu (wuProve, wuProveWithTrace, formatWuTrace, proveExistentialWu, reduceWithWu)
@@ -103,7 +104,7 @@ defaultSolverOptions = SolverOptions
   { intOptions = defaultIntSolveOptions
   , useOptimizedGroebner = True
   , selectionStrategyOpt = SugarStrategy
-  , groebnerBackend = BuchbergerBackend
+  , groebnerBackend = F4Backend
   , f4UseBatch = True
   }
 
@@ -112,12 +113,12 @@ defaultSolverOptions = SolverOptions
 optimizeGroebnerOptions :: ProblemProfile -> SolverOptions -> SolverOptions
 optimizeGroebnerOptions profile opts =
   -- Heuristic for F4:
-  -- 1. High number of constraints (>= 5): Batch reduction is effective.
-  -- 2. Geometric problems with many points (>= 5): Likely generates many polynomials.
-  -- 3. High degree (>= 4): Reductions are expensive, matrix ops might vectorize better (conceptually).
-  let useF4 = numConstraints profile >= 5 ||
-              (problemType profile == Geometric && numPoints (geometricFeatures profile) >= 5) ||
-              maxDegree profile >= 4
+  -- 1. High number of constraints (>= 3): Batch reduction is effective.
+  -- 2. Geometric problems with many points (>= 3): Likely generates many polynomials.
+  -- 3. High degree (>= 3): Reductions are expensive, matrix ops might vectorize better (conceptually).
+  let useF4 = numConstraints profile >= 3 ||
+              (problemType profile == Geometric && numPoints (geometricFeatures profile) >= 3) ||
+              maxDegree profile >= 3
   in if useF4
      then opts { groebnerBackend = F4Backend }
      else opts
@@ -148,18 +149,23 @@ selectGroebner opts =
 -- PHASE 2: Algebraic Solvers (the "hammers")
 --   If GeoSolver returns GeoUnknown, fall back to Wu/Gröbner/CAD
 --   These use polynomial manipulation - slower but more general
-autoSolve :: SolverOptions -> Theory -> Formula -> AutoSolveResult
-autoSolve opts theory goal =
+autoSolve :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> AutoSolveResult
+autoSolve opts pointSubs theory goal =
   let
-    -- Analyze the problem structure
-    profile = analyzeProblem theory goal
+    -- INTELLIGENT PREPROCESSING: Automatically detect 2D, substitute known values (including point coordinates)
+    preprocessResult = preprocess pointSubs theory goal
+    theory' = preprocessedTheory preprocessResult
+    goal' = preprocessedGoal preprocessResult
+
+    -- Analyze the PREPROCESSED problem structure
+    profile = analyzeProblem theory' goal'
     groebner = selectGroebner opts
   in
-    case goal of
+    case goal' of
       Exists qs inner
         | all (\q -> qvType q == QuantInt) qs ->
             let intNames = map qvName qs
-                theoryInt = map (promoteIntVars intNames) theory
+                theoryInt = map (promoteIntVars intNames) theory'
                 innerInt = promoteIntVars intNames inner
                 bounds = concatMap intBoundsFromQ qs
                 boundsInt = map (promoteIntVars intNames) bounds
@@ -179,10 +185,10 @@ autoSolve opts theory goal =
                  }
       Forall qs _
         | all (\q -> qvType q == QuantInt) qs
-        , not (any containsQuantifier theory) ->
+        , not (any containsQuantifier theory') ->
             let intNames = map qvName qs
-                theoryInt = map (promoteIntVars intNames) theory
-                goalInt = promoteIntVars intNames goal
+                theoryInt = map (promoteIntVars intNames) theory'
+                goalInt = promoteIntVars intNames goal'
                 (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theoryInt goalInt
             in AutoSolveResult
                  { selectedSolver = UseGroebner
@@ -194,8 +200,8 @@ autoSolve opts theory goal =
                  }
       Exists qs _
         | all (\q -> qvType q == QuantReal) qs
-        , not (any containsQuantifier theory) ->
-            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory goal
+        , not (any containsQuantifier theory') ->
+            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory' goal'
             in AutoSolveResult
                  { selectedSolver = UseCAD
                  , solverReason = "Real existential handled by CAD satisfiability"
@@ -207,8 +213,8 @@ autoSolve opts theory goal =
       Forall qs _
         | all (\q -> qvType q == QuantReal) qs
         , all (\q -> isJust (qvLower q) && isJust (qvUpper q)) qs
-        , not (any containsQuantifier theory) ->
-            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory goal
+        , not (any containsQuantifier theory') ->
+            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory' goal'
             in AutoSolveResult
                  { selectedSolver = UseGroebner
                  , solverReason = "Bounded real universal handled by linear interval check"
@@ -220,8 +226,8 @@ autoSolve opts theory goal =
       -- Unbounded or partially bounded real universals via CAD refutation
       Forall qs _
         | all (\q -> qvType q == QuantReal) qs
-        , not (any containsQuantifier theory) ->
-            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory goal
+        , not (any containsQuantifier theory') ->
+            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory' goal'
             in AutoSolveResult
                  { selectedSolver = UseCAD
                  , solverReason = "Real universal handled by CAD refutation"
@@ -234,7 +240,7 @@ autoSolve opts theory goal =
       -- Inequality Fast Path (WLOG + F4 + SOS)
       -- Prefer SOS for Geometric problems or Algebraic/Mixed problems with > 2 variables
       Ge _ _ | problemType profile == Geometric || ((problemType profile == PureAlgebraic || problemType profile == Mixed) && numVariables profile > 2) ->
-        let (proved, reason, trace) = proveInequalitySOS opts theory goal
+        let (proved, reason, trace) = proveInequalitySOS opts theory' goal'
         in if proved
            then AutoSolveResult
                   { selectedSolver = UseGroebner
@@ -245,7 +251,7 @@ autoSolve opts theory goal =
                   , detailedTrace = trace
                   }
            else
-             let (proved', reason', trace') = executeSolver UseCAD opts profile theory goal
+             let (proved', reason', trace') = executeSolver UseCAD opts profile theory' goal'
              in AutoSolveResult
                   { selectedSolver = UseCAD
                   , solverReason = "Inequality (Fallback to CAD after SOS failure)"
@@ -257,7 +263,7 @@ autoSolve opts theory goal =
 
       -- Pure inequality / positivity goals: route directly to CAD/positivity (sound), never heuristics
       Ge _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
-        let (proved, reason, trace) = executeSolver UseCAD opts profile theory goal
+        let (proved, reason, trace) = executeSolver UseCAD opts profile theory' goal'
         in AutoSolveResult
              { selectedSolver = UseCAD
              , solverReason = "Inequality/positivity goal routed to CAD (sound positivity path)"
@@ -267,7 +273,7 @@ autoSolve opts theory goal =
              , detailedTrace = trace
              }
       Gt _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
-        let (proved, reason, trace) = executeSolver UseCAD opts profile theory goal
+        let (proved, reason, trace) = executeSolver UseCAD opts profile theory' goal'
         in AutoSolveResult
              { selectedSolver = UseCAD
              , solverReason = "Strict inequality goal routed to CAD (sound positivity path)"
@@ -276,8 +282,8 @@ autoSolve opts theory goal =
              , proofReason = reason
              , detailedTrace = trace
              }
-      _ | containsQuantifier goal || any containsQuantifier theory ->
-            let (proved, reason, trace) = executeSolver UseCAD opts profile theory goal
+      _ | containsQuantifier goal' || any containsQuantifier theory' ->
+            let (proved, reason, trace) = executeSolver UseCAD opts profile theory' goal'
             in AutoSolveResult
               { selectedSolver = UseCAD
               , solverReason = "Quantified formula routed to CAD (Full QE support)"
@@ -288,7 +294,7 @@ autoSolve opts theory goal =
               }
       _ ->
         -- PHASE 1: Try fast geometric constraint propagation first
-        case solveGeoWithTrace theory goal of
+        case solveGeoWithTrace theory' goal' of
           GeoProved reason steps ->
             -- Success! GeoSolver proved it via constraint propagation
             AutoSolveResult
@@ -315,17 +321,17 @@ autoSolve opts theory goal =
             -- GeoSolver insufficient, fall back to PHASE 2 (algebraic solvers)
             let
               -- Try Area Method applicability first
-              isAreaMethodApplicable = case deriveConstruction theory goal of
+              isAreaMethodApplicable = case deriveConstruction theory' goal' of
                                          Just _ -> True
                                          Nothing -> False
               solver = if isAreaMethodApplicable
                        then UseAreaMethod
-                       else selectAlgebraicSolver profile goal
-              
+                       else selectAlgebraicSolver profile goal'
+
               solverReason' = if isAreaMethodApplicable
                               then "Area Method Construction derived successfully."
                               else "Geometric propagation insufficient. Fallback to PHASE 2: " ++ explainSolverChoice solver profile
-              (proved, proofMsg, trace) = executeSolver solver opts profile theory goal
+              (proved, proofMsg, trace) = executeSolver solver opts profile theory' goal'
             in AutoSolveResult
                  { selectedSolver = solver
                  , solverReason = solverReason'
@@ -337,8 +343,8 @@ autoSolve opts theory goal =
 
 -- | Either-based version of autoSolve (recommended API)
 -- Returns Either ProverError AutoSolveResult for better error handling
-autoSolveE :: SolverOptions -> Theory -> Formula -> Either ProverError AutoSolveResult
-autoSolveE opts theory goal = Right $ autoSolve opts theory goal
+autoSolveE :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> Either ProverError AutoSolveResult
+autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory goal
 
 -- | Attempt to prove inequality using WLOG + F4 + SOS
 proveInequalitySOS :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
@@ -512,9 +518,9 @@ promoteIntVars names f = goF names f
     goE _  other = other
 
 -- | Automatic solve with verbose trace information
-autoSolveWithTrace :: SolverOptions -> Theory -> Formula -> Bool -> AutoSolveResult
-autoSolveWithTrace opts theory goal _ =
-  autoSolve opts theory goal
+autoSolveWithTrace :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> Bool -> AutoSolveResult
+autoSolveWithTrace opts pointSubs theory goal _ =
+  autoSolve opts pointSubs theory goal
 
 -- =============================================
 -- Solver Selection Logic

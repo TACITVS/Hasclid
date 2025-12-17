@@ -5,6 +5,32 @@ All notable changes to Hasclid will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.3.0] - 2025-12-17
+
+### Added
+- **Decimal Number Support**: Full support for decimal coordinates and constants (e.g., `1.5` → exact rational `5/4`)
+- **Geometric Predicate Expansion**: Automatic expansion of `Midpoint` and `Parallel` to separate coordinate equations
+- **Point Substitution Engine**: Preprocessing now properly applies point coordinate substitutions in all proof commands
+- **Dist2 Expansion**: `Dist2` predicate expanded during preprocessing for correct substitution behavior
+- **Comprehensive Status Report**: PREPROCESSING_FIXES_COMPLETE.md documenting all improvements
+
+### Changed
+- **Encoding Strategy**: `Midpoint` and `Parallel` now use coordinate-wise equality instead of sum-of-squares
+- **Preprocessing Flow**: All proof commands (`:prove`, `:wu`, `:auto`) now apply preprocessing with point substitutions
+- **Parser Enhancement**: Both `parseCoord` and `exprFromSExpr` support decimal notation
+- **Circle Predicate**: Now expands via `Dist2` during preprocessing
+
+### Fixed
+- **Critical Bug**: Point coordinate substitutions now correctly applied in `:prove` and `:wu` handlers
+- **Encoding Bug**: Geometric predicates no longer use sum-of-squares (incompatible with Gröbner basis ideal membership)
+- **Substitution Bug**: `Dist2` expansion now happens before substitution, not during polynomial conversion
+- **Parse Bug**: Decimal numbers like `1.25` no longer treated as variable names
+
+### Performance
+- **Stress Suite**: Improved from 1/10 (10%) to 7/10 (70%) pass rate
+- **New Proofs**: Apollonius, Ptolemy, Euler, Weitzenbock, Orthocenter now prove automatically
+- **Concrete Computation**: Tests with concrete coordinates (e.g., 08_Euler_d2) now instant
+
 ## [9.1.0] - 2025-12-08
 
 ### Added

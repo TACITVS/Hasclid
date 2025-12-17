@@ -6,7 +6,7 @@ module Main
   , processLine
   ) where
 
-import Expr (Formula(Eq, Ge, Gt, Le, Lt), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
+import Expr (Formula(Eq, Ge, Gt, Le, Lt, And), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
 import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea)
 import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
 import IntSolver (IntSolveOptions(..))
@@ -25,6 +25,7 @@ import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
 import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder, compareMonomials)
+import Preprocessing (preprocess, preprocessedTheory, preprocessedGoal)
 
 import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice)
 import System.Environment (getArgs)
@@ -82,6 +83,7 @@ data REPLState = REPLState
   , solverOptions :: SolverOptions
   , construction :: Construction -- Area Method Construction
   , intVars :: S.Set String -- Declared Integer Variables
+  , pointSubs :: M.Map String Expr -- Point coordinate substitutions (NEW: prevents theory bloat)
   }
 
 data REPLEnv = REPLEnv
@@ -103,7 +105,7 @@ type REPLM = ReaderT REPLEnv (ExceptT ProverError IO)
 
 initialState :: REPLEnv -> REPLState
 initialState env =
-  REPLState [] [] [] False True emptyCache (envTermOrder env) (envUseOptimized env) (envSelectionStrategy env) M.empty 30 Nothing (envSolverOptions env) [] S.empty
+  REPLState [] [] [] False True emptyCache (envTermOrder env) (envUseOptimized env) (envSelectionStrategy env) M.empty 30 Nothing (envSolverOptions env) [] S.empty M.empty
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -137,6 +139,47 @@ chooseBuchberger env st =
        then buchbergerWithStrategy ord (selectionStrategy st)
        else buchberger
 
+-- | Expand geometric formulas into separate coordinate equations
+-- This fixes the sum-of-squares encoding issue with Groebner bases
+expandGeometricFormula :: Formula -> [Formula]
+expandGeometricFormula (Eq (Midpoint a b m) (Const 0)) =
+  -- Expand: midpoint(A,B,M) = 0  into three coordinate equations:
+  -- 2xM - xA - xB = 0, 2yM - yA - yB = 0, 2zM - zA - zB = 0
+  let mkCoord prefix = Var (prefix ++ a)
+      mkCoordB prefix = Var (prefix ++ b)
+      mkCoordM prefix = Var (prefix ++ m)
+      two = Const 2
+      makeEq prefix = Eq (Sub (Sub (Mul two (mkCoordM prefix)) (mkCoord prefix)) (mkCoordB prefix)) (Const 0)
+  in [makeEq "x", makeEq "y", makeEq "z"]
+
+expandGeometricFormula (Eq (Parallel a b c d) (Const 0)) =
+  -- Expand: parallel(A,B,C,D) = 0  into cross product = 0
+  -- AB × CD = 0 means each component of cross product is 0
+  let xa = Var ("x" ++ a); ya = Var ("y" ++ a); za = Var ("z" ++ a)
+      xb = Var ("x" ++ b); yb = Var ("y" ++ b); zb = Var ("z" ++ b)
+      xc = Var ("x" ++ c); yc = Var ("y" ++ c); zc = Var ("z" ++ c)
+      xd = Var ("x" ++ d); yd = Var ("y" ++ d); zd = Var ("z" ++ d)
+      -- Vector AB
+      ux = Sub xb xa; uy = Sub yb ya; uz = Sub zb za
+      -- Vector CD
+      vx = Sub xd xc; vy = Sub yd yc; vz = Sub zd zc
+      -- Cross product components: AB × CD = (u × v)
+      cx = Sub (Mul uy vz) (Mul uz vy)  -- uy*vz - uz*vy
+      cy = Sub (Mul uz vx) (Mul ux vz)  -- uz*vx - ux*vz
+      cz = Sub (Mul ux vy) (Mul uy vx)  -- ux*vy - uy*vx
+  in [Eq cx (Const 0), Eq cy (Const 0), Eq cz (Const 0)]
+
+expandGeometricFormula f = [f]  -- Other formulas pass through unchanged
+
+-- | Expand geometric formula into conjunction for goals
+-- For goals, we need a single formula, so we use And to combine components
+expandGeometricGoal :: Formula -> Formula
+expandGeometricGoal f =
+  case expandGeometricFormula f of
+    [single] -> single  -- No expansion needed
+    (first:rest) -> foldl And first rest  -- Combine with And
+    [] -> f  -- Should not happen
+
 serializeLemma :: Formula -> String
 serializeLemma (Eq l r) = "(= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
 serializeLemma (Ge l r) = "(>= " ++ prettyExpr l ++ " " ++ prettyExpr r ++ ")"
@@ -169,11 +212,21 @@ loadLemmasFromFile filename = do
 
 parseCoord :: String -> Expr
 parseCoord s
-  | all (\c -> isDigit c || c == '-' || c == '/') s && any isDigit s =
+  | all (\c -> isDigit c || c == '-' || c == '/' || c == '.') s && any isDigit s =
       let rat = if '/' `elem` s
                 then let (n, rest) = span (/= '/') s
                      in read n % read (drop 1 rest)
-                else fromInteger (read s) % 1
+                else if '.' `elem` s
+                     then -- Parse decimal as exact rational (e.g., "1.25" -> 125/100 -> 5/4)
+                          let s' = if head s == '-' then tail s else s  -- Strip negative sign temporarily
+                              isNeg = head s == '-'
+                              (intPart, _:decPart) = span (/= '.') s'
+                              numDigits = length decPart
+                              denom = 10 ^ numDigits
+                              numer = read (intPart ++ decPart) :: Integer
+                              numer' = if isNeg then -numer else numer
+                          in numer' % denom
+                     else fromInteger (read s) % 1
       in Const rat
   | otherwise = case s of
       ('-':rest) -> Mul (Const (-1)) (Var rest)
@@ -181,17 +234,9 @@ parseCoord s
 
 -- Read additional lines until parentheses are balanced (after stripping comments)
 readMultiline :: String -> IO String
-readMultiline firstLine = go firstLine (initialBalance firstLine)
+readMultiline firstLine = go firstLine (balance firstLine)
   where
     balance = RS.parenBalance . RS.stripComment
-    initialBalance l =
-      let b = balance l
-      in if b == 0 && isCmd l
-           then 1 -- force reading following lines until balanced for multi-line commands
-           else b
-    isCmd l =
-      let t = dropWhile (== ' ') l
-      in (":prove" `isPrefixOf` t) || (":auto" `isPrefixOf` t)
     go acc b
       | b <= 0    = pure acc
       | otherwise = do
@@ -242,8 +287,8 @@ handleCommand state stateWithHist newHist input = do
       pure (state, formatHistory (history state))
 
     (":reset":_) ->
-      pure (stateWithHist { theory = [], groebnerCache = clearCache (groebnerCache state), intVars = S.empty }
-           , "Active Theory reset (Lemmas preserved, Cache cleared, IntVars cleared).")
+      pure (stateWithHist { theory = [], groebnerCache = clearCache (groebnerCache state), intVars = S.empty, pointSubs = M.empty }
+           , "Active Theory reset (Lemmas preserved, Cache cleared, IntVars cleared, Points cleared).")
     (":soft-reset":_) ->
       pure (stateWithHist { theory = [] }
            , "Active Theory reset (Lemmas preserved, Cache preserved, IntVars preserved).")
@@ -430,20 +475,18 @@ handleCommand state stateWithHist newHist input = do
       let exprX = parseCoord xStr
           exprY = parseCoord yStr
           exprZ = parseCoord zStr
-          asmX = Eq (Var ("x" ++ name)) exprX
-          asmY = Eq (Var ("y" ++ name)) exprY
-          asmZ = Eq (Var ("z" ++ name)) exprZ
-      pure (stateWithHist { theory = asmX : asmY : asmZ : theory state }
+          newSubs = M.fromList [("x" ++ name, exprX), ("y" ++ name, exprY), ("z" ++ name, exprZ)]
+          mergedSubs = M.union newSubs (pointSubs state)
+      pure (stateWithHist { pointSubs = mergedSubs }
            , "Defined 3D Point " ++ name ++ " at (" ++ xStr ++ ", " ++ yStr ++ ", " ++ zStr ++ ")")
 
     (":point":name:xStr:yStr:_) -> do
       let exprX = parseCoord xStr
           exprY = parseCoord yStr
           exprZ = Const 0
-          asmX = Eq (Var ("x" ++ name)) exprX
-          asmY = Eq (Var ("y" ++ name)) exprY
-          asmZ = Eq (Var ("z" ++ name)) exprZ
-      pure (stateWithHist { theory = asmX : asmY : asmZ : theory state }
+          newSubs = M.fromList [("x" ++ name, exprX), ("y" ++ name, exprY), ("z" ++ name, exprZ)]
+          mergedSubs = M.union newSubs (pointSubs state)
+      pure (stateWithHist { pointSubs = mergedSubs }
            , "Defined 2D Point " ++ name ++ " at (" ++ xStr ++ ", " ++ yStr ++ ")")
 
     (":point":_) -> pure (stateWithHist, "Usage: :point A x y z  OR  :point A x y")
@@ -451,7 +494,13 @@ handleCommand state stateWithHist newHist input = do
     (":assume":_) ->
       let str = drop 8 input
       in case parseFormulaWithMacros (macros state) (intVars state) str of
-           Right f -> pure (stateWithHist { theory = f : theory state }, "Assumed: " ++ prettyFormula f)
+           Right f ->
+             let expanded = expandGeometricFormula f
+                 newTheory = expanded ++ theory state
+                 msg = if length expanded > 1
+                       then "Assumed (expanded to " ++ show (length expanded) ++ " constraints): " ++ prettyFormula f
+                       else "Assumed: " ++ prettyFormula f
+             in pure (stateWithHist { theory = newTheory }, msg)
            Left err -> pure (stateWithHist, formatError err)
 
     (":lemma":_) ->
@@ -465,17 +514,22 @@ handleCommand state stateWithHist newHist input = do
       in case parseFormulaWithMacros (macros state) (intVars state) str of
            Left err -> pure (stateWithHist, formatError err)
            Right formula -> do
-             let current = solverTimeout state
+             let expandedFormula = expandGeometricGoal formula
+                 fullContext = theory state ++ lemmas state
+                 -- Apply preprocessing (including point substitutions)
+                 preprocessResult = preprocess (pointSubs state) fullContext expandedFormula
+                 theory' = preprocessedTheory preprocessResult
+                 goal' = preprocessedGoal preprocessResult
+                 current = solverTimeout state
                  groebnerFn = chooseBuchberger env stateWithHist
              maybeResult <- liftIO $ runWithTimeout current $ do
-               let fullContext = theory state ++ lemmas state
-               let (proved, reason, trace, cache') = proveTheoryWithOptions groebnerFn (Just (groebnerCache state)) fullContext formula
+               let (proved, reason, trace, cache') = proveTheoryWithOptions groebnerFn (Just (groebnerCache state)) theory' goal'
                let msg = (if proved then "RESULT: PROVED\n" else "RESULT: NOT PROVED\n")
                          ++ reason ++
                          (if verbose state then "\n\n" ++ formatProofTrace trace else "")
                _ <- CE.evaluate (length msg)
                return (stateWithHist { groebnerCache = maybe (groebnerCache state) id cache' }, msg)
-             
+
              case maybeResult of
                Just res -> pure res
                Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
@@ -486,17 +540,24 @@ handleCommand state stateWithHist newHist input = do
            Left err -> return (stateWithHist, formatError err)
            Right formula -> case formula of
              Eq _ _ -> do
-               let current = solverTimeout state
+               let fullContext = theory state ++ lemmas state
+                   -- Apply preprocessing (including point substitutions)
+                   preprocessResult = preprocess (pointSubs state) fullContext formula
+                   theory' = preprocessedTheory preprocessResult
+                   goal' = preprocessedGoal preprocessResult
+                   current = solverTimeout state
                maybeResult <- liftIO $ runWithTimeout current $ do
-                 let fullContext = theory state ++ lemmas state
-                 let (isProved, reason) = wuProve fullContext formula
-                 let trace = wuProveWithTrace fullContext formula
+                 let (isProved, reason) = wuProve theory' goal'
+                 let traceResult = wuProveWithTrace theory' goal'
+                 let traceStr = case traceResult of
+                                 Left _ -> ""
+                                 Right wuTrace -> if verbose state then "\n\n" ++ formatWuTrace wuTrace else ""
                  let msg = if isProved
-                           then "WU'S METHOD: PROVED\n" ++ reason ++ (if verbose state then "\n\n" ++ formatWuTrace trace else "")
-                           else "WU'S METHOD: NOT PROVED\n" ++ reason ++ (if verbose state then "\n\n" ++ formatWuTrace trace else "")
+                           then "WU'S METHOD: PROVED\n" ++ reason ++ traceStr
+                           else "WU'S METHOD: NOT PROVED\n" ++ reason ++ traceStr
                  _ <- CE.evaluate (length msg)
                  return (stateWithHist, msg)
-               
+
                case maybeResult of
                  Just res -> pure res
                  Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
@@ -507,16 +568,17 @@ handleCommand state stateWithHist newHist input = do
       in case parseFormulaWithMacros (macros state) (intVars state) str of
            Left err -> pure (stateWithHist, formatError err)
            Right formula ->
-             let fullContext = theory state ++ lemmas state
+             let expandedFormula = expandGeometricGoal formula
+                 fullContext = theory state ++ lemmas state
                  opts = currentSolverOptions env stateWithHist
                  current = solverTimeout state
              in do
-               maybeResult <- liftIO $ runWithTimeout current $ CE.evaluate (autoSolve opts fullContext formula)
+               maybeResult <- liftIO $ runWithTimeout current $ CE.evaluate (autoSolve opts (pointSubs stateWithHist) fullContext expandedFormula)
                case maybeResult of
                  Nothing -> do
                    let bumped = max (current + 1) (current * 2)
                    liftIO $ putStrLn ("[TIMEOUT] Proof attempt exceeded " ++ show current ++ " seconds. Retrying automatically with " ++ show bumped ++ "s... (use :set-timeout to override)")
-                   retry <- liftIO $ runWithTimeout bumped $ CE.evaluate (autoSolve opts fullContext formula)
+                   retry <- liftIO $ runWithTimeout bumped $ CE.evaluate (autoSolve opts (pointSubs stateWithHist) fullContext expandedFormula)
                    case retry of
                      Nothing ->
                        let failMsg = "[TIMEOUT] Second attempt also timed out at " ++ show bumped ++ "s. Simplify the problem or increase timeout manually."
@@ -567,7 +629,7 @@ handleCommand state stateWithHist newHist input = do
              let fullContext = theory state ++ lemmas state
                  current = solverTimeout state
              in do
-               maybeResult <- liftIO $ runWithTimeout current $ CE.evaluate (autoSolve (currentSolverOptions env state) fullContext formula)
+               maybeResult <- liftIO $ runWithTimeout current $ CE.evaluate (autoSolve (currentSolverOptions env state) (pointSubs state) fullContext formula)
                case maybeResult of
                  Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
                  Just result ->
@@ -631,7 +693,7 @@ processFormulaLine env state line =
               Left err -> return $ formatError err
               Right formula -> do
                 let fullContext = theory state ++ lemmas state
-                let result = autoSolve (currentSolverOptions env state) fullContext formula
+                let result = autoSolve (currentSolverOptions env state) (pointSubs state) fullContext formula
                 return (formatAutoSolveResult result (verbose state))
 
 -- Streaming script processing: prints each result as it is produced
@@ -652,7 +714,7 @@ processScriptStreaming env state content = go state (lines content)
                           Right formula -> do
                             let fullContext = theory st ++ lemmas st
                                 current = solverTimeout st
-                            maybeRes <- runWithTimeout current $ CE.evaluate (autoSolve (currentSolverOptions env st) fullContext formula)
+                            maybeRes <- runWithTimeout current $ CE.evaluate (autoSolve (currentSolverOptions env st) (pointSubs st) fullContext formula)
                             case maybeRes of
                               Nothing -> return (st, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
                               Just res -> return (st, formatAutoSolveResult res (verbose st))

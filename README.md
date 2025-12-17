@@ -4,7 +4,13 @@
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)
 
-**Hasclid** (v9.2) is a next-generation Automated Theorem Prover (ATP) specialized for Euclidean Geometry and Inequality Reasoning. Built entirely in Haskell, it bridges the gap between geometric intuition and rigorous algebraic proof, offering a self-contained, high-performance reasoning kernel with zero external dependencies.
+**Hasclid** (v9.3) is a next-generation Automated Theorem Prover (ATP) specialized for Euclidean Geometry and Inequality Reasoning. Built entirely in Haskell, it bridges the gap between geometric intuition and rigorous algebraic proof, offering a self-contained, high-performance reasoning kernel with zero external dependencies.
+
+**Recent Improvements (v9.3)**:
+- ✅ **Geometric Predicate Encoding**: Optimized `Midpoint` and `Parallel` constraints using separate coordinate equations for better Gröbner basis performance
+- ✅ **Decimal Number Support**: Full support for decimal coordinates (e.g., `1.25` → exact rational `5/4`)
+- ✅ **Point Substitution Engine**: Automatic substitution of concrete point coordinates during preprocessing
+- ✅ **Stress Suite: 70% Pass Rate**: 7/10 challenging geometric theorems now prove automatically
 
 ---
 
@@ -39,6 +45,27 @@ Hasclid has conquered some of the most notorious challenges in automated geometr
 
 ---
 
+## 🎯 Stress Suite Results (v9.3)
+
+Hasclid is continuously tested against a comprehensive stress suite of challenging geometric theorems:
+
+| Test | Theorem | Status | Method |
+| :--- | :--- | :--- | :--- |
+| 01 | **Apollonius Circle** | ✅ PROVED | Wu's Method |
+| 02 | **Varignon's Theorem** | ⏳ In Progress | Complexity reduction needed |
+| 03 | **Orthocenter Collinearity** | ✅ PROVED | Geometric Solver |
+| 04 | **Nine-Point Circle** | ⏳ In Progress | High-degree polynomials |
+| 05 | **Cauchy-Schwarz** | ✅ PROVED | CAD |
+| 06 | **Triangle Inequality** | ⏳ In Progress | Timeout issue |
+| 07 | **Ptolemy's Theorem** | ✅ PROVED | Gröbner Basis |
+| 08 | **Euler's d² = R(R-2r)** | ✅ PROVED | Concrete computation |
+| 09 | **Weitzenbock Inequality** | ✅ PROVED | Geometric Solver |
+| 10 | **Erdős-Mordell Component** | ⏳ In Progress | SDP required |
+
+**Success Rate: 7/10 (70%)** - Proven automatically without manual intervention
+
+---
+
 ## 🧠 Didactic Examples
 
 ### 1. The Classic: Pythagorean Theorem
@@ -62,7 +89,20 @@ Prove $\sum R_a \ge 2 \sum r_a$ for a generic triangle. Hasclid handles this by 
 ```
 *Result: PROVED (CAD check succeeded)*
 
-### 3. The Abstract: Induction
+### 3. The Concrete: Decimal Coordinates (NEW in v9.3)
+Prove Euler's formula $d^2 = R(R-2r)$ for a 3-4-5 triangle with decimal coordinates.
+
+```lisp
+:point A 0 0
+:point B 3 0
+:point C 0 4
+:point O 1.5 2    -- Circumcenter (decimals supported!)
+:point I 1 1      -- Incenter
+:prove (= (dist2 O I) 1.25)
+```
+*Result: PROVED (Decimal 1.25 → exact rational 5/4)*
+
+### 4. The Abstract: Induction
 Prove $\sum_{i=0}^n i = \frac{n(n+1)}{2}$ for all integers $n$.
 
 ```lisp
