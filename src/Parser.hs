@@ -157,13 +157,23 @@ substituteSExpr subst (List xs) = List (map (substituteSExpr subst) xs)
 
 exprFromSExpr :: S.Set String -> SExpr -> Either ProverError Expr
 exprFromSExpr intVars (Atom t)
-  | all (\c -> isDigit c || c == '-' || c == '/') t =
+  | all (\c -> isDigit c || c == '-' || c == '/' || c == '.') t =
       if '/' `elem` t
       then case span (/= '/') t of
              (_, d) | null d || length d < 2 ->
                Left $ ParseError (InvalidNumber t) "Malformed rational number"
              (n, d) -> Right $ Const (read n % read (drop 1 d))
-      else Right $ Const (fromInteger (read t) % 1)
+      else if '.' `elem` t
+           then -- Parse decimal as exact rational (e.g., "1.25" -> 125/100 -> 5/4)
+                let t' = if head t == '-' then tail t else t
+                    isNeg = head t == '-'
+                    (intPart, _:decPart) = span (/= '.') t'
+                    numDigits = length decPart
+                    denom = 10 ^ numDigits
+                    numer = read (intPart ++ decPart) :: Integer
+                    numer' = if isNeg then -numer else numer
+                in Right $ Const (numer' % denom)
+           else Right $ Const (fromInteger (read t) % 1)
   | S.member t intVars = Right $ IntVar t
   | otherwise = Right $ Var t
 
