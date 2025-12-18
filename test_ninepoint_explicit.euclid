@@ -1,0 +1,15 @@
+:point A 0 yA
+:point B xB 0
+:point C xC 0
+:point Mc xMc yMc
+:point Ma xMa yMa
+:point Mb xMb yMb
+:point F 0 0
+:assume (= (midpoint A B Mc) 0)
+:assume (= (midpoint B C Ma) 0)
+:assume (= (midpoint C A Mb) 0)
+; Explicitly add yMa = 0 (should be redundant, but let's test)
+:assume (= yMa 0)
+:set-timeout 180
+:prove (= (det (+ (^ xF 2) (^ yF 2)) xF yF 1 (+ (^ xMa 2) (^ yMa 2)) xMa yMa 1 (+ (^ xMc 2) (^ yMc 2)) xMc yMc 1 (+ (^ xMb 2) (^ yMb 2)) xMb yMb 1) 0)
+:q

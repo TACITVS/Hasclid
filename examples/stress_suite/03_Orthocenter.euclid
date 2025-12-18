@@ -27,4 +27,6 @@
 ; Goal: Prove yH*yA = -xB*xC given yH*yA = xC(-xB).
 ; Trivial algebra, but geometry setup is key.
 
+:set-timeout 180
 :prove (= (* yH yA) (* xB (- 0 xC)))
+:q

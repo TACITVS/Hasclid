@@ -28,7 +28,22 @@
       "Bash(wait)",
       "Bash(git rm:*)",
       "Bash(timeout 45 bash -c \"echo '':set-timeout 30\n:point A 0 0\n:point B 1 0\n:prove (= (dist2 A B) 1)\n:q'' | cabal run prover-int 2>&1\")",
-      "Bash(cabal test:*)"
+      "Bash(cabal test:*)",
+      "Bash(timeout 600 cabal test:*)",
+      "Bash(timeout 1200 cabal test:*)",
+      "Bash(tee:*)",
+      "Bash(dist-newstyle/build/x86_64-windows/ghc-9.12.2/prover-0.1.0.0/x/prover-int/build/prover-int/prover-int.exe:*)",
+      "Bash(timeout 180 bash:*)",
+      "Bash(xargs -I {} sh -c 'echo \"\"=== {} ===\"\" && grep \"\"^:wu\"\" {} -A 5')",
+      "Bash(for f in examples/stress_suite/*.euclid)",
+      "Bash(do tail -1 \"$f\")",
+      "Bash(for:*)",
+      "Bash(do echo \"=== Testing $f ===\")",
+      "Bash(timeout:*)",
+      "Bash(do echo \"=== $f ===\")",
+      "Bash(cmd.exe /c \"taskkill /F /IM prover-int.exe 2>&1 || echo No prover running\")",
+      "Bash(cmd.exe /c:*)",
+      "Bash(do echo \"=== Testing: $file ===\")"
     ],
     "deny": [],
     "ask": []

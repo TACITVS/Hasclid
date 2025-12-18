@@ -20,3 +20,4 @@
 :point I 1 1
 
 :prove (= (dist2 O I) 1.25)
+:q

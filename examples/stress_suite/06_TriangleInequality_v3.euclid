@@ -1,0 +1,33 @@
+; Level 6: Triangle Inequality (Fully Squared Form)
+; Original: AB + BC >= AC where AB, BC, AC are distances
+;
+; Strategy: Use auxiliary variables for the distances and prove squared form
+; Let a^2 = dist2(A,B), b^2 = dist2(B,C), c^2 = dist2(A,C)
+; We want to prove: a + b >= c for all non-negative a, b, c satisfying triangle
+;
+; Squared form (to avoid sqrt): We prove (a+b)^2 >= c^2 is equivalent to
+; a^2 + b^2 + 2ab >= c^2
+;
+; For a valid triangle, this is always true. We prove a specific instance.
+
+:point A 0 0
+:point B xB yB
+:point C xC 0
+
+; Define distance-squared values
+:assume (= dAB2 (dist2 A B))
+:assume (= dBC2 (dist2 B C))
+:assume (= dAC2 (dist2 A C))
+
+; Assume distances are non-negative
+:assume (>= dAB2 0)
+:assume (>= dBC2 0)
+:assume (>= dAC2 0)
+
+:set-timeout 180
+; Prove: (sqrt(dAB2) + sqrt(dBC2))^2 >= dAC2
+; Which expands to: dAB2 + dBC2 + 2*sqrt(dAB2)*sqrt(dBC2) >= dAC2
+; Squared again: dAB2 + dBC2 + 2*sqrt(dAB2*dBC2) >= dAC2
+; Final squared form: (dAB2 + dBC2 - dAC2)^2 >= 4*dAB2*dBC2 when dAB2+dBC2 >= dAC2
+:prove (>= (+ (+ dAB2 dBC2) (* 2 (sqrt (* dAB2 dBC2)))) dAC2)
+:q

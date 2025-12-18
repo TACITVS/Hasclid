@@ -1,0 +1,27 @@
+; Level 10: Erdos-Mordell (Component B) - Using auto solver
+; R_b >= d_a + d_c
+;
+; This is a difficult inequality. Let's try with :auto to let the solver
+; pick the best strategy.
+
+:set-timeout 300
+
+:assume (= (^ s 2) 3)
+:assume (> s 0)
+:assume (> y 0)
+:assume (> (+ (- (* s x) y) s) 0)
+:assume (> (+ (- (* (- 0 s) x) y) s) 0)
+:assume (= da y)
+
+; Eliminate division by multiplying through
+:assume (= (* 2 dc) (+ (- (* s x) y) s))
+
+:assume (= (^ Rb 2) (+ (^ (+ x 1) 2) (^ y 2)))
+:assume (>= Rb 0)
+:assume (>= da 0)
+:assume (>= dc 0)
+
+; Prove: Rb >= da + dc
+; Squared form: Rb^2 >= (da + dc)^2
+:auto (>= (^ Rb 2) (^ (+ da dc) 2))
+:q

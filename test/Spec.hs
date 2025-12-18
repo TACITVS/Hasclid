@@ -21,11 +21,13 @@ import Data.List (isPrefixOf, isInfixOf)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified ExamplesSpec
+import qualified IntegrationSpec
 
 main :: IO ()
 main = hspec $ do
   coreSpec
   ExamplesSpec.spec
+  IntegrationSpec.spec
 
 coreSpec :: Spec
 coreSpec = do
@@ -307,22 +309,22 @@ coreSpec = do
   describe "SolverRouter" $ do
     it "routes equality goals to appropriate solver" $ do
       let goal = Eq (Add (Var "x") (Const 1)) (Const 2)
-          result = autoSolve defaultSolverOptions [Eq (Var "x") (Const 1)] goal
+          result = autoSolve defaultSolverOptions M.empty [Eq (Var "x") (Const 1)] goal
       selectedSolver result `shouldSatisfy` (\s -> s `elem` [UseWu, UseGroebner, UseGeoSolver])
 
     it "handles simple true equality" $ do
       let goal = Eq (Const 1) (Const 1)
-          result = autoSolve defaultSolverOptions [] goal
+          result = autoSolve defaultSolverOptions M.empty [] goal
       isProved result `shouldBe` True
 
     it "handles simple false equality" $ do
       let goal = Eq (Const 1) (Const 2)
-          result = autoSolve defaultSolverOptions [] goal
+          result = autoSolve defaultSolverOptions M.empty [] goal
       isProved result `shouldBe` False
 
     it "routes inequality goals to CAD" $ do
       let goal = Gt (Add (Var "x") (Const 1)) (Const 0)
-          result = autoSolve defaultSolverOptions [] goal
+          result = autoSolve defaultSolverOptions M.empty [] goal
       -- Should use CAD for inequalities, not Wu
       selectedSolver result `shouldNotBe` UseWu
 

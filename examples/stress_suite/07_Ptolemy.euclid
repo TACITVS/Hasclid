@@ -19,4 +19,6 @@
 ; This still has 'abcd' (roots).
 ; The fully polynomial version is (p^2 q^2 - a^2 c^2 - b^2 d^2)^2 = 4 a^2 b^2 c^2 d^2.
 
+:set-timeout 180
 :prove (= (^ (- (* (dist2 A C) (dist2 B D)) (+ (* (dist2 A B) (dist2 C D)) (* (dist2 B C) (dist2 D A)))) 2) (* 4 (* (dist2 A B) (* (dist2 C D) (* (dist2 B C) (dist2 D A))))))
+:q

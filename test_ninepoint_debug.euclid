@@ -1,0 +1,13 @@
+:point A 0 yA
+:point B xB 0
+:point C xC 0
+:point Mc xMAB yMAB
+:point Ma xMBC yMBC
+:point Mb xMCA yMCA
+:point F 0 0
+:assume (= (midpoint A B Mc) 0)
+:assume (= (midpoint B C Ma) 0)
+:assume (= (midpoint C A Mb) 0)
+:verbose
+:prove (= (midpoint A B Mc) 0)
+:q
