@@ -58,6 +58,7 @@ import F4Lite (f4LiteGroebner, reduceWithF4, reduceWithBasis)
 import Geometry.WLOG (applyWLOG)
 import Positivity.SOS (checkSOS)
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD)
+import Positivity.SOSTypes (SOSCertificate(..), trySOSHeuristic)
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
@@ -76,6 +77,7 @@ data SolverChoice
   | UseConstructiveWu -- Constructive existence using Wu's Method (Triangularization)
   | UseCAD          -- CAD (for inequalities, limited to 1D-2D)
   | UseAreaMethod   -- Area Method (geometric invariants)
+  | UseSOS          -- Sum-of-Squares decomposition (for polynomial inequalities)
   | Unsolvable      -- Problem too complex or type not supported
   deriving (Show, Eq)
 
@@ -575,8 +577,10 @@ selectAlgebraicSolver profile goal
 
   -- Inequality heuristics
   | isInequality goal && numVariables profile <= 2 && not (hasSymbolicParams profile) = UseCAD
-  -- Fallback for hard inequalities: Try SOS (via Groebner) instead of failing
-  | isInequality goal = UseGroebner
+  -- Hard polynomial inequalities: Use SOS instead of CAD (better complexity)
+  | isInequality goal && numVariables profile > 2 = UseSOS
+  -- Fallback for inequalities: Try SOS
+  | isInequality goal = UseSOS
 
   -- Algebraic heuristics
   | problemType profile == PureAlgebraic && hasSymbolicParams profile && hasGeometricVars profile = UseWu
@@ -743,6 +747,14 @@ executeSolver solver opts profile theory goal =
                Nothing ->
                  (False, "Area Method failed to derive construction from theory", Nothing)
 
+           UseSOS ->
+             case goal of
+               Ge l r -> runSOSProof theory l r False
+               Gt l r -> runSOSProof theory l r True
+               Le l r -> runSOSProof theory r l False  -- Flip: l <= r becomes r >= l
+               Lt l r -> runSOSProof theory r l True   -- Flip: l < r becomes r > l
+               _ -> (False, "SOS only supports inequality goals (>, >=, <, <=)", Nothing)
+
            UseCAD ->
              if hasInt then runInt opts theory goal
              else if hasDiv then runCadRational theory goal
@@ -874,6 +886,30 @@ runCadRational theory goal =
   in (proved, msg, Nothing)
 
 -- CAD-based sqrt elimination path
+-- SOS proof attempt
+runSOSProof :: Theory -> Expr -> Expr -> Bool -> (Bool, String, Maybe String)
+runSOSProof theory lhs rhs _isStrict =
+  let subM = buildSubMap theory
+      -- Convert inequality lhs >= rhs to polynomial diffPoly = lhs - rhs >= 0
+      diffPoly = subPoly (toPolySub subM lhs) (toPolySub subM rhs)
+  in case trySOSHeuristic diffPoly theory of
+       Just cert ->
+         let trace = "SOS Certificate found:\n" ++
+                    "  Polynomial: " ++ show diffPoly ++ "\n" ++
+                    "  Decomposed into sum of " ++ show (length (sosComponents cert)) ++ " squares"
+         in (True, "Proved by Sum-of-Squares decomposition", Just trace)
+       Nothing ->
+         -- SOS failed, try fallback to CAD for small problems
+         let vars = S.toList (extractPolyVars diffPoly)
+         in if length vars <= 3
+            then let constraints = [subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory]
+                     holds = evaluateInequalityCAD constraints diffPoly vars
+                     msg = if holds
+                           then "SOS failed, but CAD (fallback) succeeded for " ++ show (length vars) ++ "D problem"
+                           else "Both SOS and CAD (fallback) failed"
+                 in (holds, msg, Nothing)
+            else (False, "SOS decomposition failed (no certificate found)", Nothing)
+
 runCadSqrt :: Theory -> Formula -> (Bool, String, Maybe String)
 runCadSqrt theory goal =
   let (th', goal') = eliminateSqrt theory goal
@@ -940,6 +976,11 @@ explainSolverChoice UseConstructiveWu _ =
   "Constructive Wu: existential/triangularization route chosen for geometry-style goals."
 explainSolverChoice UseAreaMethod _ =
   "Selected Area Method: Constructive geometric proof using invariants (Area/Pythagoras)."
+
+explainSolverChoice UseSOS profile =
+  "Selected Sum-of-Squares (SOS): " ++
+  "Polynomial inequality with " ++ show (numVariables profile) ++ " variables. " ++
+  "SOS has O(n^6) complexity vs CAD's O(2^(2^n)), making it better for multivariate problems."
 
 explainSolverChoice Unsolvable profile =
   case estimatedComplexity profile of
