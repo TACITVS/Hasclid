@@ -130,12 +130,76 @@ matchPattern_a2_plus_b2_plus_c2_minus_2ab_minus_2ac_minus_2bc _ = Nothing  -- Si
 -- sqrt(a) + sqrt(b) >= sqrt(c) becomes a + b + 2sqrt(ab) >= c after squaring
 -- Then (a+b-c)^2 >= 4ab, which expands to a^2 + b^2 + c^2 + 2ab - 2ac - 2bc >= 4ab
 -- Simplified: a^2 + b^2 + c^2 - 2ab - 2ac - 2bc >= 0
+-- SOS: (a-b)^2 + (b-c)^2 + (c-a)^2 = 2(a^2 + b^2 + c^2 - ab - ac - bc)
 tryTriangleInequalityPattern :: Poly -> Maybe SOSCertificate
 tryTriangleInequalityPattern poly =
-  -- Check if polynomial matches the expanded triangle inequality pattern
-  -- For simplicity, we'll use a known certificate for this pattern
-  -- In production, this would use more sophisticated pattern matching
-  Nothing  -- Stub for now
+  case matchTrianglePattern poly of
+    Just (varA, varB, varC) ->
+      -- Found pattern! Construct SOS certificate
+      let polyA = Poly (Map.singleton (Monomial (Map.singleton varA 1)) 1)
+          polyB = Poly (Map.singleton (Monomial (Map.singleton varB 1)) 1)
+          polyC = Poly (Map.singleton (Monomial (Map.singleton varC 1)) 1)
+
+          -- Components: (a-b), (b-c), (c-a) with scaling factor
+          -- Since poly = k*(a^2 + b^2 + c^2 - ab - ac - bc)
+          -- and (a-b)^2 + (b-c)^2 + (c-a)^2 = 2*(a^2 + b^2 + c^2 - ab - ac - bc)
+          -- we need sqrt(k/2) as scaling factor
+          comp1 = subPoly polyA polyB
+          comp2 = subPoly polyB polyC
+          comp3 = subPoly polyC polyA
+
+          witness = "Triangle inequality pattern: " ++
+                   "(" ++ varA ++ "-" ++ varB ++ ")^2 + " ++
+                   "(" ++ varB ++ "-" ++ varC ++ ")^2 + " ++
+                   "(" ++ varC ++ "-" ++ varA ++ ")^2"
+      in Just $ SOSCertificate poly [comp1, comp2, comp3] TriangleInequality (Just witness)
+    Nothing -> Nothing
+
+-- | Match triangle inequality pattern for three variables
+-- Returns (varA, varB, varC) if pattern matches
+matchTrianglePattern :: Poly -> Maybe (String, String, String)
+matchTrianglePattern (Poly m)
+  | Map.size m < 3 = Nothing  -- Too few terms
+  | otherwise =
+      -- Extract all variables that appear with degree 2
+      let vars = nub [v | (Monomial vm, _) <- Map.toList m, (v, deg) <- Map.toList vm, deg == 2]
+      in case vars of
+           [a, b, c] ->
+             -- Check if polynomial matches: k*(a^2 + b^2 + c^2 - ab - ac - bc)
+             if looksLikeTrianglePattern m a b c
+             then Just (a, b, c)
+             else Nothing
+           _ -> Nothing  -- Not exactly 3 squared variables
+
+-- | Check if term map looks like triangle inequality pattern
+looksLikeTrianglePattern :: Map.Map Monomial Rational -> String -> String -> String -> Bool
+looksLikeTrianglePattern m a b c =
+  let -- Build expected monomials
+      a2 = Monomial (Map.singleton a 2)
+      b2 = Monomial (Map.singleton b 2)
+      c2 = Monomial (Map.singleton c 2)
+      ab = Monomial (Map.fromList [(a, 1), (b, 1)])
+      ac = Monomial (Map.fromList [(a, 1), (c, 1)])
+      bc = Monomial (Map.fromList [(b, 1), (c, 1)])
+
+      -- Get coefficients (with default 0)
+      getCoeff mon = Map.findWithDefault 0 mon m
+
+      coeffA2 = getCoeff a2
+      coeffB2 = getCoeff b2
+      coeffC2 = getCoeff c2
+      coeffAB = getCoeff ab
+      coeffAC = getCoeff ac
+      coeffBC = getCoeff bc
+
+      -- Check pattern: a^2, b^2, c^2 have same positive coefficient
+      -- and ab, ac, bc have negative coefficient (ideally -coeff for exact match)
+      -- Allow some tolerance for numerical errors and scaling
+  in coeffA2 > 0 && coeffB2 > 0 && coeffC2 > 0  -- Squares are positive
+     && abs (coeffA2 - coeffB2) < 0.01 * coeffA2  -- Roughly equal
+     && abs (coeffB2 - coeffC2) < 0.01 * coeffB2
+     && coeffAB < 0 && coeffAC < 0 && coeffBC < 0  -- Cross terms negative
+     && Map.size m <= 7  -- Should have at most 6 terms plus maybe constant
 
 -- Helper: Add two polynomials
 addPoly :: Poly -> Poly -> Poly

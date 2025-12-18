@@ -58,7 +58,6 @@ import F4Lite (f4LiteGroebner, reduceWithF4, reduceWithBasis)
 import Geometry.WLOG (applyWLOG)
 import Positivity.SOS (checkSOS)
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD)
-import Positivity.SOSTypes (SOSCertificate(..), trySOSHeuristic)
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
@@ -886,29 +885,32 @@ runCadRational theory goal =
   in (proved, msg, Nothing)
 
 -- CAD-based sqrt elimination path
--- SOS proof attempt
+-- SOS proof attempt using existing Positivity.SOS module
 runSOSProof :: Theory -> Expr -> Expr -> Bool -> (Bool, String, Maybe String)
 runSOSProof theory lhs rhs _isStrict =
   let subM = buildSubMap theory
       -- Convert inequality lhs >= rhs to polynomial diffPoly = lhs - rhs >= 0
       diffPoly = subPoly (toPolySub subM lhs) (toPolySub subM rhs)
-  in case trySOSHeuristic diffPoly theory of
-       Just cert ->
-         let trace = "SOS Certificate found:\n" ++
-                    "  Polynomial: " ++ show diffPoly ++ "\n" ++
-                    "  Decomposed into sum of " ++ show (length (sosComponents cert)) ++ " squares"
-         in (True, "Proved by Sum-of-Squares decomposition", Just trace)
-       Nothing ->
-         -- SOS failed, try fallback to CAD for small problems
-         let vars = S.toList (extractPolyVars diffPoly)
-         in if length vars <= 3
-            then let constraints = [subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory]
-                     holds = evaluateInequalityCAD constraints diffPoly vars
-                     msg = if holds
-                           then "SOS failed, but CAD (fallback) succeeded for " ++ show (length vars) ++ "D problem"
-                           else "Both SOS and CAD (fallback) failed"
-                 in (holds, msg, Nothing)
-            else (False, "SOS decomposition failed (no certificate found)", Nothing)
+
+      -- Use existing checkSOS from Positivity.SOS
+      -- Provide identity reducer (no modular reduction)
+      isSOS = checkSOS id diffPoly
+  in if isSOS
+     then let trace = "SOS Certificate found:\n" ++
+                     "  Polynomial: " ++ show diffPoly ++ "\n" ++
+                     "  Verified as sum of squares"
+          in (True, "Proved by Sum-of-Squares decomposition", Just trace)
+     else
+       -- SOS failed, try fallback to CAD for small problems
+       let vars = S.toList (extractPolyVars diffPoly)
+       in if length vars <= 3
+          then let constraints = [subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory]
+                   holds = evaluateInequalityCAD constraints diffPoly vars
+                   msg = if holds
+                         then "SOS failed, but CAD (fallback) succeeded for " ++ show (length vars) ++ "D problem"
+                         else "Both SOS and CAD (fallback) failed"
+               in (holds, msg, Nothing)
+          else (False, "SOS decomposition failed (no certificate found)", Nothing)
 
 runCadSqrt :: Theory -> Formula -> (Bool, String, Maybe String)
 runCadSqrt theory goal =
