@@ -161,18 +161,56 @@ elimFormula (Eq l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
   return (Eq l' r')
+-- Smart squaring for inequalities with sqrt in sums
+-- e.g., sqrt(a) + sqrt(b) >= sqrt(c) becomes (sqrt(a) + sqrt(b))^2 >= c
+-- ITERATIVE: Keep squaring until no sqrt in sums remain
+elimFormula (Ge l r)
+  | containsSqrtInSum l || containsSqrtInSum r = do
+      -- Square both sides (valid since all sqrt are >= 0)
+      l' <- elimExpr (Mul l l)
+      r' <- elimExpr (Mul r r)
+      -- Add non-negativity constraints for the original expressions
+      addNonNegConstraints l
+      addNonNegConstraints r
+      -- Recursively eliminate if still has sqrt in sums
+      elimFormula (Ge l' r')
 elimFormula (Ge l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
   return (Ge l' r')
+elimFormula (Gt l r)
+  | containsSqrtInSum l || containsSqrtInSum r = do
+      -- Square both sides
+      l' <- elimExpr (Mul l l)
+      r' <- elimExpr (Mul r r)
+      addNonNegConstraints l
+      addNonNegConstraints r
+      -- Recursively eliminate
+      elimFormula (Gt l' r')
 elimFormula (Gt l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
   return (Gt l' r')
+elimFormula (Le l r)
+  | containsSqrtInSum l || containsSqrtInSum r = do
+      l' <- elimExpr (Mul l l)
+      r' <- elimExpr (Mul r r)
+      addNonNegConstraints l
+      addNonNegConstraints r
+      -- Recursively eliminate
+      elimFormula (Le l' r')
 elimFormula (Le l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
   return (Le l' r')
+elimFormula (Lt l r)
+  | containsSqrtInSum l || containsSqrtInSum r = do
+      l' <- elimExpr (Mul l l)
+      r' <- elimExpr (Mul r r)
+      addNonNegConstraints l
+      addNonNegConstraints r
+      -- Recursively eliminate
+      elimFormula (Lt l' r')
 elimFormula (Lt l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
@@ -255,3 +293,16 @@ elimExpr e@(Const _) = return e
 
 addConstraint :: Formula -> ElimM ()
 addConstraint f = modify (\(constraints, memo) -> (f : constraints, memo))
+
+-- Add non-negativity constraints for all sqrt subexpressions in an expression
+addNonNegConstraints :: Expr -> ElimM ()
+addNonNegConstraints (Sqrt e) = do
+  e' <- elimExpr e
+  addConstraint (Ge e' (Const 0))
+  addNonNegConstraints e
+addNonNegConstraints (Add a b) = addNonNegConstraints a >> addNonNegConstraints b
+addNonNegConstraints (Sub a b) = addNonNegConstraints a >> addNonNegConstraints b
+addNonNegConstraints (Mul a b) = addNonNegConstraints a >> addNonNegConstraints b
+addNonNegConstraints (Div a b) = addNonNegConstraints a >> addNonNegConstraints b
+addNonNegConstraints (Pow e _) = addNonNegConstraints e
+addNonNegConstraints _ = return ()

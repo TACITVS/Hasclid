@@ -1,79 +1,14 @@
-; Level 6: Triangle Inequality (Concrete Instance)
-; The sqrt-based universal formula times out even at 180s due to CAD sqrt elimination complexity.
-; Instead, prove a concrete instance using a specific triangle.
-;
-; Theorem: For triangle ABC, |AB| + |BC| >= |AC|
-; Concrete triangle: A=(0,0), B=(3,4), C=(5,0)
-; |AB| = 5, |BC| = sqrt((5-3)^2 + (0-4)^2) = sqrt(4+16) = sqrt(20)
-; |AC| = 5
-; So we need: 5 + sqrt(20) >= 5, which is obviously true.
-;
-; Better concrete example: A=(0,0), B=(1,0), C=(2,0) (collinear)
-; |AB| = 1, |BC| = 1, |AC| = 2
-; Triangle inequality: 1 + 1 >= 2 (equality holds for collinear points)
+; Level 6: Triangle Inequality (Smart Squaring)
+; AB + BC >= AC
+; With Smart Squaring, this becomes (AB+BC)^2 >= AC^2 => AB^2 + BC^2 + 2 AB*BC >= AC^2.
+; Which is AB^2 + BC^2 - AC^2 >= -2 AB*BC.
+; If LHS >= 0, trivial. If LHS < 0, we need to square again.
+; Hasclid's smart squaring handles the first step.
 
 :point A 0 0
-:point B 1 0
-:point C 2 0
-
-; For this collinear configuration, we can prove the squared form easily.
-; We want: sqrt(dist2(A,B)) + sqrt(dist2(B,C)) >= sqrt(dist2(A,C))
-; Which is: sqrt(1) + sqrt(1) >= sqrt(4)
-; Which is: 1 + 1 >= 2, which is true.
-
-; To avoid sqrt, we prove that the squared form holds:
-; We need to show that (|AB| + |BC|)^2 >= |AC|^2
-; That is: |AB|^2 + |BC|^2 + 2|AB||BC| >= |AC|^2
-; With our values: 1 + 1 + 2*1*1 >= 4
-; That is: 4 >= 4, which is true.
-
-; Actually, let's prove a proper non-collinear triangle where the inequality is strict.
-:reset
-:point A 0 0
-:point B 3 0
-:point C 1 1
+:point B xB yB
+:point C xC 0
 
 :set-timeout 180
-; Prove the squared-distance inequality for this specific triangle
-; dist2(A,B) = 9, dist2(B,C) = 4+1 = 5, dist2(A,C) = 1+1 = 2
-; |AB| = 3, |BC| = sqrt(5), |AC| = sqrt(2)
-; We need: 3 + sqrt(5) >= sqrt(2)
-;
-; Squared form: (3 + sqrt(5))^2 >= 2
-; That is: 9 + 5 + 6*sqrt(5) >= 2
-; That is: 14 + 6*sqrt(5) >= 2, which is obviously true.
-;
-; Let's just prove a polynomial inequality that follows from triangle inequality.
-; For any valid triangle (non-degenerate), we have:
-; dist2(A,B) + dist2(B,C) >= dist2(A,C) is FALSE (squared distances don't satisfy triangle inequality)
-;
-; But: (sqrt(dist2(A,B)) + sqrt(dist2(B,C)))^2 >= dist2(A,C) is TRUE
-; That is: dist2(A,B) + dist2(B,C) + 2*sqrt(dist2(A,B)*dist2(B,C)) >= dist2(A,C)
-;
-; This still has sqrt. Let me try a different approach.
-
-; For our specific triangle, let's verify the polynomial consequence:
-; If |AB| + |BC| >= |AC|, then (|AB| + |BC|)^2 >= |AC|^2
-; So: |AB|^2 + |BC|^2 + 2|AB||BC| >= |AC|^2
-; With dist2 values: 9 + 5 + 2*3*sqrt(5) >= 2
-; Still has sqrt!
-
-; Alternative: prove for an integer-sided triangle.
-:reset
-:point A 0 0
-:point B 3 0
-:point C 0 4
-
-; This is a 3-4-5 right triangle.
-; dist2(A,B) = 9, dist2(B,C) = 9+16 = 25, dist2(A,C) = 16
-; |AB| = 3, |BC| = 5, |AC| = 4
-; Triangle inequality: 3 + 5 >= 4, which is 8 >= 4, TRUE.
-;
-; Squared form: (3+5)^2 >= 16, that is 64 >= 16, TRUE.
-; Polynomial form (no sqrt): 9 + 25 + 2*3*5 >= 16
-; That is: 34 + 30 >= 16, that is 64 >= 16, TRUE.
-
-:set-timeout 180
-; Prove the polynomial form for this specific triangle
-:prove (>= (+ (+ (dist2 A B) (dist2 B C)) (* 2 (* 3 5))) (dist2 A C))
+:auto (>= (+ (sqrt (dist2 A B)) (sqrt (dist2 B C))) (sqrt (dist2 A C)))
 :q

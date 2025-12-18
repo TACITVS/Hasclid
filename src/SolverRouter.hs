@@ -341,16 +341,26 @@ autoSolve opts pointSubs theory goal =
           GeoUnknown _ ->
             -- GeoSolver insufficient, fall back to PHASE 2 (algebraic solvers)
             let
+              -- Check if theory or goal contains divisions/sqrt that require CAD
+              hasDiv = containsDivFormula goal' || any containsDivFormula theory'
+              hasSqrt = containsSqrtFormula goal' || any containsSqrtFormula theory'
+
               -- Try Area Method applicability first
               isAreaMethodApplicable = case deriveConstruction theory' goal' of
                                          Just _ -> True
                                          Nothing -> False
               solver = if isAreaMethodApplicable
                        then UseAreaMethod
+                       else if hasDiv || hasSqrt
+                       then UseCAD  -- Force CAD for divisions/sqrt
                        else selectAlgebraicSolver profile goal'
 
               solverReason' = if isAreaMethodApplicable
                               then "Area Method Construction derived successfully."
+                              else if hasDiv
+                              then "Theory contains divisions; routing to CAD with rational elimination."
+                              else if hasSqrt
+                              then "Problem contains sqrt; routing to CAD with sqrt elimination."
                               else "Geometric propagation insufficient. Fallback to PHASE 2: " ++ explainSolverChoice solver profile
               (proved, proofMsg, trace) = executeSolver solver opts profile theory' goal'
             in AutoSolveResult
@@ -552,6 +562,7 @@ autoSolveWithTrace opts pointSubs theory goal _ =
 selectAlgebraicSolver :: ProblemProfile -> Formula -> SolverChoice
 selectAlgebraicSolver profile goal
   | containsSqrtFormula goal = UseCAD
+  | containsDivFormula goal = UseCAD  -- Divisions require CAD with rational elimination
   | containsIntFormula goal = UseGroebner
   | isExistentialEquality goal = UseConstructiveWu
   -- If not equality or inequality, we can't solve it (e.g. strict quantifier that CAD didn't pick up?)
