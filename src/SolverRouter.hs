@@ -380,32 +380,26 @@ autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory 
 
 -- | Attempt to prove inequality using WLOG + F4 + SOS
 proveInequalitySOS :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
-proveInequalitySOS _opts theory goal =
-  case goal of
-    Ge lhs rhs -> trySOS (Sub lhs rhs)
-    Gt lhs rhs -> trySOS (Sub lhs rhs) -- TODO: Strictness check
-    _ -> (False, "Not an inequality", Nothing)
+proveInequalitySOS _opts theoryRaw goalRaw =
+  let 
+      -- 0. Preprocessing (Rational + Sqrt elimination)
+      (thPrep, goalPrep) = eliminateRational theoryRaw goalRaw
+      (thPoly, goalPoly) = eliminateSqrt thPrep goalPrep
+  in
+  case goalPoly of
+    Ge lhs rhs -> trySOS thPoly goalPoly (Sub lhs rhs)
+    Gt lhs rhs -> trySOS thPoly goalPoly (Sub lhs rhs)
+    _ -> (False, "Not an inequality after preprocessing", Nothing)
   where
-    trySOS targetExpr =
+    trySOS theory goalFull targetExpr =
       let
           -- 1. Apply WLOG
-          (thWLOG, wlogLog) = applyWLOG theory goal
+          (thWLOG, wlogLog) = applyWLOG theory goalFull
           
-          -- Smart Squaring Heuristic for Distances
-          findSquareDef v = 
-            case find (\f -> case f of
-                               Eq (Pow (Var v') 2) _ -> v' == v
-                               _ -> False) thWLOG of
-              Just (Eq _ rhs) -> Just rhs
-              _ -> Nothing
-
-          (targetExpr', smartSqLog) = 
-             case goal of
-               Ge (Var a) rhs | Just aSq <- findSquareDef a ->
-                  (Sub aSq (Pow rhs 2), ["Smart Squaring applied: " ++ a ++ "^2 >= (" ++ show rhs ++ ")^2"])
-               Ge lhs (Var b) | Just bSq <- findSquareDef b ->
-                  (Sub (Pow lhs 2) bSq, ["Smart Squaring applied: (" ++ show lhs ++ ")^2 >= " ++ b ++ "^2"])
-               _ -> (targetExpr, [])
+          -- Smart Squaring Heuristic is implicitly handled by eliminateSqrt
+          -- which converts sqrt(x) to auxiliary vars with definition equations.
+          
+          (targetExpr', smartSqLog) = (targetExpr, [])
 
           -- 2. Substitution (Pre-processing)
           subMap = buildSubMap thWLOG
@@ -445,7 +439,7 @@ proveInequalitySOS _opts theory goal =
           
           -- 2. Try Numerical Cholesky
           numericalSquares = 
-            if M.null paramMap && not (null (symbolicParams (analyzeProblem theory goal))) then Nothing -- Failed to resolve params
+            if M.null paramMap && not (null (symbolicParams (analyzeProblem theory goalFull))) then Nothing -- Failed to resolve params
             else checkSOSNumeric paramMap targetPoly
             
           -- 3. If numerical success, reconstruct and verify
