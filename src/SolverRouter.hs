@@ -54,7 +54,7 @@ import SqrtElim (eliminateSqrt)
 import RationalElim (eliminateRational)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
-import F4Lite (f4LiteGroebner, reduceWithF4, reduceWithBasis)
+import F4Lite (f4LiteGroebner, f4ReduceModular, reduceWithF4, reduceWithBasis)
 import Geometry.WLOG (applyWLOG)
 import Positivity.SOS (checkSOS)
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD)
@@ -467,13 +467,15 @@ proveInequalitySOS opts theoryRaw goalRaw =
           
           polyConstraints = eqConstraints
           
-          -- Wu returns a list of remainders (one per geometric branch)
-          remainders = reduceWithWu polyConstraints targetPoly
+          -- Skip Wu Reduction for SOS path to avoid polynomial explosion.
+          -- Normal form reduction with F4 basis is more robust for high-degree goals.
+          remainders = [targetPoly] 
           
           -- 4. Check SOS / Boundary SOS
           -- Compute Basis ONCE
           basis = selectGroebner profileFinal opts goalFull eqConstraints
-          reducer p = F4Lite.reduceWithBasis (getLeadingOrder profileFinal goalFull) basis p
+          -- USE MODULAR ONE-SHOT REDUCER FOR NORMAL FORM
+          reducer p = F4Lite.f4ReduceModular (getLeadingOrder profileFinal goalFull) basis p
           
           -- Numerical SOS Guidance
           -- 1. Extract parameters values
@@ -808,81 +810,23 @@ executeCADInequality theory lhs rhs isStrict =
            subM = buildSubMap theory
            diffPoly = subPoly (toPolySub subM lhs) (toPolySub subM rhs)
        in
-         -- Fast path for numeric contradictions
-         (case diffPoly of
-            Poly m | null m -> (True, "Inequality holds (difference is constant 0)", Nothing)
-            Poly m | M.size m == 1 ->
-              case M.toList m of
-                -- Check if it's ACTUALLY a constant (monomial with no variables)
-                [(Monomial vars, c)] | M.null vars ->
-                  if isStrict && c > 0
-                  then (True, "Constant > 0", Nothing)
-                  else if allowZero && c >= 0
-                  then (True, "Constant >= 0", Nothing)
-                  else (False, "Constant inequality fails", Nothing)
-                -- Not a constant, fall through to general case
-                _ ->
-                  case toUnivariate diffPoly of
-                    Just (_, coeffs) ->
-                      let res = checkPositivityEnhanced diffPoly allowZero
-                          zeroRoots = any (== 0) coeffs
-                      in
-                        if confidence res == Heuristic
-                        then
-                          -- Fall back to CAD for a formal answer instead of accepting heuristic sampling
-                          let vars = S.toList (extractPolyVars diffPoly)
-                              constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
-                              holds = evaluateInequalityCAD constraints diffPoly vars
-                              msg = if holds
-                                    then "CAD check (" ++ show (length vars) ++ "D) succeeded (positivity heuristic rejected)"
-                                    else "CAD check (" ++ show (length vars) ++ "D) found countercell (positivity heuristic rejected)"
-                          in (holds, msg, Nothing)
-                        else
-                          let ok = if allowZero && zeroRoots then True else isPositive res
-                              msg = if allowZero && zeroRoots
-                                    then "Allowing zero root: polynomial is non-negative with roots at 0"
-                                    else explanation res
-                          in (ok, msg, Nothing)
-                    Nothing ->
-                      -- Extract variables from the POLYNOMIAL (after substitution), not the expression
-                      let vars = S.toList (extractPolyVars diffPoly)
-                          constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
-                          holds = evaluateInequalityCAD constraints diffPoly vars
-                          msg = if holds
-                                then "CAD check (" ++ show (length vars) ++ "D) succeeded"
-                                else "CAD check (" ++ show (length vars) ++ "D) found countercell"
-                      in (holds, msg, Nothing)
+         case diffPoly of
+            Poly m | null m -> (allowZero, if allowZero then "Inequality holds (constant 0)" else "Strict inequality fails (constant 0)", Nothing)
             _ ->
-              case toUnivariate diffPoly of
-                Just (_, coeffs) ->
-                  let res = checkPositivityEnhanced diffPoly allowZero
-                      zeroRoots = any (== 0) coeffs
-                  in
-                    if confidence res == Heuristic
-                    then
-                      let vars = S.toList (extractPolyVars diffPoly)
-                          constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
-                          holds = evaluateInequalityCAD constraints diffPoly vars
-                          msg = if holds
-                                then "CAD check (" ++ show (length vars) ++ "D) succeeded (positivity heuristic rejected)"
-                                else "CAD check (" ++ show (length vars) ++ "D) found countercell (positivity heuristic rejected)"
-                      in (holds, msg, Nothing)
-                    else
-                      let ok = if allowZero && zeroRoots then True else isPositive res
-                          msg = if allowZero && zeroRoots
-                                then "Allowing zero root: polynomial is non-negative with roots at 0"
-                                else explanation res
-                      in (ok, msg, Nothing)
-                Nothing ->
-                  -- Extract variables from the POLYNOMIAL (after substitution), not the expression
-                  let vars = S.toList (extractPolyVars diffPoly)
-                  in
-                     let constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
-                         holds = evaluateInequalityCAD constraints diffPoly vars
-                         msg = if holds
-                               then "CAD check (" ++ show (length vars) ++ "D) succeeded"
-                               else "CAD check (" ++ show (length vars) ++ "D) found countercell"
-                     in (holds, msg, Nothing))
+              -- Try Enhanced Positivity first (Fast)
+              let res = checkPositivityEnhanced diffPoly allowZero
+              in if isPositive res && confidence res == Proven
+                 then (True, explanation res, Nothing)
+                 else
+                   -- Fall back to CAD for a formal answer (Sound)
+                   let varsSet = extractPolyVars diffPoly
+                       vars = S.toList varsSet
+                       constraints = [ subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory ]
+                       holds = evaluateInequalityCAD constraints diffPoly vars
+                       msg = if holds
+                             then "CAD check (" ++ show (length vars) ++ "D) succeeded"
+                             else "CAD check (" ++ show (length vars) ++ "D) found countercell"
+                   in (holds, msg, Nothing)
 
 
 -- | Extract variables from a polynomial (actual free variables after substitution)
