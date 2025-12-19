@@ -3,6 +3,7 @@ module Main where
 import System.CPUTime
 import Text.Printf
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 
 import Expr
 import Parser (parseFormulaWithMacros)
@@ -30,8 +31,9 @@ main :: IO ()
 main = do
   putStrLn "=== Dumping Erdos-Mordell Polynomial ==="
   
-  let Right goalF = parseFormulaWithMacros M.empty lemmaGoal
-  let theoryF = map (\s -> let Right f = parseFormulaWithMacros M.empty s in f) lemmaInput
+  let Right goalF = parseFormulaWithMacros M.empty S.empty lemmaGoal
+  let theoryF = map (\s -> let Right f = parseFormulaWithMacros M.empty S.empty s in f) lemmaInput
+
   
   let (thWLOG, _) = applyWLOG theoryF goalF
   let subMap = buildSubMap thWLOG
@@ -49,3 +51,7 @@ main = do
   
   putStrLn "Reduced Polynomial:"
   putStrLn (prettyPolyNice reduced)
+
+  putStrLn "Checking SOS..."
+  let isSOS = checkSOS id reduced
+  putStrLn $ "Is SOS? " ++ show isSOS

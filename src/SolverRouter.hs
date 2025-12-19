@@ -31,6 +31,7 @@ module SolverRouter
 
     -- * Result Types
   , AutoSolveResult(..)
+  , ProofEvidence(..)
   , formatAutoSolveResult
   , SolverOptions(..)
   , defaultSolverOptions
@@ -56,12 +57,12 @@ import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
 import F4Lite (f4LiteGroebner, f4ReduceModular, reduceWithF4, reduceWithBasis)
 import Geometry.WLOG (applyWLOG)
-import Positivity.SOS (checkSOS)
+import Positivity.SOS (checkSOS, checkSOSWithLemmas, SOSCertificate(..), getSOSCertificate)
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD)
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
-import Data.List (delete, find, isSuffixOf, sort, foldl', isPrefixOf)
+import Data.List (delete, find, isSuffixOf, sort, foldl', isPrefixOf, intercalate)
 import Data.Maybe (isJust, mapMaybe)
 
 -- =============================================
@@ -80,13 +81,20 @@ data SolverChoice
   | Unsolvable      -- Problem too complex or type not supported
   deriving (Show, Eq)
 
+-- | Evidence supporting a proof (Certificates, witnesses, etc.)
+data ProofEvidence
+  = EvidenceSOS SOSCertificate [String] -- ^ SOS Certificate + WLOG steps
+  deriving (Show, Eq)
+
 -- | Result of automatic solver selection and execution
 data AutoSolveResult = AutoSolveResult
   { selectedSolver :: SolverChoice
   , solverReason :: String           -- Why this solver was chosen
   , problemProfile :: ProblemProfile -- Analysis of the problem
+  , preprocessedGoalExpr :: Formula  -- Final goal after preprocessing
   , isProved :: Bool                 -- Was the theorem proved?
   , proofReason :: String            -- Explanation of result
+  , proofEvidence :: Maybe ProofEvidence -- ^ Formal evidence (optional)
   , detailedTrace :: Maybe String    -- Optional detailed trace
   } deriving (Show, Eq)
 
@@ -211,8 +219,10 @@ autoSolve opts pointSubs theory goal =
                  { selectedSolver = UseGroebner
                  , solverReason = "Integer existential handled by integer solver"
                  , problemProfile = profile
+                 , preprocessedGoalExpr = goal'
                  , isProved = proved
                  , proofReason = reason
+                 , proofEvidence = Nothing
                  , detailedTrace = Nothing
                  }
       Forall qs _
@@ -226,8 +236,10 @@ autoSolve opts pointSubs theory goal =
                  { selectedSolver = UseGroebner
                  , solverReason = "Integer universal handled by integer solver (negation refutation)"
                  , problemProfile = profile
+                 , preprocessedGoalExpr = goal'
                  , isProved = proved
                  , proofReason = reason
+                 , proofEvidence = Nothing
                  , detailedTrace = Nothing
                  }
       Exists qs _
@@ -238,8 +250,10 @@ autoSolve opts pointSubs theory goal =
                  { selectedSolver = UseCAD
                  , solverReason = "Real existential handled by CAD satisfiability"
                  , problemProfile = profile
+                 , preprocessedGoalExpr = goal'
                  , isProved = proved
                  , proofReason = reason
+                 , proofEvidence = Nothing
                  , detailedTrace = Nothing
                  }
       Forall qs _
@@ -251,8 +265,10 @@ autoSolve opts pointSubs theory goal =
                  { selectedSolver = UseGroebner
                  , solverReason = "Bounded real universal handled by linear interval check"
                  , problemProfile = profile
+                 , preprocessedGoalExpr = goal'
                  , isProved = proved
                  , proofReason = reason
+                 , proofEvidence = Nothing
                  , detailedTrace = Nothing
                  }
       -- Unbounded or partially bounded real universals via CAD refutation
@@ -264,22 +280,26 @@ autoSolve opts pointSubs theory goal =
                  { selectedSolver = UseCAD
                  , solverReason = "Real universal handled by CAD refutation"
                  , problemProfile = profile
+                 , preprocessedGoalExpr = goal'
                  , isProved = proved
                  , proofReason = reason
+                 , proofEvidence = Nothing
                  , detailedTrace = Nothing
                  }
       
       -- Inequality Fast Path (WLOG + F4 + SOS)
       -- Prefer SOS for Geometric problems or Algebraic/Mixed problems with > 2 variables
       Ge _ _ | problemType profile == Geometric || ((problemType profile == PureAlgebraic || problemType profile == Mixed) && numVariables profile > 2) ->
-        let (proved, reason, trace) = proveInequalitySOS opts theory' goal'
+        let (proved, reason, trace, evidence) = proveInequalitySOS opts theory' goal'
         in if proved
            then AutoSolveResult
                   { selectedSolver = UseGroebner
                   , solverReason = "Inequality (Fast Path: WLOG+F4+SOS)"
                   , problemProfile = profile
+                  , preprocessedGoalExpr = goal'
                   , isProved = True
                   , proofReason = reason
+                  , proofEvidence = evidence
                   , detailedTrace = trace
                   }
            else
@@ -288,8 +308,10 @@ autoSolve opts pointSubs theory goal =
                   { selectedSolver = UseCAD
                   , solverReason = "Inequality (Fallback to CAD after SOS failure)"
                   , problemProfile = profile
+                  , preprocessedGoalExpr = goal'
                   , isProved = proved'
                   , proofReason = reason'
+                  , proofEvidence = Nothing
                   , detailedTrace = trace'
                   }
 
@@ -300,8 +322,10 @@ autoSolve opts pointSubs theory goal =
              { selectedSolver = UseCAD
              , solverReason = "Inequality/positivity goal routed to CAD (sound positivity path)"
              , problemProfile = profile
+             , preprocessedGoalExpr = goal'
              , isProved = proved
              , proofReason = reason
+             , proofEvidence = Nothing
              , detailedTrace = trace
              }
       Gt _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
@@ -310,8 +334,10 @@ autoSolve opts pointSubs theory goal =
              { selectedSolver = UseCAD
              , solverReason = "Strict inequality goal routed to CAD (sound positivity path)"
              , problemProfile = profile
+             , preprocessedGoalExpr = goal'
              , isProved = proved
              , proofReason = reason
+             , proofEvidence = Nothing
              , detailedTrace = trace
              }
       _ | containsQuantifier goal' || any containsQuantifier theory' ->
@@ -320,8 +346,10 @@ autoSolve opts pointSubs theory goal =
               { selectedSolver = UseCAD
               , solverReason = "Quantified formula routed to CAD (Full QE support)"
               , problemProfile = profile
+              , preprocessedGoalExpr = goal'
               , isProved = proved
               , proofReason = reason
+              , proofEvidence = Nothing
               , detailedTrace = trace
               }
       _ ->
@@ -333,8 +361,10 @@ autoSolve opts pointSubs theory goal =
               { selectedSolver = UseGeoSolver
               , solverReason = "Fast geometric constraint propagation (PHASE 1)"
               , problemProfile = profile
+              , preprocessedGoalExpr = goal'
               , isProved = True
               , proofReason = reason
+              , proofEvidence = Nothing
               , detailedTrace = Just (unlines steps)
               }
 
@@ -344,8 +374,10 @@ autoSolve opts pointSubs theory goal =
               { selectedSolver = UseGeoSolver
               , solverReason = "Fast geometric constraint propagation (PHASE 1)"
               , problemProfile = profile
+              , preprocessedGoalExpr = goal'
               , isProved = False
               , proofReason = reason
+              , proofEvidence = Nothing
               , detailedTrace = Just (unlines steps)
               }
 
@@ -378,10 +410,22 @@ autoSolve opts pointSubs theory goal =
                  { selectedSolver = solver
                  , solverReason = solverReason'
                  , problemProfile = profile
+                 , preprocessedGoalExpr = goal'
                  , isProved = proved
                  , proofReason = proofMsg
+                 , proofEvidence = Nothing
                  , detailedTrace = trace
                  }
+
+-- | Format a Sum-of-Squares certificate for human reading
+formatSOSCertificate :: SOSCertificate -> String
+formatSOSCertificate cert =
+  let terms = sosTerms cert
+      formatTerm (c, p) = (if c == 1 then "" else prettyRational c ++ " * ") ++ "(" ++ prettyPolyNice p ++ ")^2"
+      sumStr = intercalate " + " (map formatTerm (reverse terms))
+  in if null terms then "No squares found."
+     else "The expression can be decomposed as:\n    " ++ sumStr ++ 
+          (if sosRemainder cert == polyZero then "" else "\n    Note: A remainder of [" ++ prettyPolyNice (sosRemainder cert) ++ "] was found modulo the ideal.")
 
 -- | Either-based version of autoSolve (recommended API)
 -- Returns Either ProverError AutoSolveResult for better error handling
@@ -389,7 +433,7 @@ autoSolveE :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> Either 
 autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory goal
 
 -- | Attempt to prove inequality using WLOG + F4 + SOS
-proveInequalitySOS :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
+proveInequalitySOS :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String, Maybe ProofEvidence)
 proveInequalitySOS opts theoryRaw goalRaw =
   let 
       -- 0. Preprocessing (Rational + Sqrt elimination)
@@ -397,10 +441,6 @@ proveInequalitySOS opts theoryRaw goalRaw =
       (thPoly, goalPoly) = eliminateSqrt thPrep goalPrep
       
       -- 1. Iterative Squaring Heuristic
-      -- If the inequality involves auxiliary sqrt variables in odd degrees (e.g. 2*ra*rb),
-      -- squaring the inequality (lhs^2 >= rhs^2) might convert them to squares (ra^2*rb^2)
-      -- which are defined in the theory (ra^2 = PA2).
-      
       subMapInitial = buildSubMap thPoly
       
       needsSquaring :: Formula -> Bool
@@ -442,7 +482,7 @@ proveInequalitySOS opts theoryRaw goalRaw =
   case goalSquared of
     Ge _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly profileFinal
     Gt _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly profileFinal
-    _ -> (False, "Not an inequality after preprocessing", Nothing)
+    _ -> (False, "Not an inequality after preprocessing", Nothing, Nothing)
   where
     trySOS theory goalFull targetExpr goalOriginal profileFinal =
       let
@@ -487,12 +527,11 @@ proveInequalitySOS opts theoryRaw goalRaw =
             else checkSOSNumeric paramMap targetPoly
             
           -- 3. If numerical success, reconstruct and verify
-          verifiedNumerical =
+          verifiedNumerical = 
             case numericalSquares of
               Just sqs ->
                 let 
                     -- Reconstruct symbolic squares
-                    -- Assume 's' is the main parameter for now
                     paramName = if M.member "s" paramMap then "s" else "p" -- heuristics
                     paramVal = M.findWithDefault 1.0 paramName paramMap
                     
@@ -503,17 +542,59 @@ proveInequalitySOS opts theoryRaw goalRaw =
                 in remainder == polyZero
               Nothing -> False
 
-          checkPoly p = verifiedNumerical || checkSOS reducer p || checkBoundarySOS p
+          -- 4. Lemma-Assisted SOS
+          -- Collect all proven lemmata from the theory
+          knownLemmas = [ subPoly (toPolySub subMap l) (toPolySub subMap r) | Ge l r <- theory ]
           
-          success = any checkPoly remainders
+          -- SOS Check with Certificate
+          maybeCert = getSOSCertificate knownLemmas reducer targetPoly
+          
+          success = isJust maybeCert || verifiedNumerical || checkBoundarySOS (reducer targetPoly)
+          
+          -- Evidence construction
+          evidence = fmap (\c -> EvidenceSOS c wlogLog) maybeCert
+
+          -- 5. Semantic Trace Construction (Step-by-Step Explanation)
+          intro = "STEP-BY-STEP MATHEMATICAL PROOF:\n" ++ replicate 40 '=' ++ "\n"
+          
+          wlogStep = if null wlogLog then "" 
+                     else "1. Coordinate Simplification (WLOG):\n" ++ 
+                          unlines (map ("   * " ++) wlogLog) ++ "\n"
+          
+          squaringStep = if goalFull == goalOriginal then ""
+                         else "2. Handling Square Roots:\n" ++
+                              "   We apply iterative squaring to eliminate auxiliary variables representing square roots.\n" ++
+                              "   The goal is transformed into a purely polynomial inequality:\n" ++
+                              "   " ++ prettyFormula goalFull ++ " >= 0\n\n"
+          
+          reducedPoly = reducer targetPoly
+          reductionStep = "3. Algebraic Reduction:\n" ++
+                          "   We reduce the target expression modulo the geometric constraints using a modular F4 basis.\n" ++
+                          "   This simplifies the problem into its canonical form:\n" ++
+                          "   Reduced Expression: " ++ prettyPolyNice reducedPoly ++ "\n\n"
+          
+          sosStep = case maybeCert of
+                      Just cert -> "4. Positivity Verification:\n" ++
+                                   "   We observe that the reduced expression is non-negative because it can be written as a sum of squares and proven lemmata.\n" ++
+                                   formatSOSCertificate cert ++ "\n"
+                      Nothing -> if verifiedNumerical 
+                                 then "4. Numerical SOS Verification:\n" ++
+                                      "   A Sum-of-Squares certificate was found using numerical guidance and verified exactly.\n"
+                                 else "4. Boundary Analysis:\n" ++
+                                      "   We verify the non-negativity of the expression by checking its values on the geometric boundaries.\n"
+          
+          conclusion = "\n" ++ replicate 40 '=' ++ "\nConclusion: The inequality holds for all valid configurations."
+          
+          fullTrace = intro ++ wlogStep ++ squaringStep ++ reductionStep ++ sosStep ++ conclusion
+          
           bestPoly = case remainders of
                        (r:_) -> r
                        []    -> targetPoly
           
       in
         if success
-        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary" ++ (if verifiedNumerical then " + Numerical Guidance" else "") ++ (if goalFull /= goalOriginal then " + Iterative Squaring" else ""), Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
-        else (False, "SOS check failed", Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
+        then (True, "Proved via compositional Sum-of-Squares", Just fullTrace, evidence)
+        else (False, "SOS check failed", Just (intro ++ reductionStep ++ "Conclusion: Could not prove non-negativity of the reduced expression."), Nothing)
 
     -- | Build parameter map from theory (e.g. s^2 = 3 -> s = 1.732)
     buildParamMap :: Theory -> M.Map String Double

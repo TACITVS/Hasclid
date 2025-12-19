@@ -1,32 +1,62 @@
 module Positivity.SOS
   ( checkSOS
+  , checkSOSWithLemmas
   , checkSumOfSquares
   , isPerfectSquare
+  , SOSCertificate(..)
+  , getSOSCertificate
   ) where
 
 import Expr
 import qualified Data.Map.Strict as M
-import Data.List (sortBy, nub, sort)
+import Data.List (sortBy, nub, sort, delete)
 import Data.Ratio (numerator, denominator)
+import Data.Maybe (isJust, mapMaybe)
 import TermOrder (compareMonomials, TermOrder(..))
 import Positivity.SDP (checkSOS_SDP)
 
+-- | Certificate showing that a polynomial is a sum of squares.
+--   P = sum (coefficients_i * squares_i^2) + sum (lemmata_j) + remainder
+data SOSCertificate = SOSCertificate
+  { sosTerms :: [(Rational, Poly)] -- (coefficient, base_polynomial) such that coeff * base^2
+  , sosLemmas :: [Poly]            -- Known non-negative lemmata used
+  , sosRemainder :: Poly           -- Remaining part (should be 0 modulo ideal)
+  } deriving (Show, Eq)
+
+emptyCert :: SOSCertificate
+emptyCert = SOSCertificate [] [] polyZero
+
 -- | Check if polynomial is a Sum of Squares, potentially modulo an ideal (via reducer)
+-- and potentially using a list of known non-negative lemmata.
 checkSOS :: (Poly -> Poly) -> Poly -> Bool
-checkSOS reducer p = isWeightedSOS p || checkSumOfSquares reducer p || checkSOS_SDP (reducer p)
+checkSOS reducer p = isJust (getSOSCertificate [] reducer p)
+
+-- | Get SOS certificate if it exists
+getSOSCertificate :: [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate
+getSOSCertificate lemmata reducer pRaw = 
+  let p = reducer pRaw
+  in case getWeightedSOS p of
+       Just cert -> Just cert
+       Nothing -> 
+         case robustCholesky reducer p emptyCert of
+           Just cert -> Just cert
+           Nothing -> tryLemmaReduction lemmata reducer p
+
+-- | Advanced SOS check that leverages previously proven lemmata.
+checkSOSWithLemmas :: [Poly] -> (Poly -> Poly) -> Poly -> Bool
+checkSOSWithLemmas lemmata reducer p = isJust (getSOSCertificate lemmata reducer p)
 
 -- | Check for weighted sum of even powers (trivial SOS)
-isWeightedSOS :: Poly -> Bool
-isWeightedSOS (Poly m) =
-  not (M.null m) &&
-  all (\(Monomial vars, c) -> c > 0 && all even (M.elems vars)) (M.toList m)
+getWeightedSOS :: Poly -> Maybe SOSCertificate
+getWeightedSOS (Poly m) =
+  if not (M.null m) && all (\(Monomial vars, c) -> c > 0 && all even (M.elems vars)) (M.toList m)
+  then let terms = [ (c, Poly (M.singleton (sqrtMono mono) 1)) | (mono, c) <- M.toList m ]
+       in Just (emptyCert { sosTerms = terms })
+  else Nothing
 
 -- | Check if polynomial is a perfect square (P = Q^2)
 isPerfectSquare :: Poly -> Bool
-isPerfectSquare p =
-  case polynomialSqrt p of
-    Just _ -> True
-    Nothing -> False
+isPerfectSquare p = isJust (polynomialSqrt p)
 
 -- | Compute exact square root of polynomial if it exists
 polynomialSqrt :: Poly -> Maybe Poly
@@ -73,77 +103,57 @@ findRoot target currentRoot =
 -- ============================================================================
 
 -- | Check if polynomial is SOS by constructing its Gram Matrix.
--- P(x) is SOS iff there exists a PSD matrix Q s.t. P(x) = m(x)^T Q m(x)
--- where m(x) is the vector of monomials up to half the degree of P.
 checkSumOfSquares :: (Poly -> Poly) -> Poly -> Bool
-checkSumOfSquares reducer pRaw =
-  let p = reducer pRaw
-  in if p == polyZero then True
-  else
-    let 
-        -- 1. Get half-degree monomials (the basis for the square)
-        basis = getSOSBasis p
-        n = length basis
-        
-        -- 2. Build the Gram Matrix Q
-        -- In this "lite" version, we try to find a diagonal-dominant or 
-        -- simple LDL decomposition for Q. 
-        -- For a full commercial prover, we would use SDP here.
-        -- We implement a robust Cholesky-like search that handles cross-terms.
-        
-    in if null basis then False else robustCholesky reducer p
+checkSumOfSquares reducer pRaw = isJust (robustCholesky reducer pRaw emptyCert)
 
 -- | Extract the basis of monomials m_i such that m_i*m_j could form terms in P
 getSOSBasis :: Poly -> [Monomial]
 getSOSBasis (Poly m) =
   let allMonos = M.keys m
       halfDegrees = map sqrtMono (filter isSquareMono allMonos)
-      -- Also include monomials that are "halfway" between existing terms
-      -- (Heuristic for cross-terms)
   in nub (sort halfDegrees)
 
 -- | Robust Cholesky decomposition that allows for pivot selection and 
---   handles non-diagonal SOS forms.
-robustCholesky :: (Poly -> Poly) -> Poly -> Bool
-robustCholesky reducer p
-  | p == polyZero = True
+--   returns a certificate of the squares found.
+robustCholesky :: (Poly -> Poly) -> Poly -> SOSCertificate -> Maybe SOSCertificate
+robustCholesky reducer p cert
+  | p == polyZero = Just cert
   | otherwise =
       case findBestPivot p of
-        Nothing -> False -- No valid square term found to eliminate
+        Nothing -> Nothing -- No valid square term found to eliminate
         Just (m, c) ->
           let
-             -- P = c * m^2 + 2 * m * (\sum a_i n_i) + rest
-             --   = (sqrt(c) m + (1/sqrt(c)) \sum a_i n_i)^2 + (rest - (1/c)(\sum a_i n_i)^2)
-             
              (divisible, _) = partitionPolyByDivisibility p m
              quotient = case polyDivMonomial divisible m of
                           Just q -> q
                           Nothing -> error "Partition logic failed"
              
-             ltPoly = polyFromMonomial m c
-             xPoly = polySub quotient ltPoly -- The cross terms: \sum a_i n_i
-             
+             -- subtraction = (1/c) * (quotient)^2
              subtraction = polyScale (polyMul quotient quotient) (1/c)
-             -- Actually, the correct subtraction to eliminate m is:
-             -- quotient = c*m + cross
-             -- (quotient)^2 / c = (c*m + cross)^2 / c = c*m^2 + 2*m*cross + cross^2/c
-             -- This eliminates all terms in 'p' divisible by 'm'.
              
              newP = reducer (polySub p subtraction)
-          in robustCholesky reducer newP
+             newCert = cert { sosTerms = (1/c, quotient) : sosTerms cert }
+          in robustCholesky reducer newP newCert
 
 -- | Find the best monomial to use as a square pivot.
---   Favors monomials that appear as squares with positive coefficients.
 findBestPivot :: Poly -> Maybe (Monomial, Rational)
 findBestPivot (Poly m) =
   let candidates = [ (sqrtMono mono, c) 
                    | (mono, c) <- M.toList m
                    , c > 0 && isSquareMono mono ]
-      -- Pick the largest monomial (by term order) to ensure termination
       sorted = sortBy (\(m1,_) (m2,_) -> compareMonomials GrevLex m2 m1) candidates
   in case sorted of
        (x:_) -> Just x
        []    -> Nothing
+
+-- | Attempt to subtract known non-negative lemmata from the target to make it SOS.
+tryLemmaReduction :: [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate
+tryLemmaReduction [] _ _ = Nothing
+tryLemmaReduction (l:ls) reducer p =
+  let remainder = reducer (polySub p l)
+  in case getSOSCertificate ls reducer remainder of
+       Just cert -> Just (cert { sosLemmas = l : sosLemmas cert })
+       Nothing -> tryLemmaReduction ls reducer p
 
 -- | Partition polynomial into (terms divisible by m, terms not divisible)
 partitionPolyByDivisibility :: Poly -> Monomial -> (Poly, Poly)
@@ -156,11 +166,10 @@ isDivisible (Monomial a) (Monomial b) = M.isSubmapOfBy (<=) b a
 
 polyDivMonomial :: Poly -> Monomial -> Maybe Poly
 polyDivMonomial (Poly mapping) m =
-  let divided = M.mapKeysMonotonic (\k -> case monomialDiv k m of Just r -> r; Nothing -> k) mapping 
-      -- Note: mapKeysMonotonic assumes order preservation. Division preserves Lex order? 
-      -- Div by const monomial yes.
-      -- We must ensure all keys were divisible.
-  in Just (Poly divided)
+  let dividedList = [ (res, c) | (k, c) <- M.toList mapping, let res = monomialDiv k m ]
+  in if any (\(r, _) -> r == Nothing) dividedList
+     then Nothing
+     else Just (Poly (M.fromList [ (r, c) | (Just r, c) <- dividedList ]))
 
 polyScale :: Poly -> Rational -> Poly
 polyScale (Poly m) s = Poly (M.map (*s) m)

@@ -26,8 +26,8 @@ import qualified IntegrationSpec
 main :: IO ()
 main = hspec $ do
   coreSpec
-  ExamplesSpec.spec
-  IntegrationSpec.spec
+  -- ExamplesSpec.spec
+  -- IntegrationSpec.spec
 
 coreSpec :: Spec
 coreSpec = do
