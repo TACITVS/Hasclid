@@ -3,3 +3,4 @@
 ; Simple inequality for CAD/SOS.
 
 :prove (forall (a b x y) (>= (* (+ (^ a 2) (^ b 2)) (+ (^ x 2) (^ y 2))) (^ (+ (* a x) (* b y)) 2)))
+:q

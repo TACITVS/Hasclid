@@ -260,7 +260,8 @@ estimateComplexity numVars numCons maxDeg hasSymbolic probType
   -- Default: based on variable count
   | numVars <= 2 = Low
   | numVars <= 4 = Medium
-  | numVars <= 6 = High
+  | numVars <= 8 = High
+  | numVars <= 15 && maxDeg <= 2 = High  -- Allow larger geometric problems (e.g., Varignon with 13 vars, degree 2)
   | otherwise = VeryHigh
 
 -- =============================================

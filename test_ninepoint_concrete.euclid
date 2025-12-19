@@ -1,0 +1,15 @@
+; Concrete test: A=(0,4), B=(6,0), C=(2,0), F=(0,0)
+; Midpoints: Mc=(3,2), Ma=(4,0), Mb=(1,2)
+:point A 0 4
+:point B 6 0
+:point C 2 0
+:point F 0 0
+:point Mc 3 2
+:point Ma 4 0
+:point Mb 1 2
+; Verify midpoints
+:assume (= (midpoint A B Mc) 0)
+:assume (= (midpoint B C Ma) 0)
+:assume (= (midpoint C A Mb) 0)
+:prove (= (det (+ (^ xF 2) (^ yF 2)) xF yF 1 (+ (^ xMa 2) (^ yMa 2)) xMa yMa 1 (+ (^ xMc 2) (^ yMc 2)) xMc yMc 1 (+ (^ xMb 2) (^ yMb 2)) xMb yMb 1) 0)
+:q

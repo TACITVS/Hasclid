@@ -26,17 +26,7 @@
 ; So 4*AM^2 = (xB + xC - 2xA)^2 + (yC - 2yA)^2
 ;    4*BM^2 = (xB + xC - 2xB)^2 + (yC - 2yB)^2
 
-:wu (= 
-		; LHS: 4 * (AB^2 + AC^2)
-		(* 4 (+ (+ (^ xB 2) 0) (+ (^ xC 2) (^ yC 2))))
-		
-		; RHS: 2 * (4*AM^2 + 4*BM^2)
-		(* 2 (+ 
-				; 4*AM^2 = (xB+xC - 0)^2 + (yC - 0)^2
-				(+ (^ (+ xB xC) 2) (^ yC 2))
-				
-				; 4*BM^2 = (xB+xC - 2xB)^2 + (yC - 0)^2
-				(+ (^ (- (+ xB xC) (* 2 xB)) 2) (^ yC 2))
-			  )	
-		)
-	)
+; LHS: 4 * (AB^2 + AC^2)
+; RHS: 2 * (4*AM^2 + 4*BM^2) where M is midpoint of BC
+:wu (= (* 4 (+ (+ (^ xB 2) 0) (+ (^ xC 2) (^ yC 2)))) (* 2 (+ (+ (^ (+ xB xC) 2) (^ yC 2)) (+ (^ (- (+ xB xC) (* 2 xB)) 2) (^ yC 2)))))
+:q

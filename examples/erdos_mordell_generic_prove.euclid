@@ -1,0 +1,45 @@
+:set-timeout 180
+:optimize on
+:set-strategy normal
+
+; ==========================================================
+; Erdős-Mordell Inequality (Generic Triangle)
+; ==========================================================
+
+; Setup Generic Triangle
+:assume (= xA 0)
+:assume (= yA 0)
+:assume (= xB 1)
+:assume (= yB 0)
+:assume (= xC u)
+:assume (= yC v)
+:assume (> v 0)
+
+; Point P inside (Barycentric: alpha + beta + gamma = 1, all > 0)
+:assume (> alpha 0)
+:assume (> beta 0)
+:assume (> gamma 0)
+:assume (= (+ alpha (+ beta gamma)) 1)
+
+; P coordinates derived from Barycentric
+; P = alpha*A + beta*B + gamma*C
+:assume (= x (+ (* alpha xA) (+ (* beta xB) (* gamma xC))))
+:assume (= y (+ (* alpha yA) (+ (* beta yB) (* gamma yC))))
+
+; Squared Distances from P to Vertices
+:assume (= PA2 (+ (^ (- x xA) 2) (^ (- y yA) 2)))
+:assume (= PB2 (+ (^ (- x xB) 2) (^ (- y yB) 2)))
+:assume (= PC2 (+ (^ (- x xC) 2) (^ (- y yC) 2)))
+
+; Squared Side Lengths
+; c = 1 (normalized)
+:assume (= a2 (+ (^ (- xC xB) 2) (^ (- yC yB) 2)))
+:assume (= b2 (+ (^ (- xC xA) 2) (^ (- yC yA) 2)))
+
+; Distances from P to sides (using Area/Base formula)
+; da = (alpha * v) / a
+; db = (beta * v)  / b
+; dc = gamma * v
+
+; Prove the inequality
+:prove (>= (+ (sqrt PA2) (+ (sqrt PB2) (sqrt PC2))) (* 2 (+ (/ (* alpha v) (sqrt a2)) (+ (/ (* beta v) (sqrt b2)) (* gamma v)))))

@@ -1,0 +1,29 @@
+; Level 10: Erdos-Mordell (Component B) - Rewritten to avoid division
+; R_b >= d_a + d_c
+;
+; Original formula had division: dc = (s*x - y + s) / 2
+; We rewrite to eliminate division by introducing dc2 = 2*dc
+
+:set-timeout 300
+
+:assume (= (^ s 2) 3)
+:assume (> s 0)
+:assume (> y 0)
+:assume (> (+ (- (* s x) y) s) 0)
+:assume (> (+ (- (* (- 0 s) x) y) s) 0)
+:assume (= da y)
+
+; Instead of dc = (s*x - y + s) / 2, we use dc2 = s*x - y + s and prove Rb >= da + dc2/2
+; Equivalently, prove 2*Rb >= 2*da + dc2
+; Which is: 2*Rb >= 2*y + (s*x - y + s)
+; Simplifying: 2*Rb >= s*x + y + s
+
+:assume (= (^ Rb 2) (+ (^ (+ x 1) 2) (^ y 2)))
+:assume (>= Rb 0)
+
+; Prove: 2*Rb >= s*x + y + s
+; Squared form to avoid sqrt: (2*Rb)^2 >= (s*x + y + s)^2
+; That is: 4*Rb^2 >= (s*x + y + s)^2
+
+:prove (>= (* 4 (^ Rb 2)) (^ (+ (+ (* s x) y) s) 2))
+:q

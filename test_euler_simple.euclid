@@ -1,0 +1,5 @@
+:point O 1.5 2
+:point I 1 1
+:verbose
+:prove (= (dist2 O I) 1.25)
+:q

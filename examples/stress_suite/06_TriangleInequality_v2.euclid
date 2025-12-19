@@ -1,0 +1,20 @@
+; Level 6: Triangle Inequality (Squared Form)
+; AB + BC >= AC
+; Squared form to avoid sqrt timeout:
+; (AB + BC)^2 >= AC^2
+; AB + BC + 2*sqrt(AB*BC) >= AC
+;
+; Squaring again to eliminate sqrt completely:
+; If we prove: (AB + BC - AC)^2 >= 4*AB*BC for cases where AB + BC >= AC
+; This is equivalent to: AB^2 + BC^2 + AC^2 + 2*AB*BC + 2*BC*AC - 2*AC*AB >= 4*AB*BC
+; Simplifying: AB^2 + BC^2 + AC^2 - 2*AB*BC + 2*BC*AC - 2*AC*AB >= 0
+; Or: (AB + BC - AC)^2 >= 0 when AB + BC >= AC
+
+:point A 0 0
+:point B xB yB
+:point C xC 0
+
+:set-timeout 180
+; Prove the squared form: (dist(A,B) + dist(B,C))^2 >= dist(A,C)^2
+:prove (>= (^ (+ (sqrt (dist2 A B)) (sqrt (dist2 B C))) 2) (dist2 A C))
+:q

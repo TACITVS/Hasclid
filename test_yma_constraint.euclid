@@ -1,0 +1,5 @@
+:point Ma xMa yMa
+:assume (= yMa 0)
+:verbose
+:prove (= (* yMa yMa) 0)
+:q

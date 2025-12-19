@@ -129,6 +129,11 @@ extractSubstitutions theory =
     extractSub :: Formula -> Maybe (String, Expr)
     extractSub (Eq (Var v) e) | isConstantExpr e = Just (v, e)
     extractSub (Eq e (Var v)) | isConstantExpr e = Just (v, e)
+    -- Pattern: (* c x) = 0 → x ↦ 0 (for non-zero constant c)
+    extractSub (Eq (Mul (Const c) (Var v)) (Const 0)) | c /= 0 = Just (v, Const 0)
+    extractSub (Eq (Mul (Var v) (Const c)) (Const 0)) | c /= 0 = Just (v, Const 0)
+    extractSub (Eq (Const 0) (Mul (Const c) (Var v))) | c /= 0 = Just (v, Const 0)
+    extractSub (Eq (Const 0) (Mul (Var v) (Const c))) | c /= 0 = Just (v, Const 0)
     -- TODO: Add more sophisticated extraction patterns
     extractSub _ = Nothing
 

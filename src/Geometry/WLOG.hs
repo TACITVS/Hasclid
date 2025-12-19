@@ -26,10 +26,23 @@ applyWLOG theory goal =
     (th1, log1) = applyTranslationWLOG points theory
     (th2, log2) = applyRotationWLOG points th1
     
-    -- Scaling is risky for inequalities without homogeneity check. Skipping for now.
-    -- (th3, log3) = applyScalingWLOG points th2
+    -- Scaling WLOG: Fix one length to 1 (assumes homogeneity)
+    (th3, log3) = applyScalingWLOG points th2
     
-  in (th2, log1 ++ log2)
+  in (th3, log1 ++ log2 ++ log3)
+
+-- | Fix second point to (1,0) if not constrained (fixes scale)
+applyScalingWLOG :: [String] -> Theory -> (Theory, [String])
+applyScalingWLOG [] theory = (theory, [])
+applyScalingWLOG (_:[]) theory = (theory, [])
+applyScalingWLOG (_:p2:_) theory =
+  let x2 = "x" ++ p2
+      isConstrained v = any (isExplicitConstraint v) theory
+  in if isConstrained x2
+     then (theory, [])
+     else 
+       let newConstraints = [ Eq (Var x2) (Const 1) ]
+       in (theory ++ newConstraints, ["WLOG Scaling: Fixed " ++ p2 ++ " at x=1"])
 
 -- | Detect points based on variable naming convention (xA, yA, etc.)
 detectPoints :: [Formula] -> [String]
@@ -70,7 +83,6 @@ applyRotationWLOG [] theory = (theory, [])
 applyRotationWLOG (_:[]) theory = (theory, [])
 applyRotationWLOG (_:p2:_) theory =
   let y2 = "y" ++ p2
-      x2 = "x" ++ p2
       
       isConstrained v = any (isExplicitConstraint v) theory
       

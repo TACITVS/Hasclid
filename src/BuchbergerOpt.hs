@@ -97,6 +97,16 @@ makeCriticalPair ord f g =
 monomialDegree :: Monomial -> Natural
 monomialDegree (Monomial m) = M.foldl (+) 0 m
 
+-- | Check if a polynomial is safe to add to basis (prevent memory explosion)
+-- Set large limits for "Commercial Quality" performance
+isSafePoly :: Poly -> Bool
+isSafePoly (Poly m)
+  | M.null m = True
+  | otherwise =
+      let numTerms = M.size m
+          maxDeg = maximum (0 : map (monomialDegree . fst) (M.toList m))
+      in numTerms < 10000 && maxDeg < 30
+
 -- Select next pair based on strategy
 selectPair :: SelectionStrategy -> [CriticalPair] -> Maybe (CriticalPair, [CriticalPair])
 selectPair _ [] = Nothing
@@ -116,6 +126,10 @@ selectPair strategy pairs =
 buchbergerWithStrategy :: MonomialOrder -> SelectionStrategy -> [Poly] -> [Poly]
 buchbergerWithStrategy ord strategy polys =
   let initial = filter (/= polyZero) polys
+      -- Check if any initial polynomials are already too large
+      _ = if any (not . isSafePoly) initial
+          then error "Initial basis contains polynomials that are too large"
+          else ()
       initialPairs = generatePairs ord initial
   in go ord initial initialPairs []
   where
@@ -135,18 +149,26 @@ buchbergerWithStrategy ord strategy polys =
             else
               -- Compute S-polynomial and reduce
               let s = sPoly cmp f g
-                  r = reduce cmp s basis
-              in
-                if r == polyZero
-                then
-                  -- Remainder is zero, continue
-                  go cmp basis remaining (pair : processed)
-                else
-                  -- Non-zero remainder, add to basis and generate new pairs
-                  let newBasis = nub (r : basis)
-                      newPairs = [(r, b) | b <- basis, b /= r]
-                      newCriticalPairs = concatMap (\(a,b) -> maybe [] (:[]) (makeCriticalPair cmp a b)) newPairs
-                  in go cmp newBasis (remaining ++ newCriticalPairs) (pair : processed)
+              in if not (isSafePoly s)
+                 then
+                   -- S-polynomial too large, skip this pair
+                   go cmp basis remaining (pair : processed)
+                 else
+                   let r = reduce cmp s basis
+                   in if r == polyZero
+                      then
+                        -- Remainder is zero, continue
+                        go cmp basis remaining (pair : processed)
+                      else if not (isSafePoly r)
+                      then
+                        -- Polynomial too large, skip to prevent memory exhaustion
+                        go cmp basis remaining (pair : processed)
+                      else
+                        -- Non-zero remainder, add to basis and generate new pairs
+                        let newBasis = nub (r : basis)
+                            newPairs = [(r, b) | b <- basis, b /= r]
+                            newCriticalPairs = concatMap (\(a,b) -> maybe [] (:[]) (makeCriticalPair cmp a b)) newPairs
+                        in go cmp newBasis (remaining ++ newCriticalPairs) (pair : processed)
 
     generatePairs :: MonomialOrder -> [Poly] -> [CriticalPair]
     generatePairs cmp bs =

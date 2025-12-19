@@ -1,0 +1,9 @@
+:point A 0 yA
+:point B xB 0
+:point C xC 0
+:point Ma xMa yMa
+:assume (= (midpoint B C Ma) 0)
+:verbose
+; This should deduce yMa = 0 since B and C both have y=0
+:prove (= yMa 0)
+:q

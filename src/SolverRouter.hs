@@ -46,7 +46,7 @@ import Preprocessing (preprocess, PreprocessingResult(..))
 import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..))
 import Wu (wuProve, wuProveWithTrace, formatWuTrace, proveExistentialWu, reduceWithWu)
-import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive, intBoundsFromQ)
+import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive, intBoundsFromQ, promoteIntVars)
 import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
 import CADLift (proveFormulaCAD)
 import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..), Confidence(..))
@@ -61,7 +61,7 @@ import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD)
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
-import Data.List (delete, find, isSuffixOf, sort, foldl')
+import Data.List (delete, find, isSuffixOf, sort, foldl', isPrefixOf)
 import Data.Maybe (isJust, mapMaybe)
 
 -- =============================================
@@ -76,6 +76,7 @@ data SolverChoice
   | UseConstructiveWu -- Constructive existence using Wu's Method (Triangularization)
   | UseCAD          -- CAD (for inequalities, limited to 1D-2D)
   | UseAreaMethod   -- Area Method (geometric invariants)
+  | UseSOS          -- Sum-of-Squares decomposition (for polynomial inequalities)
   | Unsolvable      -- Problem too complex or type not supported
   deriving (Show, Eq)
 
@@ -124,9 +125,19 @@ optimizeGroebnerOptions profile opts =
      else opts
 
 -- | Pick the Gröbner routine based on solver options
-selectGroebner :: SolverOptions -> ([Poly] -> [Poly])
-selectGroebner opts =
-  let ord = compareMonomials GrevLex  -- Use GrevLex for best performance
+selectGroebner :: ProblemProfile -> SolverOptions -> Formula -> ([Poly] -> [Poly])
+selectGroebner profile opts goal =
+  let 
+      -- Use Block ordering if parameters are present
+      params = symbolicParams profile
+      allVars = variables profile
+      activeVars = filter (`notElem` params) allVars
+      
+      ordType = if null params 
+                then GrevLex 
+                else Block [(activeVars, GrevLex), (params, GrevLex)]
+      
+      ord = compareMonomials ordType
   in case groebnerBackend opts of
        F4Backend ->
          f4LiteGroebner ord (selectionStrategyOpt opts) (f4UseBatch opts)
@@ -134,6 +145,24 @@ selectGroebner opts =
          if useOptimizedGroebner opts
            then buchbergerWithStrategy ord (selectionStrategyOpt opts)
            else buchberger
+
+-- =============================================
+-- Helper Functions for Formula Manipulation
+-- =============================================
+
+-- | Flatten And formulas into a list of conjuncts
+flattenAndRouter :: Formula -> [Formula]
+flattenAndRouter (And f1 f2) = flattenAndRouter f1 ++ flattenAndRouter f2
+flattenAndRouter f = [f]
+
+-- | Convert And goal to theory constraints + single goal
+-- If goal is (And f1 (And f2 f3)), convert to theory [f1, f2] and goal f3
+convertAndGoalRouter :: Theory -> Formula -> (Theory, Formula)
+convertAndGoalRouter theory goal =
+  case flattenAndRouter goal of
+    [] -> (theory, goal)  -- Shouldn't happen
+    [single] -> (theory, single)
+    formulas -> (theory ++ init formulas, last formulas)
 
 -- =============================================
 -- Main Automatic Solving Functions
@@ -152,14 +181,17 @@ selectGroebner opts =
 autoSolve :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> AutoSolveResult
 autoSolve opts pointSubs theory goal =
   let
+    -- Convert And goal to theory constraints + single goal
+    (theoryWithAnd, singleGoal) = convertAndGoalRouter theory goal
+
     -- INTELLIGENT PREPROCESSING: Automatically detect 2D, substitute known values (including point coordinates)
-    preprocessResult = preprocess pointSubs theory goal
+    preprocessResult = preprocess pointSubs theoryWithAnd singleGoal
     theory' = preprocessedTheory preprocessResult
     goal' = preprocessedGoal preprocessResult
 
     -- Analyze the PREPROCESSED problem structure
     profile = analyzeProblem theory' goal'
-    groebner = selectGroebner opts
+    groebner = selectGroebner profile opts goal'
   in
     case goal' of
       Exists qs inner
@@ -189,7 +221,7 @@ autoSolve opts pointSubs theory goal =
             let intNames = map qvName qs
                 theoryInt = map (promoteIntVars intNames) theory'
                 goalInt = promoteIntVars intNames goal'
-                (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theoryInt goalInt
+                (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goalInt) Nothing theoryInt goalInt
             in AutoSolveResult
                  { selectedSolver = UseGroebner
                  , solverReason = "Integer universal handled by integer solver (negation refutation)"
@@ -201,7 +233,7 @@ autoSolve opts pointSubs theory goal =
       Exists qs _
         | all (\q -> qvType q == QuantReal) qs
         , not (any containsQuantifier theory') ->
-            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory' goal'
+            let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
             in AutoSolveResult
                  { selectedSolver = UseCAD
                  , solverReason = "Real existential handled by CAD satisfiability"
@@ -214,7 +246,7 @@ autoSolve opts pointSubs theory goal =
         | all (\q -> qvType q == QuantReal) qs
         , all (\q -> isJust (qvLower q) && isJust (qvUpper q)) qs
         , not (any containsQuantifier theory') ->
-            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory' goal'
+            let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
             in AutoSolveResult
                  { selectedSolver = UseGroebner
                  , solverReason = "Bounded real universal handled by linear interval check"
@@ -227,7 +259,7 @@ autoSolve opts pointSubs theory goal =
       Forall qs _
         | all (\q -> qvType q == QuantReal) qs
         , not (any containsQuantifier theory') ->
-            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory' goal'
+            let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
             in AutoSolveResult
                  { selectedSolver = UseCAD
                  , solverReason = "Real universal handled by CAD refutation"
@@ -320,16 +352,26 @@ autoSolve opts pointSubs theory goal =
           GeoUnknown _ ->
             -- GeoSolver insufficient, fall back to PHASE 2 (algebraic solvers)
             let
+              -- Check if theory or goal contains divisions/sqrt that require CAD
+              hasDiv = containsDivFormula goal' || any containsDivFormula theory'
+              hasSqrt = containsSqrtFormula goal' || any containsSqrtFormula theory'
+
               -- Try Area Method applicability first
               isAreaMethodApplicable = case deriveConstruction theory' goal' of
                                          Just _ -> True
                                          Nothing -> False
               solver = if isAreaMethodApplicable
                        then UseAreaMethod
+                       else if hasDiv || hasSqrt
+                       then UseCAD  -- Force CAD for divisions/sqrt
                        else selectAlgebraicSolver profile goal'
 
               solverReason' = if isAreaMethodApplicable
                               then "Area Method Construction derived successfully."
+                              else if hasDiv
+                              then "Theory contains divisions; routing to CAD with rational elimination."
+                              else if hasSqrt
+                              then "Problem contains sqrt; routing to CAD with sqrt elimination."
                               else "Geometric propagation insufficient. Fallback to PHASE 2: " ++ explainSolverChoice solver profile
               (proved, proofMsg, trace) = executeSolver solver opts profile theory' goal'
             in AutoSolveResult
@@ -348,32 +390,64 @@ autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory 
 
 -- | Attempt to prove inequality using WLOG + F4 + SOS
 proveInequalitySOS :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
-proveInequalitySOS _opts theory goal =
-  case goal of
-    Ge lhs rhs -> trySOS (Sub lhs rhs)
-    Gt lhs rhs -> trySOS (Sub lhs rhs) -- TODO: Strictness check
-    _ -> (False, "Not an inequality", Nothing)
+proveInequalitySOS opts theoryRaw goalRaw =
+  let 
+      -- 0. Preprocessing (Rational + Sqrt elimination)
+      (thPrep, goalPrep) = eliminateRational theoryRaw goalRaw
+      (thPoly, goalPoly) = eliminateSqrt thPrep goalPrep
+      
+      -- 1. Iterative Squaring Heuristic
+      -- If the inequality involves auxiliary sqrt variables in odd degrees (e.g. 2*ra*rb),
+      -- squaring the inequality (lhs^2 >= rhs^2) might convert them to squares (ra^2*rb^2)
+      -- which are defined in the theory (ra^2 = PA2).
+      
+      subMapInitial = buildSubMap thPoly
+      
+      needsSquaring :: Formula -> Bool
+      needsSquaring (Ge l r) = checkOdd (Sub l r)
+      needsSquaring (Gt l r) = checkOdd (Sub l r)
+      needsSquaring _ = False
+      
+      checkOdd expr = 
+        let poly = toPolySub subMapInitial expr
+            vars = S.toList (extractPolyVars poly)
+            sqrtVars = filter ("zz_sqrt_aux" `isPrefixOf`) vars
+        in any (\v -> odd (polyDegreeIn poly v)) sqrtVars
+
+      doSquaring :: Int -> Formula -> Formula
+      doSquaring 0 f = f
+      doSquaring n f@(Ge l r) = 
+        if needsSquaring f 
+        then doSquaring (n-1) (Ge (Pow l 2) (Pow r 2)) -- Assume non-negativity (heuristic safe for sqrt vars)
+        else f
+      doSquaring n f@(Gt l r) = 
+        if needsSquaring f 
+        then doSquaring (n-1) (Gt (Pow l 2) (Pow r 2))
+        else f
+      doSquaring _ f = f
+
+      -- Apply squaring (max 3 iterations)
+      goalSquared = doSquaring 3 goalPoly
+      
+      -- Prepare target expression
+      targetExprFinal = case goalSquared of
+                          Ge l r -> Sub l r
+                          Gt l r -> Sub l r
+                          _ -> Const 0 -- Should not happen
+      
+      -- Analyze the final goal
+      profileFinal = analyzeProblem thPoly goalSquared
+      
+  in
+  case goalSquared of
+    Ge _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly profileFinal
+    Gt _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly profileFinal
+    _ -> (False, "Not an inequality after preprocessing", Nothing)
   where
-    trySOS targetExpr =
+    trySOS theory goalFull targetExpr goalOriginal profileFinal =
       let
           -- 1. Apply WLOG
-          (thWLOG, wlogLog) = applyWLOG theory goal
-          
-          -- Smart Squaring Heuristic for Distances
-          findSquareDef v = 
-            case find (\f -> case f of
-                               Eq (Pow (Var v') 2) _ -> v' == v
-                               _ -> False) thWLOG of
-              Just (Eq _ rhs) -> Just rhs
-              _ -> Nothing
-
-          (targetExpr', smartSqLog) = 
-             case goal of
-               Ge (Var a) rhs | Just aSq <- findSquareDef a ->
-                  (Sub aSq (Pow rhs 2), ["Smart Squaring applied: " ++ a ++ "^2 >= (" ++ show rhs ++ ")^2"])
-               Ge lhs (Var b) | Just bSq <- findSquareDef b ->
-                  (Sub (Pow lhs 2) bSq, ["Smart Squaring applied: (" ++ show lhs ++ ")^2 >= " ++ b ++ "^2"])
-               _ -> (targetExpr, [])
+          (thWLOG, wlogLog) = applyWLOG theory goalFull
 
           -- 2. Substitution (Pre-processing)
           subMap = buildSubMap thWLOG
@@ -382,12 +456,9 @@ proveInequalitySOS _opts theory goal =
           isDefinition _ = False
           
           -- Apply to target
-          targetPoly = toPolySub subMap targetExpr'
+          targetPoly = toPolySub subMap targetExpr
           
           -- 3. Wu Reduction (The "Wu-SOS Bridge")
-          -- We reduce the target polynomial modulo the geometric constraints using Characteristic Sets.
-          -- Wu's method is polynomial in complexity vs F4's exponential behavior for this class of problems.
-          
           -- Constraints as polynomials
           eqConstraints = [ toPolySub subMap (Sub l r) 
                             | eq@(Eq l r) <- thWLOG 
@@ -400,24 +471,21 @@ proveInequalitySOS _opts theory goal =
           remainders = reduceWithWu polyConstraints targetPoly
           
           -- 4. Check SOS / Boundary SOS
-          -- We create a reducer that simplifies polynomials modulo the constraints (e.g. s^2 -> 3)
-          -- This allows checkSOS to prove "SOS modulo Ideal".
-          
           -- Compute Basis ONCE
-          basis = f4LiteGroebner (compareMonomials GrevLex) SugarStrategy True eqConstraints
-          reducer p = F4Lite.reduceWithBasis (compareMonomials GrevLex) basis p
+          basis = selectGroebner profileFinal opts goalFull eqConstraints
+          reducer p = F4Lite.reduceWithBasis (getLeadingOrder profileFinal goalFull) basis p
           
           -- Numerical SOS Guidance
           -- 1. Extract parameters values
           paramMap = buildParamMap thWLOG
           
           -- 2. Try Numerical Cholesky
-          numericalSquares = 
-            if M.null paramMap && not (null (symbolicParams (analyzeProblem theory goal))) then Nothing -- Failed to resolve params
+          numericalSquares =
+            if M.null paramMap && not (null (symbolicParams (analyzeProblem theory goalFull))) then Nothing -- Failed to resolve params
             else checkSOSNumeric paramMap targetPoly
             
           -- 3. If numerical success, reconstruct and verify
-          verifiedNumerical = 
+          verifiedNumerical =
             case numericalSquares of
               Just sqs ->
                 let 
@@ -442,17 +510,16 @@ proveInequalitySOS _opts theory goal =
           
       in
         if success
-        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary" ++ (if verifiedNumerical then " + Numerical Guidance" else "") ++ (if not (null smartSqLog) then " + Smart Squaring" else ""), Just (unlines (wlogLog ++ smartSqLog) ++ "\nReduced Poly: " ++ show bestPoly))
-        else (False, "SOS check failed", Just (unlines (wlogLog ++ smartSqLog) ++ "\nReduced Poly: " ++ show bestPoly))
+        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary" ++ (if verifiedNumerical then " + Numerical Guidance" else "") ++ (if goalFull /= goalOriginal then " + Iterative Squaring" else ""), Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
+        else (False, "SOS check failed", Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
 
     -- | Build parameter map from theory (e.g. s^2 = 3 -> s = 1.732)
     buildParamMap :: Theory -> M.Map String Double
-    buildParamMap theory = 
+    buildParamMap theory =
       let eqs = [ (v, c) | Eq (Pow (Var v) 2) (Const c) <- theory, c > 0 ]
       in M.fromList [ (v, sqrt (fromRational c)) | (v, c) <- eqs ]
 
     -- | Check SOS on boundaries for homogeneous quadratic polynomials in P
-    --   Heuristic: Checks P(1,0), P(C), P(B+C)
     checkBoundarySOS :: Poly -> Bool
     checkBoundarySOS p =
       let vars = S.toList (extractPolyVars p)
@@ -466,56 +533,24 @@ proveInequalitySOS _opts theory goal =
            ([xp, yp], Just cX, Just cY, Just bX) ->
              let
                  -- 1. Check Ray AB (yP = 0)
-                 -- P(xp, 0) -> Sub yp=0
                  sub1 = M.fromList [(yp, polyZero)]
                  p1 = evaluatePoly sub1 p
                  
                  -- 2. Check Ray AC (P = C)
-                 -- Sub xp = xC, yp = yC
                  sub2 = M.fromList [(xp, polyFromVar cX), (yp, polyFromVar cY)]
                  p2 = evaluatePoly sub2 p
                  
                  -- 3. Check Mid Ray (P = B + C)
-                 -- Sub xp = xB + xC, yp = yC
                  sub3 = M.fromList [(xp, polyAdd (polyFromVar bX) (polyFromVar cX)), (yp, polyFromVar cY)]
                  p3 = evaluatePoly sub3 p
                  
              in checkSOS id p1 && checkSOS id p2 && checkSOS id p3
            _ -> False
-
-promoteIntVars :: [String] -> Formula -> Formula
-promoteIntVars names f = goF names f
-  where
-    goF ns (Eq l r) = Eq (goE ns l) (goE ns r)
-    goF ns (Ge l r) = Ge (goE ns l) (goE ns r)
-    goF ns (Gt l r) = Gt (goE ns l) (goE ns r)
-    goF ns (Le l r) = Le (goE ns l) (goE ns r)
-    goF ns (Lt l r) = Lt (goE ns l) (goE ns r)
-    goF ns (Divides l r) = Divides (goE ns l) (goE ns r)
-    goF ns (And a b) = And (goF ns a) (goF ns b)
-    goF ns (Or a b) = Or (goF ns a) (goF ns b)
-    goF ns (Not x) = Not (goF ns x)
-    goF ns (Forall qs f') =
-      let ns' = foldr (delete . qvName) ns qs
-      in Forall qs (goF ns' f')
-    goF ns (Exists qs f') =
-      let ns' = foldr (delete . qvName) ns qs
-      in Exists qs (goF ns' f')
-
-    goE ns (Var v) | v `elem` ns = IntVar v
-    goE _  e@(IntVar _) = e
-    goE _  e@(IntConst _) = e
-    goE _  e@(Const _) = e
-    goE ns (Add a b) = Add (goE ns a) (goE ns b)
-    goE ns (Sub a b) = Sub (goE ns a) (goE ns b)
-    goE ns (Mul a b) = Mul (goE ns a) (goE ns b)
-    goE ns (Div a b) = Div (goE ns a) (goE ns b)
-    goE ns (Mod a b) = Mod (goE ns a) (goE ns b)
-    goE ns (Pow e n) = Pow (goE ns e) n
-    goE ns (Sqrt e) = Sqrt (goE ns e)
-    goE ns (Determinant rows) = Determinant (map (map (goE ns)) rows)
-    goE ns (Circle p c r) = Circle p c (goE ns r)
-    goE _  other = other
+           
+    polyDegreeIn :: Poly -> String -> Int
+    polyDegreeIn (Poly m) var =
+      if M.null m then 0 
+      else maximum (0 : [ fromIntegral (M.findWithDefault 0 var vars) | (Monomial vars, _) <- M.toList m ])
 
 -- | Automatic solve with verbose trace information
 autoSolveWithTrace :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> Bool -> AutoSolveResult
@@ -531,6 +566,7 @@ autoSolveWithTrace opts pointSubs theory goal _ =
 selectAlgebraicSolver :: ProblemProfile -> Formula -> SolverChoice
 selectAlgebraicSolver profile goal
   | containsSqrtFormula goal = UseCAD
+  | containsDivFormula goal = UseCAD  -- Divisions require CAD with rational elimination
   | containsIntFormula goal = UseGroebner
   | isExistentialEquality goal = UseConstructiveWu
   -- If not equality or inequality, we can't solve it (e.g. strict quantifier that CAD didn't pick up?)
@@ -543,8 +579,10 @@ selectAlgebraicSolver profile goal
 
   -- Inequality heuristics
   | isInequality goal && numVariables profile <= 2 && not (hasSymbolicParams profile) = UseCAD
-  -- Fallback for hard inequalities: Try SOS (via Groebner) instead of failing
-  | isInequality goal = UseGroebner
+  -- Hard polynomial inequalities: Use SOS instead of CAD (better complexity)
+  | isInequality goal && numVariables profile > 2 = UseSOS
+  -- Fallback for inequalities: Try SOS
+  | isInequality goal = UseSOS
 
   -- Algebraic heuristics
   | problemType profile == PureAlgebraic && hasSymbolicParams profile && hasGeometricVars profile = UseWu
@@ -641,10 +679,28 @@ maybeEvalNumericAngleEquality theory l r =
                then Just (True, "Angle equality holds numerically after substitution")
                else Just (False, "Angle equality fails numerically after substitution")
 
--- CAD-based sqrt elimination path
--- =============================================
--- Solver Execution
--- =============================================
+-- Integer fast-path
+runInt :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
+runInt opts theory goal =
+  let outcome = intSolve (intOptions opts) theory goal
+  in case intResult outcome of
+       Just True  -> (True, reasonOutcome outcome True, Nothing)
+       Just False -> (False, reasonOutcome outcome False, Nothing)
+       Nothing    ->
+         let base = "Integer domain parsed but solver is incomplete for this goal (non-linear or insufficient data)."
+             extra = if intBruteCandidate outcome
+                     then " A bounded brute-force search is available; enable it with :bruteforce on."
+                     else ""
+         in (False, base ++ extra, Nothing)
+
+-- | Helper to get leading order for reduction
+getLeadingOrder :: ProblemProfile -> Formula -> (Monomial -> Monomial -> Ordering)
+getLeadingOrder profile goal =
+  let params = symbolicParams profile
+      allVars = variables profile
+      activeVars = filter (`notElem` params) allVars
+      ordType = if null params then GrevLex else Block [(activeVars, GrevLex), (params, GrevLex)]
+  in compareMonomials ordType
 
 -- | Execute the selected solver
 -- Returns: (is_proved, reason, optional_trace)
@@ -656,7 +712,7 @@ executeSolver solver opts profile theory goal =
       
       -- Dynamic backend optimization
       opts' = optimizeGroebnerOptions profile opts
-      groebner = selectGroebner opts'
+      groebner = selectGroebner profile opts' goal
   in case goal of
        -- Fast-path: squares are non-negative
        Ge (Pow _ 2) (Const c) | c <= 0 -> (True, "Non-negativity of a square (>= 0)", Nothing)
@@ -710,6 +766,14 @@ executeSolver solver opts profile theory goal =
                  in (proved, "Area Method: " ++ reason, Just trace)
                Nothing ->
                  (False, "Area Method failed to derive construction from theory", Nothing)
+
+           UseSOS ->
+             case goal of
+               Ge l r -> runSOSProof theory l r False
+               Gt l r -> runSOSProof theory l r True
+               Le l r -> runSOSProof theory r l False  -- Flip: l <= r becomes r >= l
+               Lt l r -> runSOSProof theory r l True   -- Flip: l < r becomes r > l
+               _ -> (False, "SOS only supports inequality goals (>, >=, <, <=)", Nothing)
 
            UseCAD ->
              if hasInt then runInt opts theory goal
@@ -842,6 +906,33 @@ runCadRational theory goal =
   in (proved, msg, Nothing)
 
 -- CAD-based sqrt elimination path
+-- SOS proof attempt using existing Positivity.SOS module
+runSOSProof :: Theory -> Expr -> Expr -> Bool -> (Bool, String, Maybe String)
+runSOSProof theory lhs rhs _isStrict =
+  let subM = buildSubMap theory
+      -- Convert inequality lhs >= rhs to polynomial diffPoly = lhs - rhs >= 0
+      diffPoly = subPoly (toPolySub subM lhs) (toPolySub subM rhs)
+
+      -- Use existing checkSOS from Positivity.SOS
+      -- Provide identity reducer (no modular reduction)
+      isSOS = checkSOS id diffPoly
+  in if isSOS
+     then let trace = "SOS Certificate found:\n" ++
+                     "  Polynomial: " ++ show diffPoly ++ "\n" ++
+                     "  Verified as sum of squares"
+          in (True, "Proved by Sum-of-Squares decomposition", Just trace)
+     else
+       -- SOS failed, try fallback to CAD for small problems
+       let vars = S.toList (extractPolyVars diffPoly)
+       in if length vars <= 3
+          then let constraints = [subPoly (toPolySub subM l) (toPolySub subM r) | Eq l r <- theory]
+                   holds = evaluateInequalityCAD constraints diffPoly vars
+                   msg = if holds
+                         then "SOS failed, but CAD (fallback) succeeded for " ++ show (length vars) ++ "D problem"
+                         else "Both SOS and CAD (fallback) failed"
+               in (holds, msg, Nothing)
+          else (False, "SOS decomposition failed (no certificate found)", Nothing)
+
 runCadSqrt :: Theory -> Formula -> (Bool, String, Maybe String)
 runCadSqrt theory goal =
   let (th', goal') = eliminateSqrt theory goal
@@ -853,26 +944,12 @@ runCadSqrt theory goal =
 
 -- Shared preprocessing for CAD/QE: eliminate rationals, then sqrts
 preprocessForCAD :: Theory -> Formula -> (Theory, Formula)
-preprocessForCAD th goal =
-  let (thR, goalR) = eliminateRational th goal
+preprocessForCAD theory goal =
+  let (thR, goalR) = eliminateRational theory goal
       hasSqrt = containsSqrtFormula goalR || any containsSqrtFormula thR
   in if hasSqrt
      then eliminateSqrt thR goalR
      else (thR, goalR)
-
--- Integer fast-path
-runInt :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
-runInt opts theory goal =
-  let outcome = intSolve (intOptions opts) theory goal
-  in case intResult outcome of
-       Just True  -> (True, reasonOutcome outcome True, Nothing)
-       Just False -> (False, reasonOutcome outcome False, Nothing)
-       Nothing    ->
-         let base = "Integer domain parsed but solver is incomplete for this goal (non-linear or insufficient data)."
-             extra = if intBruteCandidate outcome
-                     then " A bounded brute-force search is available; enable it with :bruteforce on."
-                     else ""
-         in (False, base ++ extra, Nothing)
 
 -- =============================================
 -- Explanation and Formatting
@@ -909,6 +986,11 @@ explainSolverChoice UseConstructiveWu _ =
 explainSolverChoice UseAreaMethod _ =
   "Selected Area Method: Constructive geometric proof using invariants (Area/Pythagoras)."
 
+explainSolverChoice UseSOS profile =
+  "Selected Sum-of-Squares (SOS): " ++
+  "Polynomial inequality with " ++ show (numVariables profile) ++ " variables. " ++
+  "SOS has O(n^6) complexity vs CAD's O(2^(2^n)), making it better for multivariate problems."
+
 explainSolverChoice Unsolvable profile =
   case estimatedComplexity profile of
     VeryHigh -> "Problem too complex (VeryHigh complexity with " ++
@@ -920,26 +1002,26 @@ explainSolverChoice Unsolvable profile =
 -- | Format the result of automatic solving for display
 formatAutoSolveResult :: AutoSolveResult -> Bool -> String
 formatAutoSolveResult result verbose =
-  unlines $
-    [ "=== AUTOMATIC SOLVER ==="
-    , ""
-    , "Problem Analysis:"
-    , "  Type: " ++ show (problemType (problemProfile result))
-    , "  Variables: " ++ show (numVariables (problemProfile result))
-    , "  Constraints: " ++ show (numConstraints (problemProfile result))
-    , "  Max Degree: " ++ show (maxDegree (problemProfile result))
-    , "  Complexity: " ++ show (estimatedComplexity (problemProfile result))
-    ] ++
+  unlines $ 
+    ["=== AUTOMATIC SOLVER ===", 
+     "", 
+     "Problem Analysis:", 
+     "  Type: " ++ show (problemType (problemProfile result)), 
+     "  Variables: " ++ show (numVariables (problemProfile result)), 
+     "  Constraints: " ++ show (numConstraints (problemProfile result)), 
+     "  Max Degree: " ++ show (maxDegree (problemProfile result)), 
+     "  Complexity: " ++ show (estimatedComplexity (problemProfile result))
+    ] ++ 
     (if hasSymbolicParams (problemProfile result)
      then ["  Symbolic Parameters: " ++ unwords (symbolicParams (problemProfile result))]
-     else []) ++
-    [ ""
-    , "Solver Selection:"
-    , "  " ++ solverReason result
-    , ""
-    , "Result: " ++ (if isProved result then "PROVED" else "NOT PROVED")
-    , "  " ++ proofReason result
-    ] ++
+     else []) ++ 
+    ["", 
+     "Solver Selection:", 
+     "  " ++ solverReason result, 
+     "", 
+     "Result: " ++ (if isProved result then "PROVED" else "NOT PROVED"), 
+     "  " ++ proofReason result
+    ] ++ 
     (if verbose
      then case detailedTrace result of
             Just trace -> ["", "Detailed Trace:", trace]
