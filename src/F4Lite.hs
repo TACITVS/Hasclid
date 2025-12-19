@@ -32,7 +32,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List (sortBy, foldl')
 import Data.Maybe (mapMaybe)
-import Data.Ratio (numerator, denominator)
+import Data.Ratio (numerator, denominator, (%))
 import Modular (toMod, addM, subM, mulM, invM, ModVal, prime)
 import TermOrder (compareMonomials, TermOrder(..))
 
@@ -207,6 +207,7 @@ modGaussPrime p cols rows = go cols rows []
 crtRows :: S.Set Col -> [Integer] -> [M.Map Col Integer] -> [[M.Map Col Integer]] -> [Row]
 crtRows cols primes _ allReductions =
   let colList = sortBy (\a b -> compare b a) (S.toList cols)
+      bigMod = product primes
       pivotKey row = case [ idx | (idx, c) <- zip [0..] colList, M.findWithDefault 0 c row /= 0 ] of
                        (k:_) -> k
                        []    -> maxBound :: Int
@@ -220,24 +221,45 @@ crtRows cols primes _ allReductions =
             coeff c =
               let residues = residuesForCol c
                   allZero  = all (== 0) residues
-                  bigMod   = product primes
                   centered m v = if v > m `div` 2 then v - m else v
               in if allZero then 0 else centered bigMod (crt residues primes)
         in M.fromList [ (c, coeff c) | c <- colList, let v = coeff c, v /= 0 ]
-  in map normalizeIntegerRow rowsCombined
+  in map (normalizeIntegerRow bigMod) rowsCombined
 
--- Reduce a row of integer residues by their GCD and cast to Rational.
--- This helps keep coefficients small after CRT reconstruction.
-normalizeIntegerRow :: M.Map Col Integer -> Row
-normalizeIntegerRow m
+-- Reduce a row of integer residues by Rational Reconstruction.
+-- This recovers the true rational coefficients from the CRT image.
+normalizeIntegerRow :: Integer -> M.Map Col Integer -> Row
+normalizeIntegerRow modulus m
   | M.null m = M.empty
-  | allZero  = M.empty
   | otherwise =
-      let g = foldl' gcd 0 (map abs coeffs)
-      in M.map (\v -> fromIntegral v / fromIntegral g) m
-  where
-    coeffs = M.elems m
-    allZero = all (==0) coeffs
+      let reconstructed = M.map (rationalReconstruction modulus) m
+      in if any (== Nothing) (M.elems reconstructed)
+         then M.empty -- Reconstruction failed for some coeff -> discard row
+         else M.map (\(Just r) -> r) reconstructed
+
+-- Rational Reconstruction: find n/d = a (mod m)
+-- using Extended Euclidean Algorithm.
+-- Bounds: |n|, |d| < sqrt(m/2)
+rationalReconstruction :: Integer -> Integer -> Maybe Rational
+rationalReconstruction m a =
+  let
+    limit = floor (sqrt (fromIntegral m / 2 :: Double))
+    
+    go r0 r1 t0 t1
+      | r1 <= limit = Just (fromIntegral r1 % fromIntegral t1)
+      | otherwise =
+          let q = r0 `div` r1
+              r2 = r0 - q * r1
+              t2 = t0 - q * t1
+          in go r1 r2 t1 t2
+  in
+    -- Normalize a to [0, m-1]
+    let a' = a `mod` m
+    in case go m a' 0 1 of
+         Just r -> if abs (denominator r) <= limit 
+                   then Just r 
+                   else Nothing
+         Nothing -> Nothing
 
 -- Chinese remainder for a list of (residue) with corresponding primes (assumed coprime).
 crt :: [Integer] -> [Integer] -> Integer
@@ -332,7 +354,8 @@ f4BatchReduce :: (Monomial -> Monomial -> Ordering) -> [Poly] -> [Poly] -> [Poly
 f4BatchReduce ord reducers sPolys =
   let (colsSet, rows) = buildMacaulayMatrix ord reducers sPolys
       cols = sortBy (\a b -> ord b a) (S.toList colsSet)
-      rowsReduced = rowEchelonReduce ord cols rows
+      -- USE MODULAR REDUCTION + RECONSTRUCTION instead of Exact Rational RREF
+      rowsReduced = modularRowReduceMulti colsSet rows
       polys = rowsToPolys cols rowsReduced
       
       -- Filter out polys whose LT is divisible by any reducer's LT

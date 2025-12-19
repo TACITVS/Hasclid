@@ -98,13 +98,14 @@ monomialDegree :: Monomial -> Natural
 monomialDegree (Monomial m) = M.foldl (+) 0 m
 
 -- | Check if a polynomial is safe to add to basis (prevent memory explosion)
+-- Set large limits for "Commercial Quality" performance
 isSafePoly :: Poly -> Bool
 isSafePoly (Poly m)
   | M.null m = True
   | otherwise =
       let numTerms = M.size m
           maxDeg = maximum (0 : map (monomialDegree . fst) (M.toList m))
-      in numTerms < 1000 && maxDeg < 12
+      in numTerms < 10000 && maxDeg < 30
 
 -- Select next pair based on strategy
 selectPair :: SelectionStrategy -> [CriticalPair] -> Maybe (CriticalPair, [CriticalPair])
