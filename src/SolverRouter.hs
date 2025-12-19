@@ -46,7 +46,7 @@ import Preprocessing (preprocess, PreprocessingResult(..))
 import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..))
 import Wu (wuProve, wuProveWithTrace, formatWuTrace, proveExistentialWu, reduceWithWu)
-import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive, intBoundsFromQ)
+import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive, intBoundsFromQ, promoteIntVars)
 import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
 import CADLift (proveFormulaCAD)
 import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..), Confidence(..))
@@ -125,9 +125,19 @@ optimizeGroebnerOptions profile opts =
      else opts
 
 -- | Pick the Gröbner routine based on solver options
-selectGroebner :: SolverOptions -> ([Poly] -> [Poly])
-selectGroebner opts =
-  let ord = compareMonomials GrevLex  -- Use GrevLex for best performance
+selectGroebner :: ProblemProfile -> SolverOptions -> Formula -> ([Poly] -> [Poly])
+selectGroebner profile opts goal =
+  let 
+      -- Use Block ordering if parameters are present
+      params = symbolicParams profile
+      allVars = variables profile
+      activeVars = filter (`notElem` params) allVars
+      
+      ordType = if null params 
+                then GrevLex 
+                else Block [(activeVars, GrevLex), (params, GrevLex)]
+      
+      ord = compareMonomials ordType
   in case groebnerBackend opts of
        F4Backend ->
          f4LiteGroebner ord (selectionStrategyOpt opts) (f4UseBatch opts)
@@ -181,7 +191,7 @@ autoSolve opts pointSubs theory goal =
 
     -- Analyze the PREPROCESSED problem structure
     profile = analyzeProblem theory' goal'
-    groebner = selectGroebner opts
+    groebner = selectGroebner profile opts goal'
   in
     case goal' of
       Exists qs inner
@@ -211,7 +221,7 @@ autoSolve opts pointSubs theory goal =
             let intNames = map qvName qs
                 theoryInt = map (promoteIntVars intNames) theory'
                 goalInt = promoteIntVars intNames goal'
-                (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theoryInt goalInt
+                (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goalInt) Nothing theoryInt goalInt
             in AutoSolveResult
                  { selectedSolver = UseGroebner
                  , solverReason = "Integer universal handled by integer solver (negation refutation)"
@@ -223,7 +233,7 @@ autoSolve opts pointSubs theory goal =
       Exists qs _
         | all (\q -> qvType q == QuantReal) qs
         , not (any containsQuantifier theory') ->
-            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory' goal'
+            let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
             in AutoSolveResult
                  { selectedSolver = UseCAD
                  , solverReason = "Real existential handled by CAD satisfiability"
@@ -236,7 +246,7 @@ autoSolve opts pointSubs theory goal =
         | all (\q -> qvType q == QuantReal) qs
         , all (\q -> isJust (qvLower q) && isJust (qvUpper q)) qs
         , not (any containsQuantifier theory') ->
-            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory' goal'
+            let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
             in AutoSolveResult
                  { selectedSolver = UseGroebner
                  , solverReason = "Bounded real universal handled by linear interval check"
@@ -249,7 +259,7 @@ autoSolve opts pointSubs theory goal =
       Forall qs _
         | all (\q -> qvType q == QuantReal) qs
         , not (any containsQuantifier theory') ->
-            let (proved, reason, _, _) = proveTheoryWithOptions groebner Nothing theory' goal'
+            let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
             in AutoSolveResult
                  { selectedSolver = UseCAD
                  , solverReason = "Real universal handled by CAD refutation"
@@ -380,7 +390,7 @@ autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory 
 
 -- | Attempt to prove inequality using WLOG + F4 + SOS
 proveInequalitySOS :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
-proveInequalitySOS _opts theoryRaw goalRaw =
+proveInequalitySOS opts theoryRaw goalRaw =
   let 
       -- 0. Preprocessing (Rational + Sqrt elimination)
       (thPrep, goalPrep) = eliminateRational theoryRaw goalRaw
@@ -425,13 +435,16 @@ proveInequalitySOS _opts theoryRaw goalRaw =
                           Gt l r -> Sub l r
                           _ -> Const 0 -- Should not happen
       
+      -- Analyze the final goal
+      profileFinal = analyzeProblem thPoly goalSquared
+      
   in
   case goalSquared of
-    Ge _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly
-    Gt _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly
+    Ge _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly profileFinal
+    Gt _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly profileFinal
     _ -> (False, "Not an inequality after preprocessing", Nothing)
   where
-    trySOS theory goalFull targetExpr goalOriginal =
+    trySOS theory goalFull targetExpr goalOriginal profileFinal =
       let
           -- 1. Apply WLOG
           (thWLOG, wlogLog) = applyWLOG theory goalFull
@@ -459,20 +472,20 @@ proveInequalitySOS _opts theoryRaw goalRaw =
           
           -- 4. Check SOS / Boundary SOS
           -- Compute Basis ONCE
-          basis = f4LiteGroebner (compareMonomials GrevLex) SugarStrategy True eqConstraints
-          reducer p = F4Lite.reduceWithBasis (compareMonomials GrevLex) basis p
+          basis = selectGroebner profileFinal opts goalFull eqConstraints
+          reducer p = F4Lite.reduceWithBasis (getLeadingOrder profileFinal goalFull) basis p
           
           -- Numerical SOS Guidance
           -- 1. Extract parameters values
           paramMap = buildParamMap thWLOG
           
           -- 2. Try Numerical Cholesky
-          numericalSquares = 
+          numericalSquares =
             if M.null paramMap && not (null (symbolicParams (analyzeProblem theory goalFull))) then Nothing -- Failed to resolve params
             else checkSOSNumeric paramMap targetPoly
             
           -- 3. If numerical success, reconstruct and verify
-          verifiedNumerical = 
+          verifiedNumerical =
             case numericalSquares of
               Just sqs ->
                 let 
@@ -502,7 +515,7 @@ proveInequalitySOS _opts theoryRaw goalRaw =
 
     -- | Build parameter map from theory (e.g. s^2 = 3 -> s = 1.732)
     buildParamMap :: Theory -> M.Map String Double
-    buildParamMap theory = 
+    buildParamMap theory =
       let eqs = [ (v, c) | Eq (Pow (Var v) 2) (Const c) <- theory, c > 0 ]
       in M.fromList [ (v, sqrt (fromRational c)) | (v, c) <- eqs ]
 
@@ -535,42 +548,9 @@ proveInequalitySOS _opts theoryRaw goalRaw =
            _ -> False
            
     polyDegreeIn :: Poly -> String -> Int
-    polyDegreeIn (Poly m) var = 
+    polyDegreeIn (Poly m) var =
       if M.null m then 0 
       else maximum (0 : [ fromIntegral (M.findWithDefault 0 var vars) | (Monomial vars, _) <- M.toList m ])
-promoteIntVars :: [String] -> Formula -> Formula
-promoteIntVars names f = goF names f
-  where
-    goF ns (Eq l r) = Eq (goE ns l) (goE ns r)
-    goF ns (Ge l r) = Ge (goE ns l) (goE ns r)
-    goF ns (Gt l r) = Gt (goE ns l) (goE ns r)
-    goF ns (Le l r) = Le (goE ns l) (goE ns r)
-    goF ns (Lt l r) = Lt (goE ns l) (goE ns r)
-    goF ns (Divides l r) = Divides (goE ns l) (goE ns r)
-    goF ns (And a b) = And (goF ns a) (goF ns b)
-    goF ns (Or a b) = Or (goF ns a) (goF ns b)
-    goF ns (Not x) = Not (goF ns x)
-    goF ns (Forall qs f') =
-      let ns' = foldr (delete . qvName) ns qs
-      in Forall qs (goF ns' f')
-    goF ns (Exists qs f') =
-      let ns' = foldr (delete . qvName) ns qs
-      in Exists qs (goF ns' f')
-
-    goE ns (Var v) | v `elem` ns = IntVar v
-    goE _  e@(IntVar _) = e
-    goE _  e@(IntConst _) = e
-    goE _  e@(Const _) = e
-    goE ns (Add a b) = Add (goE ns a) (goE ns b)
-    goE ns (Sub a b) = Sub (goE ns a) (goE ns b)
-    goE ns (Mul a b) = Mul (goE ns a) (goE ns b)
-    goE ns (Div a b) = Div (goE ns a) (goE ns b)
-    goE ns (Mod a b) = Mod (goE ns a) (goE ns b)
-    goE ns (Pow e n) = Pow (goE ns e) n
-    goE ns (Sqrt e) = Sqrt (goE ns e)
-    goE ns (Determinant rows) = Determinant (map (map (goE ns)) rows)
-    goE ns (Circle p c r) = Circle p c (goE ns r)
-    goE _  other = other
 
 -- | Automatic solve with verbose trace information
 autoSolveWithTrace :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> Bool -> AutoSolveResult
@@ -699,10 +679,28 @@ maybeEvalNumericAngleEquality theory l r =
                then Just (True, "Angle equality holds numerically after substitution")
                else Just (False, "Angle equality fails numerically after substitution")
 
--- CAD-based sqrt elimination path
--- =============================================
--- Solver Execution
--- =============================================
+-- Integer fast-path
+runInt :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
+runInt opts theory goal =
+  let outcome = intSolve (intOptions opts) theory goal
+  in case intResult outcome of
+       Just True  -> (True, reasonOutcome outcome True, Nothing)
+       Just False -> (False, reasonOutcome outcome False, Nothing)
+       Nothing    ->
+         let base = "Integer domain parsed but solver is incomplete for this goal (non-linear or insufficient data)."
+             extra = if intBruteCandidate outcome
+                     then " A bounded brute-force search is available; enable it with :bruteforce on."
+                     else ""
+         in (False, base ++ extra, Nothing)
+
+-- | Helper to get leading order for reduction
+getLeadingOrder :: ProblemProfile -> Formula -> (Monomial -> Monomial -> Ordering)
+getLeadingOrder profile goal =
+  let params = symbolicParams profile
+      allVars = variables profile
+      activeVars = filter (`notElem` params) allVars
+      ordType = if null params then GrevLex else Block [(activeVars, GrevLex), (params, GrevLex)]
+  in compareMonomials ordType
 
 -- | Execute the selected solver
 -- Returns: (is_proved, reason, optional_trace)
@@ -714,7 +712,7 @@ executeSolver solver opts profile theory goal =
       
       -- Dynamic backend optimization
       opts' = optimizeGroebnerOptions profile opts
-      groebner = selectGroebner opts'
+      groebner = selectGroebner profile opts' goal
   in case goal of
        -- Fast-path: squares are non-negative
        Ge (Pow _ 2) (Const c) | c <= 0 -> (True, "Non-negativity of a square (>= 0)", Nothing)
@@ -946,26 +944,12 @@ runCadSqrt theory goal =
 
 -- Shared preprocessing for CAD/QE: eliminate rationals, then sqrts
 preprocessForCAD :: Theory -> Formula -> (Theory, Formula)
-preprocessForCAD th goal =
-  let (thR, goalR) = eliminateRational th goal
+preprocessForCAD theory goal =
+  let (thR, goalR) = eliminateRational theory goal
       hasSqrt = containsSqrtFormula goalR || any containsSqrtFormula thR
   in if hasSqrt
      then eliminateSqrt thR goalR
      else (thR, goalR)
-
--- Integer fast-path
-runInt :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String)
-runInt opts theory goal =
-  let outcome = intSolve (intOptions opts) theory goal
-  in case intResult outcome of
-       Just True  -> (True, reasonOutcome outcome True, Nothing)
-       Just False -> (False, reasonOutcome outcome False, Nothing)
-       Nothing    ->
-         let base = "Integer domain parsed but solver is incomplete for this goal (non-linear or insufficient data)."
-             extra = if intBruteCandidate outcome
-                     then " A bounded brute-force search is available; enable it with :bruteforce on."
-                     else ""
-         in (False, base ++ extra, Nothing)
 
 -- =============================================
 -- Explanation and Formatting
@@ -1018,26 +1002,26 @@ explainSolverChoice Unsolvable profile =
 -- | Format the result of automatic solving for display
 formatAutoSolveResult :: AutoSolveResult -> Bool -> String
 formatAutoSolveResult result verbose =
-  unlines $
-    [ "=== AUTOMATIC SOLVER ==="
-    , ""
-    , "Problem Analysis:"
-    , "  Type: " ++ show (problemType (problemProfile result))
-    , "  Variables: " ++ show (numVariables (problemProfile result))
-    , "  Constraints: " ++ show (numConstraints (problemProfile result))
-    , "  Max Degree: " ++ show (maxDegree (problemProfile result))
-    , "  Complexity: " ++ show (estimatedComplexity (problemProfile result))
-    ] ++
+  unlines $ 
+    ["=== AUTOMATIC SOLVER ===", 
+     "", 
+     "Problem Analysis:", 
+     "  Type: " ++ show (problemType (problemProfile result)), 
+     "  Variables: " ++ show (numVariables (problemProfile result)), 
+     "  Constraints: " ++ show (numConstraints (problemProfile result)), 
+     "  Max Degree: " ++ show (maxDegree (problemProfile result)), 
+     "  Complexity: " ++ show (estimatedComplexity (problemProfile result))
+    ] ++ 
     (if hasSymbolicParams (problemProfile result)
      then ["  Symbolic Parameters: " ++ unwords (symbolicParams (problemProfile result))]
-     else []) ++
-    [ ""
-    , "Solver Selection:"
-    , "  " ++ solverReason result
-    , ""
-    , "Result: " ++ (if isProved result then "PROVED" else "NOT PROVED")
-    , "  " ++ proofReason result
-    ] ++
+     else []) ++ 
+    ["", 
+     "Solver Selection:", 
+     "  " ++ solverReason result, 
+     "", 
+     "Result: " ++ (if isProved result then "PROVED" else "NOT PROVED"), 
+     "  " ++ proofReason result
+    ] ++ 
     (if verbose
      then case detailedTrace result of
             Just trace -> ["", "Detailed Trace:", trace]

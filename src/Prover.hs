@@ -25,6 +25,7 @@ module Prover
   , proveExistentialConstructive
   , proveByInduction
   , intBoundsFromQ
+  , promoteIntVars
   )
 where
 
@@ -169,32 +170,34 @@ substFormula sub (Exists qs f) =
   let blocked = foldr M.delete sub (map qvName qs)
   in Exists qs (substFormula blocked f)
 
--- Detect a single-variable linear equality and solve for that variable.
--- Returns (variable, value) where value is a constant expression.
+-- Detect a linear equality and solve for the lexicographically largest variable.
+-- This allows eliminating one variable even from multivariate linear equations
+-- (e.g., alpha + beta + gamma = 1 -> gamma = 1 - alpha - beta).
 solveLinearSingleVar :: Expr -> Expr -> Maybe (String, Expr)
 solveLinearSingleVar l r =
-  case linearSingleVar (toPolySub M.empty (Sub l r)) of
-    Just (v, a, c) | a /= 0 -> Just (v, Const ((-c) / a))
+  case linearCoeffs (toPolySub M.empty (Sub l r)) of
+    Just (coeffs, c) | not (M.null coeffs) ->
+      -- Pick the "largest" variable to solve for (best for elimination)
+      let (v, a) = M.findMax coeffs
+          -- a*v + sum(a_i * v_i) + c = 0  => v = (-c - sum(a_i * v_i)) / a
+          otherTerms = M.delete v coeffs
+          numerator = foldl' (\acc (v', ai) -> Sub acc (Mul (Const ai) (Var v'))) (Const (-c)) (M.toList otherTerms)
+          val = simplifyExpr (Div numerator (Const a))
+      in Just (v, val)
     _ -> Nothing
   where
-    linearSingleVar :: Poly -> Maybe (String, Rational, Rational)
-    linearSingleVar (Poly mp) =
-      case foldl step (Just (Nothing, 0, 0)) (M.toList mp) of
-        Just (Just v, aSum, cSum) -> Just (v, aSum, cSum)
-        _ -> Nothing
+    linearCoeffs :: Poly -> Maybe (M.Map String Rational, Rational)
+    linearCoeffs (Poly mp) =
+      foldl' step (Just (M.empty, 0)) (M.toList mp)
       where
         step Nothing _ = Nothing
-        step (Just (mv, a, c)) (Monomial mon, coeff) =
+        step (Just (vs, c)) (Monomial mon, coeff) =
           case M.toList mon of
-            [] -> Just (mv, a, c + coeff)
-            [(v,1)] ->
-              case mv of
-                Nothing   -> Just (Just v, a + coeff, c)
-                Just vOld ->
-                  if vOld == v
-                    then Just (mv, a + coeff, c)
-                    else Nothing
-            _ -> Nothing
+            [] -> Just (vs, c + coeff)
+            [(v,1)] -> Just (M.insertWith (+) v coeff vs, c)
+            _ -> Nothing -- Non-linear term found
+
+    foldl' = L.foldl'
 
 -- Iteratively eliminates simple linear equalities to constants,
 -- applying substitutions to both theory and goal.

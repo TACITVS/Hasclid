@@ -10,6 +10,7 @@ module TermOrder
   ) where
 
 import qualified Data.Map.Strict as M
+import qualified Data.List as L
 import Numeric.Natural
 import Data.List (sortBy)
 import GHC.Generics (Generic)
@@ -19,11 +20,11 @@ import Expr (Monomial(..))
 -- Term Ordering Types
 -- =============================================
 
--- | Term ordering strategies for Gröbner basis computation
 data TermOrder
   = Lex      -- ^ Pure lexicographic ordering
   | GrLex    -- ^ Graded lexicographic (total degree, then lex)
   | GrevLex  -- ^ Graded reverse lexicographic (most common in practice)
+  | Block [([String], TermOrder)] -- ^ Block ordering (weighted blocks)
   deriving (Eq, Show, Read, Generic)
 
 -- | Default term ordering (GrevLex is generally most efficient)
@@ -40,6 +41,26 @@ compareMonomialsWithOrder :: TermOrder -> M.Map String Natural -> M.Map String N
 compareMonomialsWithOrder Lex     = compareLex
 compareMonomialsWithOrder GrLex   = compareGrLex
 compareMonomialsWithOrder GrevLex = compareGrevLex
+compareMonomialsWithOrder (Block blocks) = compareBlock blocks
+
+-- | Block Ordering implementation
+compareBlock :: [([String], TermOrder)] -> M.Map String Natural -> M.Map String Natural -> Ordering
+compareBlock blocks m1 m2 =
+  let (res, seen) = L.foldl' processBlock (EQ, []) blocks
+  in if res /= EQ then res
+     else 
+       -- Final block: variables not mentioned in any block, using GrevLex
+       let restVars = filter (`notElem` seen) (L.nub (M.keys m1 ++ M.keys m2))
+           m1' = M.filterWithKey (\k _ -> k `elem` restVars) m1
+           m2' = M.filterWithKey (\k _ -> k `elem` restVars) m2
+       in compareGrevLex m1' m2'
+  where
+    processBlock (EQ, seen) (vars, ord) =
+      let m1' = M.filterWithKey (\k _ -> k `elem` vars) m1
+          m2' = M.filterWithKey (\k _ -> k `elem` vars) m2
+          r = compareMonomialsWithOrder ord m1' m2'
+      in (r, seen ++ vars)
+    processBlock (res, seen) _ = (res, seen)
 
 -- | Compare two Monomial values using the specified term ordering
 -- This is a wrapper around compareMonomialsWithOrder for the Monomial newtype
