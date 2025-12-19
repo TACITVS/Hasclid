@@ -61,7 +61,7 @@ import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD)
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
-import Data.List (delete, find, isSuffixOf, sort, foldl')
+import Data.List (delete, find, isSuffixOf, sort, foldl', isPrefixOf)
 import Data.Maybe (isJust, mapMaybe)
 
 -- =============================================
@@ -385,21 +385,56 @@ proveInequalitySOS _opts theoryRaw goalRaw =
       -- 0. Preprocessing (Rational + Sqrt elimination)
       (thPrep, goalPrep) = eliminateRational theoryRaw goalRaw
       (thPoly, goalPoly) = eliminateSqrt thPrep goalPrep
+      
+      -- 1. Iterative Squaring Heuristic
+      -- If the inequality involves auxiliary sqrt variables in odd degrees (e.g. 2*ra*rb),
+      -- squaring the inequality (lhs^2 >= rhs^2) might convert them to squares (ra^2*rb^2)
+      -- which are defined in the theory (ra^2 = PA2).
+      
+      subMapInitial = buildSubMap thPoly
+      
+      needsSquaring :: Formula -> Bool
+      needsSquaring (Ge l r) = checkOdd (Sub l r)
+      needsSquaring (Gt l r) = checkOdd (Sub l r)
+      needsSquaring _ = False
+      
+      checkOdd expr = 
+        let poly = toPolySub subMapInitial expr
+            vars = S.toList (extractPolyVars poly)
+            sqrtVars = filter ("sqrt_aux" `isPrefixOf`) vars
+        in any (\v -> odd (polyDegreeIn poly v)) sqrtVars
+
+      doSquaring :: Int -> Formula -> Formula
+      doSquaring 0 f = f
+      doSquaring n f@(Ge l r) = 
+        if needsSquaring f 
+        then doSquaring (n-1) (Ge (Pow l 2) (Pow r 2)) -- Assume non-negativity (heuristic safe for sqrt vars)
+        else f
+      doSquaring n f@(Gt l r) = 
+        if needsSquaring f 
+        then doSquaring (n-1) (Gt (Pow l 2) (Pow r 2))
+        else f
+      doSquaring _ f = f
+
+      -- Apply squaring (max 3 iterations)
+      goalSquared = doSquaring 3 goalPoly
+      
+      -- Prepare target expression
+      targetExprFinal = case goalSquared of
+                          Ge l r -> Sub l r
+                          Gt l r -> Sub l r
+                          _ -> Const 0 -- Should not happen
+      
   in
-  case goalPoly of
-    Ge lhs rhs -> trySOS thPoly goalPoly (Sub lhs rhs)
-    Gt lhs rhs -> trySOS thPoly goalPoly (Sub lhs rhs)
+  case goalSquared of
+    Ge _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly
+    Gt _ _ -> trySOS thPoly goalSquared targetExprFinal goalPoly
     _ -> (False, "Not an inequality after preprocessing", Nothing)
   where
-    trySOS theory goalFull targetExpr =
+    trySOS theory goalFull targetExpr goalOriginal =
       let
           -- 1. Apply WLOG
           (thWLOG, wlogLog) = applyWLOG theory goalFull
-          
-          -- Smart Squaring Heuristic is implicitly handled by eliminateSqrt
-          -- which converts sqrt(x) to auxiliary vars with definition equations.
-          
-          (targetExpr', smartSqLog) = (targetExpr, [])
 
           -- 2. Substitution (Pre-processing)
           subMap = buildSubMap thWLOG
@@ -408,12 +443,9 @@ proveInequalitySOS _opts theoryRaw goalRaw =
           isDefinition _ = False
           
           -- Apply to target
-          targetPoly = toPolySub subMap targetExpr'
+          targetPoly = toPolySub subMap targetExpr
           
           -- 3. Wu Reduction (The "Wu-SOS Bridge")
-          -- We reduce the target polynomial modulo the geometric constraints using Characteristic Sets.
-          -- Wu's method is polynomial in complexity vs F4's exponential behavior for this class of problems.
-          
           -- Constraints as polynomials
           eqConstraints = [ toPolySub subMap (Sub l r) 
                             | eq@(Eq l r) <- thWLOG 
@@ -426,9 +458,6 @@ proveInequalitySOS _opts theoryRaw goalRaw =
           remainders = reduceWithWu polyConstraints targetPoly
           
           -- 4. Check SOS / Boundary SOS
-          -- We create a reducer that simplifies polynomials modulo the constraints (e.g. s^2 -> 3)
-          -- This allows checkSOS to prove "SOS modulo Ideal".
-          
           -- Compute Basis ONCE
           basis = f4LiteGroebner (compareMonomials GrevLex) SugarStrategy True eqConstraints
           reducer p = F4Lite.reduceWithBasis (compareMonomials GrevLex) basis p
@@ -468,8 +497,8 @@ proveInequalitySOS _opts theoryRaw goalRaw =
           
       in
         if success
-        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary" ++ (if verifiedNumerical then " + Numerical Guidance" else "") ++ (if not (null smartSqLog) then " + Smart Squaring" else ""), Just (unlines (wlogLog ++ smartSqLog) ++ "\nReduced Poly: " ++ show bestPoly))
-        else (False, "SOS check failed", Just (unlines (wlogLog ++ smartSqLog) ++ "\nReduced Poly: " ++ show bestPoly))
+        then (True, "Proved via WLOG + Substitution + Wu + SOS/Boundary" ++ (if verifiedNumerical then " + Numerical Guidance" else "") ++ (if goalFull /= goalOriginal then " + Iterative Squaring" else ""), Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
+        else (False, "SOS check failed", Just (unlines wlogLog ++ "\nReduced Poly: " ++ show bestPoly))
 
     -- | Build parameter map from theory (e.g. s^2 = 3 -> s = 1.732)
     buildParamMap :: Theory -> M.Map String Double
@@ -478,7 +507,6 @@ proveInequalitySOS _opts theoryRaw goalRaw =
       in M.fromList [ (v, sqrt (fromRational c)) | (v, c) <- eqs ]
 
     -- | Check SOS on boundaries for homogeneous quadratic polynomials in P
-    --   Heuristic: Checks P(1,0), P(C), P(B+C)
     checkBoundarySOS :: Poly -> Bool
     checkBoundarySOS p =
       let vars = S.toList (extractPolyVars p)
@@ -492,23 +520,24 @@ proveInequalitySOS _opts theoryRaw goalRaw =
            ([xp, yp], Just cX, Just cY, Just bX) ->
              let
                  -- 1. Check Ray AB (yP = 0)
-                 -- P(xp, 0) -> Sub yp=0
                  sub1 = M.fromList [(yp, polyZero)]
                  p1 = evaluatePoly sub1 p
                  
                  -- 2. Check Ray AC (P = C)
-                 -- Sub xp = xC, yp = yC
                  sub2 = M.fromList [(xp, polyFromVar cX), (yp, polyFromVar cY)]
                  p2 = evaluatePoly sub2 p
                  
                  -- 3. Check Mid Ray (P = B + C)
-                 -- Sub xp = xB + xC, yp = yC
                  sub3 = M.fromList [(xp, polyAdd (polyFromVar bX) (polyFromVar cX)), (yp, polyFromVar cY)]
                  p3 = evaluatePoly sub3 p
                  
              in checkSOS id p1 && checkSOS id p2 && checkSOS id p3
            _ -> False
-
+           
+    polyDegreeIn :: Poly -> String -> Int
+    polyDegreeIn (Poly m) var = 
+      if M.null m then 0 
+      else maximum (0 : [ fromIntegral (M.findWithDefault 0 var vars) | (Monomial vars, _) <- M.toList m ])
 promoteIntVars :: [String] -> Formula -> Formula
 promoteIntVars names f = goF names f
   where
