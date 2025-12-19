@@ -34,7 +34,7 @@ freshVar :: ElimM String
 freshVar = do
   (_, memo) <- get
   let idx = Map.size memo + 1
-  return ("sqrt_aux" ++ show idx)
+  return ("zz_sqrt_aux" ++ show idx)
 
 -- Helper: Check if expression contains sqrt
 containsSqrt :: Expr -> Bool

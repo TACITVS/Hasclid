@@ -401,7 +401,7 @@ proveInequalitySOS _opts theoryRaw goalRaw =
       checkOdd expr = 
         let poly = toPolySub subMapInitial expr
             vars = S.toList (extractPolyVars poly)
-            sqrtVars = filter ("sqrt_aux" `isPrefixOf`) vars
+            sqrtVars = filter ("zz_sqrt_aux" `isPrefixOf`) vars
         in any (\v -> odd (polyDegreeIn poly v)) sqrtVars
 
       doSquaring :: Int -> Formula -> Formula
