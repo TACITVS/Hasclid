@@ -11,18 +11,23 @@
 ; ==========================================
 
 ; Generic Triangle
-:assume (= xA 0) :assume (= yA 0)
-:assume (= xB 1) :assume (= yB 0)
-:assume (= xC u) :assume (= yC v)
+:assume (= xA 0)
+:assume (= yA 0)
+:assume (= xB 1)
+:assume (= yB 0)
+:assume (= xC u)
+:assume (= yC v)
 :assume (> v 0)
 
 ; Interior point P (Barycentric)
-:assume (> a 0) :assume (> b 0) :assume (> g 0)
+:assume (> a 0)
+:assume (> b 0)
+:assume (> g 0)
 :assume (= (+ a (+ b g)) 1)
 
 ; P coordinates
-:assume (= x (+ (* a xA) (+ (* b xB) (* g xC))))
-:assume (= y (+ (* a yA) (+ (* b yB) (* g yC))))
+:assume (= x (+ (* a xA) (+ (* beta xB) (* gamma xC))))
+:assume (= y (+ (* alpha yA) (+ (* beta yB) (* gamma yC))))
 
 ; Radii squared
 :assume (= Ra2 (+ (^ (- x xA) 2) (^ (- y yA) 2)))
@@ -30,14 +35,14 @@
 :assume (= Rc2 (+ (^ (- x xC) 2) (^ (- y yC) 2)))
 
 ; Radii (v-prefix for ordering)
-:assume (= (^ vRa 2) Ra2) :assume (>= vRa 0)
-:assume (= (^ vRb 2) Rb2) :assume (>= vRb 0)
-:assume (= (^ vRc 2) Rc2) :assume (>= vRc 0)
+:assume (= (^ vRa 2) Ra2)
+:assume (>= vRa 0)
+:assume (= (^ vRb 2) Rb2)
+:assume (>= vRb 0)
+:assume (= (^ vRc 2) Rc2)
+:assume (>= vRc 0)
 
 ; Distances to sides
-; Area(ABC) = 0.5 * 1 * v = v/2
-; da = coord * height = a * v / side_a
-; side_a^2 = (u-1)^2 + v^2
 :assume (= sa2 (+ (^ (- u 1) 2) (^ v 2)))
 :assume (= sb2 (+ (^ u 2) (^ v 2)))
 :assume (= sc2 1)

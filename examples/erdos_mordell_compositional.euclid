@@ -1,0 +1,43 @@
+:set-timeout 180
+:optimize on
+:set-strategy normal
+
+; ==========================================================
+; Erdős-Mordell Inequality (Compositional Proof - Final)
+; ==========================================================
+
+; Setup Generic Triangle (a=1)
+:assume (> b 0)
+:assume (> c 0)
+:assume (> (+ b c) 1)
+:assume (> (+ 1 b) c)
+:assume (> (+ 1 c) b)
+:assume (> beta 0)
+:assume (> gamma 0)
+:assume (< (+ beta gamma) 1)
+:assume (= alpha (- 1 (+ beta gamma)))
+:assume (= S16 (* (+ 1 (+ b c)) (* (+ 1 (- b c)) (* (+ 1 (- c b)) (+ (+ b c) -1)))) )
+
+; Radii squared
+:assume (= Ra2 (+ (* (^ beta 2) (^ c 2)) (+ (* (^ gamma 2) (^ b 2)) (* (* beta gamma) (+ (+ (^ b 2) (^ c 2)) -1)))))
+:assume (= Rb2 (+ (* (^ alpha 2) (^ c 2)) (+ (^ gamma 2) (* (* alpha gamma) (+ (+ (^ c 2) 1) (* -1 (^ b 2)))))))
+:assume (= Rc2 (+ (* (^ alpha 2) (^ b 2)) (+ (^ beta 2) (* (* alpha beta) (+ (+ (^ b 2) 1) (* -1 (^ c 2)))))))
+
+; 1. PROVE LEMMA 1
+:auto (>= Ra2 (/ (* (^ (+ beta gamma) 2) S16) 4))
+:lemma (>= Ra2 (/ (* (^ (+ beta gamma) 2) S16) 4))
+
+; 2. PROVE LEMMA 2
+:auto (>= (* Rb2 (* 4 (^ b 2))) (* (^ (+ alpha gamma) 2) S16))
+:lemma (>= (* Rb2 (* 4 (^ b 2))) (* (^ (+ alpha gamma) 2) S16))
+
+; 3. PROVE LEMMA 3
+:auto (>= (* Rc2 (* 4 (^ c 2))) (* (^ (+ alpha beta) 2) S16))
+:lemma (>= (* Rc2 (* 4 (^ c 2))) (* (^ (+ alpha beta) 2) S16))
+
+; 4. FINAL THEOREM: Sum(Ra) >= 2 Sum(da)
+:assume (= da (/ (* alpha (sqrt S16)) 4))
+:assume (= db (/ (* beta (sqrt S16)) (* 4 b)))
+:assume (= dc (/ (* gamma (sqrt S16)) (* 4 c)))
+
+:auto (>= (+ (sqrt Ra2) (+ (sqrt Rb2) (sqrt Rc2))) (* 2 (+ (/ (* alpha (sqrt S16)) 4) (+ (/ (* beta (sqrt S16)) 4) (/ (* gamma (sqrt S16)) 4)))))
