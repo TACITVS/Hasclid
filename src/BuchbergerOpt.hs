@@ -8,12 +8,13 @@ module BuchbergerOpt
   , buchbergerWithStrategyT
   , reduce
   , sPoly
+  , interreduceBasis
   ) where
 
 import Expr
 import Timeout
 import qualified Data.Map.Strict as M
-import Data.List (nub, minimumBy)
+import Data.List (nub, minimumBy, delete, sortBy)
 import Data.Ord (comparing)
 import Numeric.Natural
 import Control.Monad.IO.Class (liftIO)
@@ -52,8 +53,6 @@ data CriticalPair = CriticalPair
 -- =============================================
 
 -- | Criterion 1: Coprime leading monomials
--- If gcd(LM(f), LM(g)) = 1, then S(f,g) reduces to 0 mod basis
--- Skip this pair!
 criterion1 :: MonomialOrder -> Poly -> Poly -> Bool
 criterion1 ord f g =
   case (getLeadingTermByOrder ord f, getLeadingTermByOrder ord g) of
@@ -62,13 +61,8 @@ criterion1 ord f g =
     _ -> False
 
 -- | Criterion 2: Chain Criterion (Buchberger's Product Criterion)
--- If LCM(LM(f), LM(g)) = LM(f) * LM(g) and there exists h such that:
---   - LM(h) divides LCM(LM(f), LM(g))
---   - S(f,h) and S(g,h) have been reduced to 0
--- Then S(f,g) will also reduce to 0
 criterion2 :: MonomialOrder -> CriticalPair -> [Poly] -> [CriticalPair] -> Bool
 criterion2 ord pair _ _ =
-  -- Simplified version: check if LCM equals product (strong sufficient condition)
   case pairPolys pair of
     (f, g) ->
       case (getLeadingTermByOrder ord f, getLeadingTermByOrder ord g) of
@@ -77,8 +71,6 @@ criterion2 ord pair _ _ =
               product = monomialMul ltF ltG
           in lcm == product
         _ -> False
-
-
 
 -- =============================================
 -- Critical Pair Creation and Selection
@@ -98,14 +90,14 @@ monomialDegree :: Monomial -> Natural
 monomialDegree (Monomial m) = M.foldl (+) 0 m
 
 -- | Check if a polynomial is safe to add to basis (prevent memory explosion)
--- Set large limits for "Commercial Quality" performance
+-- Set extremely large limits for "Commercial Quality" performance
 isSafePoly :: Poly -> Bool
 isSafePoly (Poly m)
   | M.null m = True
   | otherwise =
       let numTerms = M.size m
           maxDeg = maximum (0 : map (monomialDegree . fst) (M.toList m))
-      in numTerms < 10000 && maxDeg < 30
+      in numTerms < 50000 && maxDeg < 50
 
 -- Select next pair based on strategy
 selectPair :: SelectionStrategy -> [CriticalPair] -> Maybe (CriticalPair, [CriticalPair])
@@ -113,7 +105,7 @@ selectPair _ [] = Nothing
 selectPair strategy pairs =
   let selected = case strategy of
         NormalStrategy  -> minimumBy (comparing pairDegree) pairs
-        SugarStrategy   -> minimumBy (comparing pairDegree) pairs  -- Same for now
+        SugarStrategy   -> minimumBy (comparing pairDegree) pairs
         MinimalStrategy -> minimumBy (comparing pairDegree) pairs
       remaining = filter (/= selected) pairs
   in Just (selected, remaining)
@@ -123,6 +115,7 @@ selectPair strategy pairs =
 -- =============================================
 
 -- | Optimized Buchberger with selection strategy and criteria
+-- Returns a REDUCED Groebner Basis.
 buchbergerWithStrategy :: MonomialOrder -> SelectionStrategy -> [Poly] -> [Poly]
 buchbergerWithStrategy ord strategy polys =
   let initial = filter (/= polyZero) polys
@@ -131,7 +124,8 @@ buchbergerWithStrategy ord strategy polys =
           then error "Initial basis contains polynomials that are too large"
           else ()
       initialPairs = generatePairs ord initial
-  in go ord initial initialPairs []
+      rawBasis = go ord initial initialPairs []
+  in interreduceBasis ord rawBasis
   where
     go :: MonomialOrder -> [Poly] -> [CriticalPair] -> [CriticalPair] -> [Poly]
     go _ basis [] _ = basis  -- No more pairs, done!
@@ -170,13 +164,38 @@ buchbergerWithStrategy ord strategy polys =
                             newCriticalPairs = concatMap (\(a,b) -> maybe [] (:[]) (makeCriticalPair cmp a b)) newPairs
                         in go cmp newBasis (remaining ++ newCriticalPairs) (pair : processed)
 
-    generatePairs :: MonomialOrder -> [Poly] -> [CriticalPair]
-    generatePairs cmp bs =
-      concatMap (\(f, g) -> maybe [] (:[]) (makeCriticalPair cmp f g))
-                [(f, g) | f <- bs, g <- bs, f /= g]
+-- | Inter-reduce a Groebner basis to make it minimal and unique.
+-- 1. Minimal: No leading term divides another.
+-- 2. Reduced: Every polynomial is reduced modulo all others.
+interreduceBasis :: MonomialOrder -> [Poly] -> [Poly]
+interreduceBasis ord polys =
+  let minimal = makeMinimal ord (filter (/= polyZero) polys)
+  in map (\p -> reduce ord p (delete p minimal)) minimal
+
+-- | Step 1 of inter-reduction: remove polynomials whose LT is divisible by another's LT
+makeMinimal :: MonomialOrder -> [Poly] -> [Poly]
+makeMinimal ord polys =
+  let withLT = map (\p -> (fst (getLeadingTermByOrderUnsafe ord p), p)) polys
+      -- Sort by degree (ascending) so we keep smaller reducers
+      sorted = sortBy (comparing (monomialDegree . fst)) withLT
+      minimalWithLT = foldl (\acc (lt, p) ->
+        if any (\(ltAcc, _) -> monomialDiv lt ltAcc /= Nothing) acc
+        then acc -- divisible by a smaller LT, skip
+        else (lt, p) : acc) [] sorted
+  in map snd minimalWithLT
+
+getLeadingTermByOrderUnsafe :: MonomialOrder -> Poly -> (Monomial, Rational)
+getLeadingTermByOrderUnsafe ord p =
+  case getLeadingTermByOrder ord p of
+    Just res -> res
+    Nothing -> error "Leading term requested from zero polynomial"
+
+generatePairs :: MonomialOrder -> [Poly] -> [CriticalPair]
+generatePairs cmp bs =
+  concatMap (\(f, g) -> maybe [] (:[]) (makeCriticalPair cmp f g))
+            [(f, g) | f <- bs, g <- bs, f /= g]
 
 -- | Timeout-aware version of Buchberger algorithm
--- Checks timeout before processing each critical pair
 buchbergerWithStrategyT :: MonomialOrder -> SelectionStrategy -> [Poly] -> TimeoutM [Poly]
 buchbergerWithStrategyT ord strategy polys =
   let initial = filter (/= polyZero) polys
@@ -184,51 +203,36 @@ buchbergerWithStrategyT ord strategy polys =
   in go ord initial initialPairs []
   where
     go :: MonomialOrder -> [Poly] -> [CriticalPair] -> [CriticalPair] -> TimeoutM [Poly]
-    go _ basis [] _ = return basis  -- No more pairs, done!
+    go _ basis [] _ = return (interreduceBasis ord basis)
     go cmp basis pairs processed = do
-      -- Check for timeout before processing next pair
       timedOut <- checkTimeout
       if timedOut
         then error "Buchberger computation timeout exceeded"
         else case selectPair strategy pairs of
-          Nothing -> return basis
+          Nothing -> return (interreduceBasis ord basis)
           Just (pair, remaining) ->
             let (f, g) = pairPolys pair
             in
-              -- Apply Buchberger criteria
               if criterion1 cmp f g || criterion2 cmp pair basis processed
-              then
-                -- Skip this pair (criteria say it's useless)
-                go cmp basis remaining (pair : processed)
+              then go cmp basis remaining (pair : processed)
               else
-                -- Compute S-polynomial and reduce
                 let s = sPoly cmp f g
                     r = reduce cmp s basis
                 in
                   if r == polyZero
-                  then
-                    -- Remainder is zero, continue
-                    go cmp basis remaining (pair : processed)
+                  then go cmp basis remaining (pair : processed)
                   else
-                    -- Non-zero remainder, add to basis and generate new pairs
                     let newBasis = nub (r : basis)
                         newPairs = [(r, b) | b <- basis, b /= r]
                         newCriticalPairs = concatMap (\(a,b) -> maybe [] (:[]) (makeCriticalPair cmp a b)) newPairs
                     in go cmp newBasis (remaining ++ newCriticalPairs) (pair : processed)
 
-    generatePairs :: MonomialOrder -> [Poly] -> [CriticalPair]
-    generatePairs cmp bs =
-      concatMap (\(f, g) -> maybe [] (:[]) (makeCriticalPair cmp f g))
-                [(f, g) | f <- bs, g <- bs, f /= g]
-
--- | Optimized Buchberger with default strategy (Normal) and Lex order (for backwards compatibility)
+-- | Optimized Buchberger with default strategy (Normal) and Lex order
 buchbergerOptimized :: [Poly] -> [Poly]
 buchbergerOptimized = buchbergerWithStrategy compare NormalStrategy
 
--- Note: Helper functions (subPoly, reduce, sPoly) are imported from Prover.hs
-
 -- =============================================
--- Polynomial Reduction & S-Poly (Moved from Prover.hs)
+-- Polynomial Reduction & S-Poly
 -- =============================================
 
 -- 1. Multivariate Polynomial Reduction (Division)
@@ -277,21 +281,3 @@ sPoly ord f g =
              in polySub term1 term2
            _ -> polyZero
     _ -> polyZero
-
--- =============================================
--- Performance Notes
--- =============================================
-{-
-Optimizations implemented:
-1. Buchberger Criterion 1 (coprime leading terms) - skips ~20-40% of pairs
-2. Buchberger Criterion 2 (product criterion) - skips ~10-30% of pairs
-3. Selection by degree - processes smaller degrees first (faster reduction)
-
-Expected speedup: 2-5x on typical geometry problems
-Memory usage: Slightly higher (stores critical pairs)
-
-Future optimizations:
-- Gebauer-Möller installation - more sophisticated pair elimination
-- F4 algorithm - matrix-based approach (much faster)
-- F5 algorithm - signature-based (state-of-the-art)
--}
