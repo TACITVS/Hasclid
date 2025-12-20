@@ -141,6 +141,34 @@ currentSolverOptions env st =
     , selectionStrategyOpt = selectionStrategy st
     }
 
+insideTriangleConstraints :: String -> String -> String -> String -> ([Formula], M.Map String Expr)
+insideTriangleConstraints p a b c =
+  let uName = "ba_u"
+      vName = "ba_v"
+      wName = "ba_w"
+      u = Var uName
+      v = Var vName
+      w = Var wName
+      xA = Var ("x" ++ a); yA = Var ("y" ++ a); zA = Var ("z" ++ a)
+      xB = Var ("x" ++ b); yB = Var ("y" ++ b); zB = Var ("z" ++ b)
+      xC = Var ("x" ++ c); yC = Var ("y" ++ c); zC = Var ("z" ++ c)
+      uExpr = Sub (Const 1) (Add v w)
+      exprX = Add (Add (Mul u xA) (Mul v xB)) (Mul w xC)
+      exprY = Add (Add (Mul u yA) (Mul v yB)) (Mul w yC)
+      exprZ = Add (Add (Mul u zA) (Mul v zB)) (Mul w zC)
+      constraints =
+        [ Ge u (Const 0)
+        , Ge v (Const 0)
+        , Ge w (Const 0)
+        ]
+      subs = M.fromList
+        [ ("x" ++ p, exprX)
+        , ("y" ++ p, exprY)
+        , ("z" ++ p, exprZ)
+        , (uName, uExpr)
+        ]
+  in (constraints, subs)
+
 cadFallbackResult :: REPLEnv -> REPLState -> Theory -> Formula -> AutoSolveResult
 cadFallbackResult env st fullContext goal =
   let (contextWithAnd, singleGoal) = convertAndGoal fullContext goal
@@ -518,6 +546,7 @@ handleCommand state stateWithHist newHist input = do
        "  :cache-stats            Show Groebner cache statistics",
        "  :clear-cache            Clear Groebner cache",
        "  :point A x y [z]        Define a point",
+       "  :inside P A B C         Constrain point P inside triangle ABC",
        "  :assume (= lhs rhs)     Add assumption",
        "  :lemma (= lhs rhs)      Save a lemma",
        "  :prove (= lhs rhs)      Prove equality",
@@ -548,6 +577,15 @@ handleCommand state stateWithHist newHist input = do
            , "Defined 2D Point " ++ name ++ " at (" ++ xStr ++ ", " ++ yStr ++ ")")
 
     (":point":_) -> pure (stateWithHist, "Usage: :point A x y z  OR  :point A x y")
+
+    (":inside":p:a:b:c:_) -> do
+      let (constraints, subs) = insideTriangleConstraints p a b c
+          mergedSubs = M.union subs (pointSubs state)
+          newTheory = constraints ++ theory state
+      pure (stateWithHist { theory = newTheory, pointSubs = mergedSubs }
+           , "Inside-triangle constraints added for " ++ p ++ " in " ++ a ++ b ++ c ++ " (barycentric ba_u/ba_v/ba_w).")
+
+    (":inside":_) -> pure (stateWithHist, "Usage: :inside P A B C")
 
     (":assume":_) -> 
       let str = drop 8 input

@@ -25,13 +25,7 @@
 :assume (> uy 0)
 
 -- 2b. Point P inside triangle ABC (barycentric coordinates)
--- P = u*A + v*B + w*C with u+v+w=1, u,v,w >= 0
-:assume (>= ba_u 0)
-:assume (>= ba_v 0)
-:assume (>= ba_w 0)
-:assume (= (+ ba_u (+ ba_v ba_w)) 1)
-:assume (= px (+ (* ba_v cx) (* ba_w ux)))
-:assume (= py (* ba_w uy))
+:inside P A B C
 
 -- 3. Define Squared Entities (Implicitly)
 :assume (= R1s (dist2 A P))

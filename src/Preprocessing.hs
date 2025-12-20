@@ -23,6 +23,8 @@ module Preprocessing
   ) where
 
 import Expr
+import Geometry.Barycentric (applyBarycentric)
+import Geometry.WLOG (detectPoints)
 import Data.List (nub, find)
 import Data.Maybe (mapMaybe, isJust)
 import qualified Data.Map.Strict as M
@@ -52,9 +54,17 @@ preprocess initialSubs theory goal =
             show (M.size initialSubs) ++ " from point definitions: " ++
             show (take 5 $ M.toList subs)]
 
+    -- Step 1b: Apply barycentric distance substitution if inside-triangle constraints are present
+    (theoryB, goalB, logBary) = applyBarycentricIfInside subs theory goal
+    log1b = if null logBary then log1 else log1 ++ logBary
+
+    -- Step 1c: Add non-negativity constraints for squared distances and definitions
+    (theoryNN, logNN) = addDist2NonnegConstraints theoryB goalB
+    log1c = if null logNN then log1b else log1b ++ logNN
+
     -- Step 2: Detect geometry dimension (check both theory and substitutions)
-    dim = detectDimension subs theory goal
-    log2 = log1 ++ ["Detected dimension: " ++ show dim]
+    dim = detectDimension subs theoryNN goalB
+    log2 = log1c ++ ["Detected dimension: " ++ show dim]
 
     -- Step 3: Add dimension-specific substitutions (e.g., all z-coords = 0 for 2D)
     subs' = case dim of
@@ -65,8 +75,8 @@ preprocess initialSubs theory goal =
            else log2
 
     -- Step 4: Apply substitutions to theory and goal
-    theory' = map (applySubstitutionsFormula subs') theory
-    goal' = applySubstitutionsFormula subs' goal
+    theory' = map (applySubstitutionsFormula subs') theoryNN
+    goal' = applySubstitutionsFormula subs' goalB
     log4 = log3 ++ ["Applied " ++ show (M.size subs') ++ " substitutions"]
 
     -- Step 5: Simplify theory (remove tautologies, redundant constraints)
@@ -83,6 +93,153 @@ preprocess initialSubs theory goal =
        , eliminatedVars = M.keys subs'
        , simplificationLog = log5
        }
+
+addDist2NonnegConstraints :: Theory -> Formula -> (Theory, [String])
+addDist2NonnegConstraints theory goal =
+  let
+    allFormulas = goal : theory
+    dist2Exprs = nub $ concatMap dist2ExprsInFormula allFormulas
+    dist2Vars = nub $ concatMap dist2VarDefs theory
+    varConstraints =
+      [ Ge (Var v) (Const 0)
+      | v <- dist2Vars
+      , not (hasNonNegConstraint (Var v) allFormulas)
+      ]
+    exprConstraints =
+      [ Ge e (Const 0)
+      | e <- dist2Exprs
+      , not (hasNonNegConstraint e allFormulas)
+      ]
+    newConstraints = varConstraints ++ exprConstraints
+  in if null newConstraints
+     then (theory, [])
+     else (newConstraints ++ theory
+          , ["Added " ++ show (length newConstraints) ++ " dist2 non-negativity constraints"])
+
+dist2VarDefs :: Formula -> [String]
+dist2VarDefs (Eq (Var v) (Dist2 _ _)) = [v]
+dist2VarDefs (Eq (Dist2 _ _) (Var v)) = [v]
+dist2VarDefs _ = []
+
+dist2ExprsInFormula :: Formula -> [Expr]
+dist2ExprsInFormula (Eq e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInFormula (Ge e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInFormula (Gt e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInFormula (Le e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInFormula (Lt e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInFormula (Divides e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInFormula (And f1 f2) = dist2ExprsInFormula f1 ++ dist2ExprsInFormula f2
+dist2ExprsInFormula (Or f1 f2) = dist2ExprsInFormula f1 ++ dist2ExprsInFormula f2
+dist2ExprsInFormula (Not f) = dist2ExprsInFormula f
+dist2ExprsInFormula (Forall _ f) = dist2ExprsInFormula f
+dist2ExprsInFormula (Exists _ f) = dist2ExprsInFormula f
+
+dist2ExprsInExpr :: Expr -> [Expr]
+dist2ExprsInExpr e@(Dist2 _ _) = [e]
+dist2ExprsInExpr (Add e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInExpr (Sub e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInExpr (Mul e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInExpr (Div e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInExpr (Mod e1 e2) = dist2ExprsInExpr e1 ++ dist2ExprsInExpr e2
+dist2ExprsInExpr (Pow e1 _) = dist2ExprsInExpr e1
+dist2ExprsInExpr (Sqrt e1) = dist2ExprsInExpr e1
+dist2ExprsInExpr (Determinant rows) = concatMap (concatMap dist2ExprsInExpr) rows
+dist2ExprsInExpr (Circle _ _ r) = dist2ExprsInExpr r
+dist2ExprsInExpr (Sum _ lo hi body) =
+  dist2ExprsInExpr lo ++ dist2ExprsInExpr hi ++ dist2ExprsInExpr body
+dist2ExprsInExpr _ = []
+
+hasNonNegConstraint :: Expr -> [Formula] -> Bool
+hasNonNegConstraint expr formulas =
+  any (matchesNonNeg expr) formulas
+
+matchesNonNeg :: Expr -> Formula -> Bool
+matchesNonNeg expr f =
+  case f of
+    Ge e (Const 0) -> e == expr
+    Gt e (Const 0) -> e == expr
+    Eq e (Const 0) -> e == expr
+    Eq (Const 0) e -> e == expr
+    _ -> False
+
+applyBarycentricIfInside :: M.Map String Expr -> Theory -> Formula -> (Theory, Formula, [String])
+applyBarycentricIfInside subs theory goal =
+  case findInsideBarycentric subs of
+    Nothing -> (theory, goal, [])
+    Just (trianglePts, insidePt) ->
+      let points = trianglePts ++ [insidePt]
+          (theory', goal', logBary) = applyBarycentric points theory goal
+      in if null logBary then (theory, goal, []) else (theory', goal', logBary)
+
+findInsideBarycentric :: M.Map String Expr -> Maybe ([String], String)
+findInsideBarycentric subs =
+  case find (\(k, e) -> isCoordVarName k && exprHasBarycentric e) (M.toList subs) of
+    Nothing -> Nothing
+    Just (coordVar, expr) ->
+      let insidePt = drop 1 coordVar
+      in case extractTrianglePoints expr of
+           Just trianglePts -> Just (trianglePts, insidePt)
+           Nothing -> Nothing
+
+extractTrianglePoints :: Expr -> Maybe [String]
+extractTrianglePoints expr =
+  let pairs = collectBarycentricPairs expr
+      lookupPoint v = lookup v pairs
+  in case (lookupPoint "ba_u", lookupPoint "ba_v", lookupPoint "ba_w") of
+       (Just pu, Just pv, Just pw) ->
+         if length (nub [pu, pv, pw]) == 3
+         then Just [pu, pv, pw]
+         else Nothing
+       _ -> Nothing
+
+collectBarycentricPairs :: Expr -> [(String, String)]
+collectBarycentricPairs expr =
+  case expr of
+    Add a b -> collectBarycentricPairs a ++ collectBarycentricPairs b
+    Sub a b -> collectBarycentricPairs a ++ collectBarycentricPairs b
+    Mul a b -> pairsFromMul a b ++ collectBarycentricPairs a ++ collectBarycentricPairs b
+    Div a b -> collectBarycentricPairs a ++ collectBarycentricPairs b
+    Pow a _ -> collectBarycentricPairs a
+    Sqrt a -> collectBarycentricPairs a
+    _ -> []
+
+pairsFromMul :: Expr -> Expr -> [(String, String)]
+pairsFromMul (Var v1) (Var v2) =
+  case (baryVar v1, coordPointName v2) of
+    (Just bary, Just pt) -> [(bary, pt)]
+    _ -> case (baryVar v2, coordPointName v1) of
+           (Just bary, Just pt) -> [(bary, pt)]
+           _ -> []
+pairsFromMul _ _ = []
+
+exprHasBarycentric :: Expr -> Bool
+exprHasBarycentric expr = any isBarycentricVar (varsInExpr expr)
+
+isBarycentricVar :: String -> Bool
+isBarycentricVar v = v == "ba_u" || v == "ba_v" || v == "ba_w"
+
+baryVar :: String -> Maybe String
+baryVar v
+  | isBarycentricVar v = Just v
+  | otherwise = Nothing
+
+isCoordVarName :: String -> Bool
+isCoordVarName ('z':'z':'_':_) = False
+isCoordVarName ('x':rest) = not (null rest)
+isCoordVarName ('y':rest) = not (null rest)
+isCoordVarName ('z':rest) = not (null rest)
+isCoordVarName _ = False
+
+coordPointName :: String -> Maybe String
+coordPointName v =
+  case v of
+    ('z':'z':'_':_) -> Nothing
+    ('x':rest) -> nonEmpty rest
+    ('y':rest) -> nonEmpty rest
+    ('z':rest) -> nonEmpty rest
+    _ -> Nothing
+  where
+    nonEmpty s = if null s then Nothing else Just s
 
 -- | Detect geometry dimension by examining theory constraints and substitutions
 -- INTELLIGENCE: If all z-coordinates are constrained to 0, it's 2D geometry
