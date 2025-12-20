@@ -180,6 +180,10 @@ convertAndGoalRouter theory goal =
 -- | Automatically select and run the best solver for a problem
 autoSolve :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> AutoSolveResult
 autoSolve opts pointSubs theoryRaw goalRaw =
+  autoSolveInternal True opts pointSubs theoryRaw goalRaw
+
+autoSolveInternal :: Bool -> SolverOptions -> M.Map String Expr -> Theory -> Formula -> AutoSolveResult
+autoSolveInternal allowSplit opts pointSubs theoryRaw goalRaw =
   let
     -- 0. Geometry normalization (barycentric/dist2) before elimination
     (theoryG, goalG, _logG) = preprocessGeometry pointSubs theoryRaw goalRaw
@@ -200,11 +204,11 @@ autoSolve opts pointSubs theoryRaw goalRaw =
 
     -- 4. Analyze the PREPROCESSED polynomial problem
     profile = analyzeProblem theory' goal'
-  in
-    case goal' of
+    baseResult =
+      case goal' of
       And f1 f2 ->
-        let r1 = autoSolve opts pointSubs theory' f1
-            r2 = if isProved r1 then autoSolve opts pointSubs theory' f2 else r1 -- Skip if first failed, but preserve trace
+        let r1 = autoSolveInternal False opts pointSubs theory' f1
+            r2 = if isProved r1 then autoSolveInternal False opts pointSubs theory' f2 else r1 -- Skip if first failed, but preserve trace
             combinedTrace = case (detailedTrace r1, detailedTrace r2) of
                               (Just t1, Just t2) -> if r1 == r2 then Just t1 else Just (t1 ++ "\n\nAND\n\n" ++ t2)
                               (Just t1, Nothing) -> Just t1
@@ -221,16 +225,17 @@ autoSolve opts pointSubs theoryRaw goalRaw =
              , detailedTrace = combinedTrace
              }
       Or f1 f2 ->
-        let r1 = autoSolve opts pointSubs theory' f1
+        let r1 = autoSolveInternal False opts pointSubs theory' f1
         in if isProved r1 then r1 { preprocessedGoalExpr = goal' }
-           else let r2 = autoSolve opts pointSubs theory' f2
-                    combinedTrace = case (detailedTrace r1, detailedTrace r2) of
-                                      (Just t1, Just t2) -> Just ("--- Attempt 1 ---\n" ++ t1 ++ "\n\n--- Attempt 2 ---\n" ++ t2)
-                                      (Just t1, Nothing) -> Just t1
-                                      (Nothing, Just t2) -> Just t2
-                                      (Nothing, Nothing) -> Nothing
-                in if isProved r2 then r2 { preprocessedGoalExpr = goal', detailedTrace = combinedTrace }
-                   else r2 { preprocessedGoalExpr = goal', isProved = False, detailedTrace = combinedTrace }
+           else
+             let r2 = autoSolveInternal False opts pointSubs theory' f2
+                 combinedTrace = case (detailedTrace r1, detailedTrace r2) of
+                                   (Just t1, Just t2) -> Just ("--- Attempt 1 ---\n" ++ t1 ++ "\n\n--- Attempt 2 ---\n" ++ t2)
+                                   (Just t1, Nothing) -> Just t1
+                                   (Nothing, Just t2) -> Just t2
+                                   (Nothing, Nothing) -> Nothing
+             in if isProved r2 then r2 { preprocessedGoalExpr = goal', detailedTrace = combinedTrace }
+                else r2 { preprocessedGoalExpr = goal', isProved = False, detailedTrace = combinedTrace }
       
       Exists qs inner
         | all (\q -> qvType q == QuantInt) qs ->
@@ -451,6 +456,76 @@ autoSolve opts pointSubs theoryRaw goalRaw =
                  , proofEvidence = Nothing
                  , detailedTrace = trace
                  }
+  in applyInsideSplit allowSplit opts pointSubs theoryRaw goalRaw baseResult
+
+applyInsideSplit :: Bool -> SolverOptions -> M.Map String Expr -> Theory -> Formula -> AutoSolveResult -> AutoSolveResult
+applyInsideSplit allowSplit opts pointSubs theoryRaw goalRaw baseResult =
+  if not allowSplit || isProved baseResult || not (shouldSplitInside pointSubs theoryRaw goalRaw)
+  then baseResult
+  else
+    let cases = insideSplitCases
+        results =
+          [ (label, autoSolveInternal False opts pointSubs (constraints ++ theoryRaw) goalRaw)
+          | (label, constraints) <- cases
+          ]
+        allProved = all (isProved . snd) results
+        failed = [label | (label, res) <- results, not (isProved res)]
+        trace = formatSplitTrace results
+        mergedTrace = mergeTrace (detailedTrace baseResult) trace
+        failureNote = "Inside-triangle split failed on: " ++ intercalate ", " failed
+    in if allProved
+       then baseResult
+              { isProved = True
+              , solverReason = solverReason baseResult ++ " + inside-triangle split"
+              , proofReason = "Proved by inside-triangle boundary split"
+              , detailedTrace = mergedTrace
+              }
+       else baseResult
+              { proofReason = proofReason baseResult ++ " (" ++ failureNote ++ ")"
+              , detailedTrace = mergedTrace
+              }
+
+shouldSplitInside :: M.Map String Expr -> Theory -> Formula -> Bool
+shouldSplitInside subs theory goal =
+  isInequality goal && hasInsideConstraints subs theory
+
+hasInsideConstraints :: M.Map String Expr -> Theory -> Bool
+hasInsideConstraints subs theory =
+  M.member "ba_u" subs && hasNonNegVar "ba_v" theory && hasNonNegVar "ba_w" theory
+
+hasNonNegVar :: String -> Theory -> Bool
+hasNonNegVar v =
+  any matchesVar
+  where
+    matchesVar (Ge (Var x) (Const 0)) = x == v
+    matchesVar (Gt (Var x) (Const 0)) = x == v
+    matchesVar _ = False
+
+insideSplitCases :: [(String, [Formula])]
+insideSplitCases =
+  let v = Var "ba_v"
+      w = Var "ba_w"
+      uExpr = Sub (Const 1) (Add v w)
+  in [ ("u=0", [Eq uExpr (Const 0)])
+     , ("v=0", [Eq v (Const 0)])
+     , ("w=0", [Eq w (Const 0)])
+     , ("interior", [Gt uExpr (Const 0), Gt v (Const 0), Gt w (Const 0)])
+     ]
+
+formatSplitTrace :: [(String, AutoSolveResult)] -> String
+formatSplitTrace results =
+  "Inside-triangle case split:\n" ++ intercalate "\n\n" (map formatCase results)
+  where
+    formatCase (label, res) =
+      let status = if isProved res then "PROVED" else "NOT PROVED"
+          baseMsg = label ++ ": " ++ status ++ "\n" ++ proofReason res
+      in case detailedTrace res of
+           Nothing -> baseMsg
+           Just t -> baseMsg ++ "\n" ++ t
+
+mergeTrace :: Maybe String -> String -> Maybe String
+mergeTrace Nothing extra = Just extra
+mergeTrace (Just base) extra = Just (base ++ "\n\n" ++ extra)
 
 -- | Format a Sum-of-Squares certificate for human reading
 formatSOSCertificate :: SOSCertificate -> String
