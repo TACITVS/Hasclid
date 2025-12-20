@@ -31,11 +31,18 @@ emptyCert = SOSCertificate [] [] polyZero
 checkSOS :: (Poly -> Poly) -> Poly -> Bool
 checkSOS reducer p = isJust (getSOSCertificate [] reducer p)
 
--- | Get SOS certificate if it exists
+-- | Get SOS certificate if it exists, using known non-negative variables and lemmata.
 getSOSCertificate :: [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate
 getSOSCertificate lemmata reducer pRaw = 
   let p = reducer pRaw
-  in case getWeightedSOS p of
+      -- Extract variables known to be non-negative from lemmata (e.g., v >= 0)
+      posVars = [ varName 
+                | Poly m <- lemmata
+                , isPosVariable m
+                , let [(Monomial vMap, _)] = M.toList m
+                , let [(varName, _)] = M.toList vMap
+                ]
+  in case getPositionalSOS posVars p of
        Just cert -> Just cert
        Nothing -> 
          case robustCholesky reducer p emptyCert of
@@ -45,6 +52,28 @@ getSOSCertificate lemmata reducer pRaw =
 -- | Advanced SOS check that leverages previously proven lemmata.
 checkSOSWithLemmas :: [Poly] -> (Poly -> Poly) -> Poly -> Bool
 checkSOSWithLemmas lemmata reducer p = isJust (getSOSCertificate lemmata reducer p)
+
+-- | Check if a polynomial is a sum of monomials that are products of known non-negative variables.
+-- This handles "Trivial SOS" for variables like sqrt-auxiliaries.
+getPositionalSOS :: [String] -> Poly -> Maybe SOSCertificate
+getPositionalSOS posVars (Poly m) =
+  if not (M.null m) && all isNonNegativeTerm (M.toList m)
+  then let terms = [ (c, Poly (M.singleton mono 1)) | (mono, c) <- M.toList m ]
+       -- We return this as 'remainder' or a special type of 'lemma' usage?
+       -- For now, we'll just say the whole thing is proved if all terms are non-negative.
+       in Just (emptyCert { sosRemainder = polyZero, sosLemmas = [Poly m] })
+  else Nothing
+  where
+    isNonNegativeTerm (Monomial vars, c) = 
+      c > 0 && all (\(v, e) -> even e || v `elem` posVars) (M.toList vars)
+
+isPosVariable :: M.Map Monomial Rational -> Bool
+isPosVariable m = 
+  case M.toList m of
+    [(Monomial v, 1)] -> case M.toList v of
+                           [(name, 1)] -> True
+                           _ -> False
+    _ -> False
 
 -- | Check for weighted sum of even powers (trivial SOS)
 getWeightedSOS :: Poly -> Maybe SOSCertificate

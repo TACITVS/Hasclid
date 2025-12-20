@@ -7,7 +7,7 @@ module Main
   ) where
 
 import Expr (Formula(Eq, Ge, Gt, Le, Lt, And), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
-import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea)
+import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea, exprToGeoExpr, reduceArea, geoToExpr)
 import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
 import IntSolver (IntSolveOptions(..))
 import Lagrange (solve4Squares)
@@ -594,15 +594,38 @@ handleCommand state stateWithHist newHist input = do
                  opts = currentSolverOptions env stateWithHist
                  current = solverTimeout state
              in do
-               maybeResult <- liftIO $ runWithTimeout current $ do
-                 let res = autoSolve opts (pointSubs stateWithHist) fullContext expandedFormula
-                 _ <- CE.evaluate (isProved res)
-                 return res
-               case maybeResult of 
-                 Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-                 Just result -> 
-                   let msg = formatAutoSolveResult result (verbose state)
-                   in pure (stateWithHist, msg)
+               -- NEW: Try Area Method FIRST if a manual construction exists
+               (stateAfterArea, goalForAlgebraic) <- 
+                  if not (null (construction state))
+                  then case exprToGeoExpr expandedFormula of
+                         Just geoGoal -> 
+                           let reduced = reduceArea (construction state) geoGoal
+                           in case reduced of
+                                G_Const 0 -> return (Just (stateWithHist, "Area Method: Reduced to 0"), expandedFormula)
+                                _ -> -- Fallback to algebraic solver with reduced expression
+                                     let reducedExpr = geoToExpr reduced
+                                         finalGoal = case expandedFormula of
+                                                       Ge _ _ -> Ge reducedExpr (Const 0)
+                                                       Gt _ _ -> Gt reducedExpr (Const 0)
+                                                       Le _ _ -> Le reducedExpr (Const 0)
+                                                       Lt _ _ -> Lt reducedExpr (Const 0)
+                                                       _      -> Eq reducedExpr (Const 0)
+                                     in return (Nothing, finalGoal)
+                         Nothing -> return (Nothing, expandedFormula)
+                  else return (Nothing, expandedFormula)
+               
+               case stateAfterArea of
+                 Just res -> pure res
+                 Nothing -> do
+                   maybeResult <- liftIO $ runWithTimeout current $ do
+                     let res = autoSolve opts (pointSubs stateWithHist) fullContext goalForAlgebraic
+                     _ <- CE.evaluate (isProved res)
+                     return res
+                   case maybeResult of 
+                     Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                     Just result -> 
+                       let msg = formatAutoSolveResult result (verbose state)
+                       in pure (stateWithHist, msg)
 
     (":induction":_) -> 
       let str = drop 11 input

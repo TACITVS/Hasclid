@@ -56,13 +56,13 @@ import RationalElim (eliminateRational)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
 import F4Lite (f4LiteGroebner, f4ReduceModular, reduceWithF4, reduceWithBasis)
-import Geometry.WLOG (applyWLOG)
+import Geometry.WLOG (applyWLOG, detectPoints)
 import Positivity.SOS (checkSOS, checkSOSWithLemmas, SOSCertificate(..), getSOSCertificate)
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD)
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
-import Data.List (delete, find, isSuffixOf, sort, foldl', isPrefixOf, intercalate)
+import Data.List (delete, find, isSuffixOf, sort, foldl', isPrefixOf, intercalate, nub)
 import Data.Maybe (isJust, mapMaybe)
 
 -- =============================================
@@ -436,8 +436,12 @@ autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory 
 proveInequalitySOS :: SolverOptions -> Theory -> Formula -> (Bool, String, Maybe String, Maybe ProofEvidence)
 proveInequalitySOS opts theoryRaw goalRaw =
   let 
+      -- NEW: Generate geometric lemmata from point configuration
+      geomLemmas = generateGeometricLemmas theoryRaw goalRaw
+      theoryWithGeom = theoryRaw ++ geomLemmas
+
       -- 0. Preprocessing (Rational + Sqrt elimination)
-      (thPrep, goalPrep) = eliminateRational theoryRaw goalRaw
+      (thPrep, goalPrep) = eliminateRational theoryWithGeom goalRaw
       (thPoly, goalPoly) = eliminateSqrt thPrep goalPrep
       
       -- 1. Iterative Squaring Heuristic
@@ -514,8 +518,9 @@ proveInequalitySOS opts theoryRaw goalRaw =
           -- 4. Check SOS / Boundary SOS
           -- Compute Basis ONCE
           basis = selectGroebner profileFinal opts goalFull eqConstraints
-          -- USE MODULAR ONE-SHOT REDUCER FOR NORMAL FORM
-          reducer p = F4Lite.f4ReduceModular (getLeadingOrder profileFinal goalFull) basis p
+          -- USE EXACT REDUCER (Buchberger) because F4 Modular reduction normalizes coefficients (loses sign)
+          -- We need to know if the remainder is positive or negative!
+          reducer p = F4Lite.reduceWithBasis (getLeadingOrder profileFinal goalFull) basis p
           
           -- Numerical SOS Guidance
           -- 1. Extract parameters values
@@ -1052,3 +1057,31 @@ formatAutoSolveResult result verbose =
             Just trace -> ["", "Detailed Trace:", trace]
             Nothing -> []
      else [])
+
+-- | Automatically generate fundamental geometric inequalities (Triangle, Ptolemy)
+--   for all detected points in the problem.
+generateGeometricLemmas :: Theory -> Formula -> [Formula]
+generateGeometricLemmas theory goal =
+  let pts = Geometry.WLOG.detectPoints (goal : theory)
+      -- 1. Triangle Inequalities: d(A,B) + d(B,C) >= d(A,C)
+      --    For every triple of points {a, b, c}
+      triples = [ (a, b, c) | a <- pts, b <- pts, c <- pts, a < b, b < c ]
+      triLemmas = concatMap (\(a, b, c) -> 
+        [ Ge (Add (Sqrt (Dist2 a b)) (Sqrt (Dist2 b c))) (Sqrt (Dist2 a c))
+        , Ge (Add (Sqrt (Dist2 a c)) (Sqrt (Dist2 c b))) (Sqrt (Dist2 a b))
+        , Ge (Add (Sqrt (Dist2 b a)) (Sqrt (Dist2 a c))) (Sqrt (Dist2 b c))
+        ]) triples
+      
+      -- 2. Ptolemy Inequalities: d(A,B)*d(C,D) + d(B,C)*d(A,D) >= d(A,C)*d(B,D)
+      --    For every quadruple of points {a, b, c, d}
+      quads = [ (a, b, c, d) | a <- pts, b <- pts, c <- pts, d <- pts, a < b, b < c, c < d ]
+      ptolLemmas = concatMap (\(a, b, c, d) ->
+        let d12 = Sqrt (Dist2 a b); d34 = Sqrt (Dist2 c d)
+            d23 = Sqrt (Dist2 b c); d14 = Sqrt (Dist2 a d)
+            d13 = Sqrt (Dist2 a c); d24 = Sqrt (Dist2 b d)
+        in [ Ge (Add (Mul d12 d34) (Mul d23 d14)) (Mul d13 d24)
+           , Ge (Add (Mul d12 d34) (Mul d13 d24)) (Mul d23 d14)
+           , Ge (Add (Mul d23 d14) (Mul d13 d24)) (Mul d12 d34)
+           ]) quads
+           
+  in nub (triLemmas ++ ptolLemmas)

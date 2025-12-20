@@ -8,6 +8,9 @@ module AreaMethod
   , Construction
   , ConstructStep(..)
   , deriveConstruction
+  , exprToGeoExpr
+  , geoToExpr
+  , reduceArea
   ) where
 
 import Expr
@@ -25,6 +28,7 @@ data GeoExpr
   = S_Area String String String
   | P_Pyth String String String
   | G_Dist2 String String
+  | G_Sqrt GeoExpr
   | G_Const Rational
   | G_Param String
   | G_Add GeoExpr GeoExpr
@@ -74,6 +78,19 @@ simplifyGeo (G_Div a b) =
     (G_Const x, G_Const y) | y /= 0 -> G_Const (x / y)
     (x, G_Const 1) -> x
     (x, y) -> G_Div x y
+simplifyGeo (G_Sqrt a) =
+  case simplifyGeo a of
+    G_Const x | x >= 0 -> 
+      let s = sqrt (fromRational x)
+          -- Try to keep it rational if perfect square
+          n = numerator x
+          d = denominator x
+          rn = round (sqrt (fromIntegral n))
+          rd = round (sqrt (fromIntegral d))
+      in if rn*rn == n && rd*rd == d
+         then G_Const (toRational rn / toRational rd)
+         else G_Sqrt (G_Const x)
+    x -> G_Sqrt x
 simplifyGeo (S_Area a b c) = normalizeArea a b c
 simplifyGeo (P_Pyth a b c) = normalizePyth a b c
 simplifyGeo (G_Dist2 a b) = normalizeDist2 a b
@@ -112,6 +129,7 @@ elimRec step (G_Add a b) = G_Add (elimRec step a) (elimRec step b)
 elimRec step (G_Sub a b) = G_Sub (elimRec step a) (elimRec step b)
 elimRec step (G_Mul a b) = G_Mul (elimRec step a) (elimRec step b)
 elimRec step (G_Div a b) = G_Div (elimRec step a) (elimRec step b)
+elimRec step (G_Sqrt a)  = G_Sqrt (elimRec step a)
 elimRec _    (G_Const c) = G_Const c
 elimRec _    (G_Param s) = G_Param s
 elimRec step (S_Area a b c) = elimArea step a b c
@@ -237,10 +255,25 @@ elimDistOnLine _ u v r b =
 -- 4. Proof Engine
 -- =============================================
 
+geoToExpr :: GeoExpr -> Expr
+geoToExpr (S_Area a b c) = Collinear a b c
+geoToExpr (P_Pyth a b c) = 
+  -- P_{ABC} = d(A,B)^2 + d(B,C)^2 - d(A,C)^2
+  Sub (Add (Dist2 a b) (Dist2 b c)) (Dist2 a c)
+geoToExpr (G_Dist2 a b)  = Dist2 a b
+geoToExpr (G_Sqrt e)     = Sqrt (geoToExpr e)
+geoToExpr (G_Const r)    = Const r
+geoToExpr (G_Param s)    = Var s
+geoToExpr (G_Add a b)    = Add (geoToExpr a) (geoToExpr b)
+geoToExpr (G_Sub a b)    = Sub (geoToExpr a) (geoToExpr b)
+geoToExpr (G_Mul a b)    = Mul (geoToExpr a) (geoToExpr b)
+geoToExpr (G_Div a b)    = Div (geoToExpr a) (geoToExpr b)
+
 -- | Result of Area Method proof attempt (Either-based API)
 data AreaResult = AreaResult
   { areaProved :: Bool      -- Was the theorem proved?
   , areaReason :: String    -- Explanation
+  , areaReduced :: GeoExpr  -- Reduced expression
   } deriving (Show, Eq)
 
 -- | Legacy tuple-based API for backward compatibility
@@ -254,12 +287,20 @@ proveArea steps goal =
       G_Const c | c == 0 -> (True, "Reduced to 0")
       _ -> (False, "Reduced to: " ++ show simplified)
 
+-- | Get the reduced expression from Area Method
+reduceArea :: Construction -> GeoExpr -> GeoExpr
+reduceArea steps goal = simplifyGeo (foldr eliminate goal steps)
+
 -- | Either-based version of proveArea (recommended API)
 -- Returns Either ProverError AreaResult for better error handling
 proveAreaE :: Construction -> GeoExpr -> Either ProverError AreaResult
 proveAreaE steps goal =
-  let (proved, reason) = proveArea steps goal
-  in Right $ AreaResult proved reason
+  let reduced = reduceArea steps goal
+      proved = case reduced of
+                 G_Const c -> c == 0
+                 _ -> False
+      reason = if proved then "Reduced to 0" else "Reduced to complex expression"
+  in Right $ AreaResult proved reason reduced
 
 -- =============================================
 -- 5. Theory -> Construction Bridge
@@ -358,18 +399,28 @@ getPointsInExpr (Var v) =
   else []
 getPointsInExpr _ = []
 
--- Convert goal Formula to GeoExpr (Difference = 0)
+-- Convert goal Formula to GeoExpr (Difference = 0 or >= 0)
 exprToGeoExpr :: Formula -> Maybe GeoExpr
-
-exprToGeoExpr (Eq (Dist2 a b) (Dist2 c d)) =
-  Just (G_Sub (G_Dist2 a b) (G_Dist2 c d))
-exprToGeoExpr (Eq (Collinear a b c) (Const 0)) =
-  Just (S_Area a b c)
-exprToGeoExpr (Eq (Perpendicular a b c d) (Const 0)) =
-  -- dot(AB, CD) = 0
-  -- 2 * dot(AB, CD) = P_{BCD} - P_{ACD}
-  Just (G_Sub (P_Pyth b c d) (P_Pyth a c d))
-exprToGeoExpr (Eq (Midpoint _ _ _) (Const 0)) =
-  Nothing
+exprToGeoExpr (Eq l r) = G_Sub <$> exprToGeo l <*> exprToGeo r
+exprToGeoExpr (Ge l r) = G_Sub <$> exprToGeo l <*> exprToGeo r
+exprToGeoExpr (Gt l r) = G_Sub <$> exprToGeo l <*> exprToGeo r
+exprToGeoExpr (Le l r) = G_Sub <$> exprToGeo r <*> exprToGeo l
+exprToGeoExpr (Lt l r) = G_Sub <$> exprToGeo r <*> exprToGeo l
 exprToGeoExpr _ = Nothing
+
+exprToGeo :: Expr -> Maybe GeoExpr
+exprToGeo (Dist2 a b) = Just (G_Dist2 a b)
+exprToGeo (Sqrt e)    = G_Sqrt <$> exprToGeo e
+exprToGeo (Add a b)   = G_Add <$> exprToGeo a <*> exprToGeo b
+exprToGeo (Sub a b)   = G_Sub <$> exprToGeo a <*> exprToGeo b
+exprToGeo (Mul a b)   = G_Mul <$> exprToGeo a <*> exprToGeo b
+exprToGeo (Div a b)   = G_Div <$> exprToGeo a <*> exprToGeo b
+exprToGeo (Const r)   = Just (G_Const r)
+exprToGeo (Var v)     = Just (G_Param v)
+exprToGeo (Collinear a b c) = Just (S_Area a b c)
+exprToGeo (Perpendicular a b c d) =
+  -- dot(AB, CD) = (P_{BCD} - P_{ACD}) / 2
+  -- We omit factor 2 for zero-check
+  Just (G_Sub (P_Pyth b c d) (P_Pyth a c d))
+exprToGeo _ = Nothing
 
