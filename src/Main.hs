@@ -594,20 +594,12 @@ handleCommand state stateWithHist newHist input = do
                  opts = currentSolverOptions env stateWithHist
                  current = solverTimeout state
              in do
-               maybeResult <- liftIO $ runWithTimeout current $ CE.evaluate (autoSolve opts (pointSubs stateWithHist) fullContext expandedFormula)
+               maybeResult <- liftIO $ runWithTimeout current $ do
+                 let res = autoSolve opts (pointSubs stateWithHist) fullContext expandedFormula
+                 _ <- CE.evaluate (isProved res)
+                 return res
                case maybeResult of 
-                 Nothing -> do
-                   let bumped = max (current + 1) (current * 2)
-                   liftIO $ putStrLn ("[TIMEOUT] Proof attempt exceeded " ++ show current ++ " seconds. Retrying automatically with " ++ show bumped ++ "s... (use :set-timeout to override)")
-                   retry <- liftIO $ runWithTimeout bumped $ CE.evaluate (autoSolve opts (pointSubs stateWithHist) fullContext expandedFormula)
-                   case retry of 
-                     Nothing -> 
-                       let failMsg = "[TIMEOUT] Second attempt also timed out at " ++ show bumped ++ "s. Simplify the problem or increase timeout manually."
-                       in pure (stateWithHist { solverTimeout = bumped, lastTimeoutSeconds = Just current }, failMsg)
-                     Just result2 -> 
-                       let resMsg = formatAutoSolveResult result2 (verbose state) ++ 
-                                    "\n(Note: timeout auto-increased from " ++ show current ++ "s to " ++ show bumped ++ "s after a previous timeout.)"
-                       in pure (stateWithHist { solverTimeout = bumped, lastTimeoutSeconds = Just current }, resMsg)
+                 Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
                  Just result -> 
                    let msg = formatAutoSolveResult result (verbose state)
                    in pure (stateWithHist, msg)
@@ -650,7 +642,10 @@ handleCommand state stateWithHist newHist input = do
              let fullContext = theory state ++ lemmas state
                  current = solverTimeout state
              in do
-               maybeResult <- liftIO $ runWithTimeout current $ CE.evaluate (autoSolve (currentSolverOptions env state) (pointSubs state) fullContext formula)
+               maybeResult <- liftIO $ runWithTimeout current $ do
+                 let res = autoSolve (currentSolverOptions env state) (pointSubs state) fullContext formula
+                 _ <- CE.evaluate (isProved res)
+                 return res
                case maybeResult of 
                  Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
                  Just result -> 
@@ -735,7 +730,10 @@ processScriptStreaming env state content = go state (lines content)
                           Right formula -> do 
                             let fullContext = theory st ++ lemmas st
                                 current = solverTimeout st
-                            maybeRes <- runWithTimeout current $ CE.evaluate (autoSolve (currentSolverOptions env st) (pointSubs st) fullContext formula)
+                            maybeRes <- runWithTimeout current $ do
+                              let res = autoSolve (currentSolverOptions env st) (pointSubs st) fullContext formula
+                              _ <- CE.evaluate (isProved res)
+                              return res
                             case maybeRes of 
                               Nothing -> return (st, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
                               Just res -> return (st, formatAutoSolveResult res (verbose st))

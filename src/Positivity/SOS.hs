@@ -123,16 +123,30 @@ robustCholesky reducer p cert
         Nothing -> Nothing -- No valid square term found to eliminate
         Just (m, c) ->
           let
-             (divisible, _) = partitionPolyByDivisibility p m
-             quotient = case polyDivMonomial divisible m of
-                          Just q -> q
-                          Nothing -> error "Partition logic failed"
+             -- We want to eliminate all terms in p divisible by m.
+             -- Let p = c * m^2 + m * Q + R  where R contains no terms divisible by m.
+             -- We subtract (1/c) * (c*m + Q/2)^2
+             -- = (1/c) * (c^2 m^2 + c*m*Q + Q^2/4)
+             -- = c * m^2 + m * Q + Q^2 / (4c)
              
-             -- subtraction = (1/c) * (quotient)^2
-             subtraction = polyScale (polyMul quotient quotient) (1/c)
+             (divisible, _) = partitionPolyByDivisibility p m
+             
+             -- rest = m * Q = divisible - c * m^2
+             rest = polySub divisible (polyScale (polyFromMonomial (monomialMul m m) 1) c)
+             
+             -- Q = rest / m
+             qPoly = case polyDivMonomial rest m of
+                       Just q -> q
+                       Nothing -> error "Partition logic failed"
+             
+             -- base = c*m + Q/2
+             base = polyAdd (polyScale (polyFromMonomial m 1) c) (polyScale qPoly (1/2))
+             
+             -- subtraction = (1/c) * base^2
+             subtraction = polyScale (polyMul base base) (1/c)
              
              newP = reducer (polySub p subtraction)
-             newCert = cert { sosTerms = (1/c, quotient) : sosTerms cert }
+             newCert = cert { sosTerms = (1/c, base) : sosTerms cert }
           in robustCholesky reducer newP newCert
 
 -- | Find the best monomial to use as a square pivot.

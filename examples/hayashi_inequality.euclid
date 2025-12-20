@@ -1,0 +1,32 @@
+:set-timeout 180
+:optimize on
+:set-strategy normal
+
+-- Hayashi's Inequality
+-- For any triangle ABC and point P:
+-- a*R2*R3 + b*R3*R1 + c*R1*R2 >= a*b*c
+
+-- Define points using a standard coordinate system WLOG
+-- A at origin
+-- B on x-axis
+:point A 0 0
+:point B cx 0
+:point C ux uy
+:point P px py
+
+-- Assumptions for non-degenerate triangle
+:assume (> cx 0)
+:assume (> uy 0)
+
+-- Define side lengths (a, b, c)
+:assume (= a (sqrt (dist2 B C)))
+:assume (= b (sqrt (dist2 A C)))
+:assume (= c (sqrt (dist2 A B)))
+
+-- Define distances from P to vertices (R1, R2, R3)
+:assume (= R1 (sqrt (dist2 A P)))
+:assume (= R2 (sqrt (dist2 B P)))
+:assume (= R3 (sqrt (dist2 C P)))
+
+-- The Hayashi Inequality
+:auto (>= (+ (+ (* a (* R2 R3)) (* b (* R3 R1))) (* c (* R1 R2))) (* a (* b c)))
