@@ -62,9 +62,25 @@ simpExprArith (Div (Mul a c1) (Mul c2 b)) | c1 == c2 = simpExprArith (Div a b)
 -- Addition of fractions: (a/b) + (c/d) → (ad + bc)/(bd)
 simpExprArith (Add (Div a b) (Div c d)) =
   simpExprArith (Div (Add (Mul a d) (Mul b c)) (Mul b d))
+-- Addition with non-fraction: (a/b) + c → (a + c*b)/b
+simpExprArith (Add (Div a b) c) =
+  let sc = simpExprArith c
+  in simpExprArith (Div (Add a (Mul sc b)) b)
+-- Addition with non-fraction: c + (a/b) → (c*b + a)/b
+simpExprArith (Add c (Div a b)) =
+  let sc = simpExprArith c
+  in simpExprArith (Div (Add (Mul sc b) a) b)
 -- Subtraction of fractions: (a/b) - (c/d) → (ad - bc)/(bd)
 simpExprArith (Sub (Div a b) (Div c d)) =
   simpExprArith (Div (Sub (Mul a d) (Mul b c)) (Mul b d))
+-- Subtraction with non-fraction: (a/b) - c → (a - c*b)/b
+simpExprArith (Sub (Div a b) c) =
+  let sc = simpExprArith c
+  in simpExprArith (Div (Sub a (Mul sc b)) b)
+-- Subtraction with non-fraction: c - (a/b) → (c*b - a)/b
+simpExprArith (Sub c (Div a b)) =
+  let sc = simpExprArith c
+  in simpExprArith (Div (Sub (Mul sc b) a) b)
 -- Multiplication of fractions: (a/b) * (c/d) → (ac)/(bd)
 simpExprArith (Mul (Div a b) (Div c d)) =
   simpExprArith (Div (Mul a c) (Mul b d))
