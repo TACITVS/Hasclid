@@ -10,8 +10,7 @@ module Positivity
 import Expr
 import Sturm (countRealRoots, isolateRoots)
 import qualified Data.Map.Strict as M
-import Data.Ratio ((%))
-import Data.List (nub, sort)
+import Data.List (nub)
 
 -- =============================================
 -- Positivity Result Types
@@ -182,7 +181,7 @@ tryIntervalArithmetic p allowZero =
   in
       if minVal > 0 || (allowZero && minVal >= 0)
       then Just $ PositivityResult True HighConfidence IntervalArithmetic
-             ("Minimum value on [-10,10]^n: " ++ show (fromRational minVal :: Double))
+             ("Minimum value on [-10,10]^n: " ++ show minVal)
       else Nothing
 
 extractAllVars :: Poly -> [String]
