@@ -3,7 +3,6 @@ module Geometry.Barycentric
   ) where
 
 import Expr
-import Data.List (nub, find, isPrefixOf)
 import qualified Data.Map.Strict as M
 
 -- | Apply Barycentric Coordinate transformation to simplify geometric inequalities.
@@ -25,9 +24,9 @@ applyBarycentric points theory goal =
           
           -- Substitution rules
           barySub = M.fromList
-            [ (show r1s, Add (Add (Mul c2 (Mul v v)) (Mul b2 (Mul w w))) (Mul (Sub (Add b2 c2) a2) (Mul v w)))
-            , (show r2s, Add (Add (Mul c2 (Mul u u)) (Mul a2 (Mul w w))) (Mul (Sub (Add a2 c2) b2) (Mul u w)))
-            , (show r3s, Add (Add (Mul b2 (Mul u u)) (Mul a2 (Mul v v))) (Mul (Sub (Add a2 b2) c2) (Mul u v)))
+            [ (prettyExpr r1s, Add (Add (Mul c2 (Mul v v)) (Mul b2 (Mul w w))) (Mul (Sub (Add b2 c2) a2) (Mul v w)))
+            , (prettyExpr r2s, Add (Add (Mul c2 (Mul u u)) (Mul a2 (Mul w w))) (Mul (Sub (Add a2 c2) b2) (Mul u w)))
+            , (prettyExpr r3s, Add (Add (Mul b2 (Mul u u)) (Mul a2 (Mul v v))) (Mul (Sub (Add a2 b2) c2) (Mul u v)))
             ]
             
           -- Constraint: u + v + w = 1
@@ -49,7 +48,7 @@ substBary _ f = f
 
 substE :: M.Map String Expr -> Expr -> Expr
 substE sub (Dist2 a b) = 
-  let key = show (Dist2 a b)
+  let key = prettyExpr (Dist2 a b)
   in M.findWithDefault (Dist2 a b) key sub
 substE sub (Add a b) = Add (substE sub a) (substE sub b)
 substE sub (Sub a b) = Sub (substE sub a) (substE sub b)
