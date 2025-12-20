@@ -202,22 +202,22 @@ looksLikeTrianglePattern m a b c =
      && Map.size m <= 7  -- Should have at most 6 terms plus maybe constant
 
 -- Helper: Add two polynomials
-addPoly :: Poly -> Poly -> Poly
-addPoly (Poly m1) (Poly m2) = Poly (Map.unionWith (+) m1 m2)
+_addPoly :: Poly -> Poly -> Poly
+_addPoly (Poly m1) (Poly m2) = Poly (Map.unionWith (+) m1 m2)
 
 -- Helper: Subtract two polynomials
 subPoly :: Poly -> Poly -> Poly
 subPoly (Poly m1) (Poly m2) = Poly (Map.unionWith (+) m1 (Map.map negate m2))
 
 -- Helper: Multiply two polynomials
-mulPoly :: Poly -> Poly -> Poly
-mulPoly (Poly m1) (Poly m2) =
-  let terms = [(combineMonomial mon1 mon2, c1 * c2)
+_mulPoly :: Poly -> Poly -> Poly
+_mulPoly (Poly m1) (Poly m2) =
+  let terms = [(_combineMonomial mon1 mon2, c1 * c2)
               | (mon1, c1) <- Map.toList m1
               , (mon2, c2) <- Map.toList m2]
   in Poly (Map.fromListWith (+) terms)
 
 -- Helper: Multiply two monomials
-combineMonomial :: Monomial -> Monomial -> Monomial
-combineMonomial (Monomial m1) (Monomial m2) =
+_combineMonomial :: Monomial -> Monomial -> Monomial
+_combineMonomial (Monomial m1) (Monomial m2) =
   Monomial $ Map.unionWith (+) m1 m2

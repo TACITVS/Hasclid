@@ -13,7 +13,6 @@ import Data.Array.IO
 import Data.Array.MArray -- Need MArray interface
 import Control.Monad (forM_, foldM, when)
 import Control.Monad.ST
-import System.IO.Unsafe (unsafePerformIO)
 import Expr (Monomial(..), Poly(..), monomialMul, getVars, polyFromVar, polyMul, polyAdd)
 
 -- ============================================================================
@@ -60,13 +59,13 @@ checkSOS_SDP p =
       unmatched = any (\(_, _, idxs) -> null idxs) constraints
       
   in 
-      not unmatched && unsafePerformIO (runSDPSolver n constraints)
+      not unmatched && False -- Disabled experimental SDP solver due to numerical instability
 
 generateBasis :: [String] -> Int -> [Monomial]
 generateBasis vars d =
   let -- Generate all monomials with total degree <= d
       go 0 _ = [Monomial M.empty]
-      go k [] = [Monomial M.empty]
+      go _ [] = [Monomial M.empty]
       go k (v:vs) = 
         [ monomialMul (Monomial (M.singleton v (fromIntegral p))) rest
         | p <- [0..k]
@@ -88,8 +87,8 @@ polyDegree (Poly m) = fromIntegral $ maximum (0 : map (\(Monomial vm, _) -> sum 
 
 type Constraint = (Monomial, Rational, [(Int, Int)])
 
-runSDPSolver :: Int -> [Constraint] -> IO Bool
-runSDPSolver n constrs = do
+_runSDPSolver :: Int -> [Constraint] -> IO Bool
+_runSDPSolver n constrs = do
   -- Setup matrices
   -- X (Primal), S (Dual Slack), y (Dual vars)
   -- Initial point: X = I, S = I, y = 0
@@ -104,10 +103,10 @@ runSDPSolver n constrs = do
     writeArray sMat (i,i) 100.0
     
   -- Main Loop (Predictor-Corrector style simplified to Short Step)
-  solveLoop 0 xMat sMat (replicate (length constrs) 0.0) constrs n
+  _solveLoop 0 xMat sMat (replicate (length constrs) 0.0) constrs n
 
-solveLoop :: Int -> IOUArray (Int,Int) Double -> IOUArray (Int,Int) Double -> [Double] -> [Constraint] -> Int -> IO Bool
-solveLoop iter xMat sMat yVec constrs n
+_solveLoop :: Int -> IOUArray (Int,Int) Double -> IOUArray (Int,Int) Double -> [Double] -> [Constraint] -> Int -> IO Bool
+_solveLoop iter xMat sMat yVec constrs n
   | iter > 100 = return False -- Timeout (increased to 100)
   | otherwise = do
       -- 1. Compute Residuals
@@ -116,8 +115,8 @@ solveLoop iter xMat sMat yVec constrs n
       -- r_C = mu I - X S
       
       -- Check convergence (Primal/Dual feasibility + Gap)
-      pRes <- primalResidual xMat constrs
-      dRes <- dualResidual sMat yVec constrs n
+      pRes <- _primalResidual xMat constrs
+      dRes <- _dualResidual sMat yVec constrs n
       
       if pRes < 1e-4 && dRes < 1e-4 
         then return True -- Feasible!
@@ -127,8 +126,8 @@ solveLoop iter xMat sMat yVec constrs n
           return False
 
 -- | Primal Residual: norm(b - A(X))
-primalResidual :: IOUArray (Int,Int) Double -> [Constraint] -> IO Double
-primalResidual xMat constrs = do
+_primalResidual :: IOUArray (Int,Int) Double -> [Constraint] -> IO Double
+_primalResidual xMat constrs = do
   diffs <- mapM checkConstr constrs
   return $ sqrt $ sum $ map (^ (2::Int)) diffs
   where
@@ -138,8 +137,8 @@ primalResidual xMat constrs = do
 
 -- | Dual Residual: norm(C - A^T(y) - S)
 -- Uses C = Identity matrix
-dualResidual :: IOUArray (Int,Int) Double -> [Double] -> [Constraint] -> Int -> IO Double
-dualResidual sMat yVec constrs n = do
+_dualResidual :: IOUArray (Int,Int) Double -> [Double] -> [Constraint] -> Int -> IO Double
+_dualResidual sMat yVec constrs n = do
   -- Diff = S - C + sum y_k A_k
   diffMat <- newArray ((0,0), (n-1,n-1)) 0.0 :: IO (IOUArray (Int,Int) Double)
   
@@ -160,8 +159,8 @@ dualResidual sMat yVec constrs n = do
   return $ sqrt $ sum $ map (^ (2::Int)) elems
 
 -- | Duality Gap: Tr(X S)
-dualityGap :: IOUArray (Int,Int) Double -> IOUArray (Int,Int) Double -> Int -> IO Double
-dualityGap xMat sMat n = do
+_dualityGap :: IOUArray (Int,Int) Double -> IOUArray (Int,Int) Double -> Int -> IO Double
+_dualityGap xMat sMat n = do
   prods <- sequence [ do
                         x <- readArray xMat (i,j)
                         s <- readArray sMat (j,i)

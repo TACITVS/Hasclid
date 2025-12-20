@@ -81,12 +81,10 @@ simplifyGeo (G_Div a b) =
 simplifyGeo (G_Sqrt a) =
   case simplifyGeo a of
     G_Const x | x >= 0 -> 
-      let s = sqrt (fromRational x)
-          -- Try to keep it rational if perfect square
-          n = numerator x
+      let n = numerator x
           d = denominator x
-          rn = round (sqrt (fromIntegral n))
-          rd = round (sqrt (fromIntegral d))
+          rn = integerSqrt n
+          rd = integerSqrt d
       in if rn*rn == n && rd*rd == d
          then G_Const (toRational rn / toRational rd)
          else G_Sqrt (G_Const x)
@@ -377,8 +375,8 @@ findInter p formulas =
        (((a,b), (c,d)):_) -> Just (PointInter p a b c d)
        _ -> Nothing
 
-definesPoint :: String -> Formula -> Bool
-definesPoint p f = mentionsPoint p f -- Simplified for now, relying on theoryToStep logic
+_definesPoint :: String -> Formula -> Bool
+_definesPoint p f = mentionsPoint p f -- Simplified for now, relying on theoryToStep logic
 
 collectPoints :: Theory -> [String]
 collectPoints = nub . concatMap getPointsInFormula

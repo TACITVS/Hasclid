@@ -73,11 +73,11 @@ intSat opts th =
          then IntSolveOutcome Nothing False False False False False
          else intIntervalSolve opts True th taut
 
-isLinearFormula :: Formula -> Bool
-isLinearFormula (Eq l r) = isJust (intLinDiff l r)
-isLinearFormula (Ge l r) = isJust (intLinDiff l r)
-isLinearFormula (Gt l r) = isJust (intLinDiff l r)
-isLinearFormula _ = False
+_isLinearFormula :: Formula -> Bool
+_isLinearFormula (Eq l r) = isJust (intLinDiff l r)
+_isLinearFormula (Ge l r) = isJust (intLinDiff l r)
+_isLinearFormula (Gt l r) = isJust (intLinDiff l r)
+_isLinearFormula _ = False
 
 -- Quick contradiction detection for simple non-negative expressions
 constraintUnsatQuick :: Formula -> Bool
@@ -396,7 +396,7 @@ evaluateIfSingleton env expr = eval expr
        n <- eval a
        d <- eval b
        if d == 0 then Nothing else Just (n `mod` d)
-    eval (Pow e n) = (^) <$> eval e <*> pure (fromIntegral n)
+    eval (Pow e n) = (^) <$> eval e <*> pure (fromIntegral n :: Integer)
     eval _ = Nothing
 
     checkVar v =
@@ -683,29 +683,30 @@ applyDivides env (Divides mExpr expr) =
        if Map.null coeffs 
        then if k `mod` m == 0 then Right env else Left False
        else if Map.size coeffs == 1 
-            then 
-              let [(v, a)] = Map.toList coeffs
-                  b = (-k) `mod` m
-                  g = gcd a m
-              in if b `mod` g /= 0 
-                 then Left False
-                 else
-                   let a' = a `div` g
-                       b' = b `div` g
-                       m' = abs (m `div` g)
-                   in case modInv a' m' of
-                        Just inv ->
-                           let x0 = (b' * inv) `mod` m'
-                           in case Map.lookup v env of
-                                Nothing -> Right env
-                                Just iv ->
-                                  let ivShifted = shiftInterval (-x0) iv
-                                  in case congruenceInterval m' ivShifted of
-                                       Just ivShiftedRefined ->
-                                          let ivRefined = shiftInterval x0 ivShiftedRefined
-                                          in Right (Map.insert v ivRefined env)
-                                       Nothing -> Left False
-                        Nothing -> Right env
+            then case Map.toList coeffs of
+                   [(v, a)] ->
+                     let b = (-k) `mod` m
+                         g = gcd a m
+                     in if b `mod` g /= 0 
+                        then Left False
+                        else
+                          let a' = a `div` g
+                              b' = b `div` g
+                              m' = abs (m `div` g)
+                          in case modInv a' m' of
+                               Just inv ->
+                                 let x0 = (b' * inv) `mod` m'
+                                 in case Map.lookup v env of
+                                      Nothing -> Right env
+                                      Just iv ->
+                                        let ivShifted = shiftInterval (-x0) iv
+                                        in case congruenceInterval m' ivShifted of
+                                             Just ivShiftedRefined ->
+                                               let ivRefined = shiftInterval x0 ivShiftedRefined
+                                               in Right (Map.insert v ivRefined env)
+                                             Nothing -> Left False
+                               Nothing -> Right env
+                   _ -> Right env
             else Right env
     _ -> Right env
 applyDivides env _ = Right env

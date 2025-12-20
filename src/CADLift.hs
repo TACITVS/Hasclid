@@ -705,8 +705,8 @@ formulaToPolys formula =
     Exists _ f -> formulaToPolys f
 
 -- | Convert an expression to a polynomial
-exprToPoly :: Expr -> Poly
-exprToPoly = toPoly
+_exprToPoly :: Expr -> Poly
+_exprToPoly = toPoly
 
 -- Extract variables from a polynomial
 extractPolyVars :: Poly -> S.Set String

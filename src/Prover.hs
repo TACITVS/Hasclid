@@ -364,7 +364,7 @@ proveTheoryWithCache maybeCache theoryRaw formulaRaw =
                    then (True, "Proved second disjunct: " ++ r2, t2, c2)
                    else (False, "Failed to prove either disjunct: (" ++ r1 ++ ") OR (" ++ r2 ++ ")", t1, c2)
 
-      Not f -> (False, "Top-level negation not supported yet.", baseTrace, maybeCache)
+      Not _ -> (False, "Top-level negation not supported yet.", baseTrace, maybeCache)
 
       Forall qs inner
         | all (\q -> qvType q == QuantReal) qs
@@ -504,9 +504,8 @@ proveTheoryWithOptions customBuchberger maybeCache theoryRaw formulaRaw =
       _ -> fallThroughWithOptions customBuchberger maybeCache theory formula baseTrace
 
 fallThroughWithOptions :: ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory -> Formula -> ProofTrace -> (Bool, String, ProofTrace, Maybe GroebnerCache)
-fallThroughWithOptions customBuchberger maybeCache theory formula baseTrace =
-  let hasInt = containsIntFormula formula || any containsIntFormula theory
-      hasDiv = containsDivFormula formula || any containsDivFormula theory
+fallThroughWithOptions customBuchberger maybeCache theory formula _baseTrace =
+  let hasDiv = containsDivFormula formula || any containsDivFormula theory
       hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
   in if hasDiv then
        let (th', goal') = eliminateRational theory formula
@@ -720,7 +719,7 @@ promoteIntVars names f = goF names f
     goE _  other = other
 
 proveExistentialConstructive :: Theory -> Formula -> (Bool, String, ProofTrace)
-proveExistentialConstructive theory goal = (False, "Not implemented.", emptyTrace)
+proveExistentialConstructive _theory _goal = (False, "Not implemented.", emptyTrace)
 
 proveByInduction :: Theory -> Formula -> (Bool, String, ProofTrace)
-proveByInduction theory formula = (False, "Not implemented.", emptyTrace)
+proveByInduction _theory _formula = (False, "Not implemented.", emptyTrace)

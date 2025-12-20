@@ -9,7 +9,7 @@ import System.Process (readProcessWithExitCode)
 import System.Exit (ExitCode(..))
 import System.Timeout (timeout)
 import Control.Monad (forM, forM_, filterM, when)
-import Data.List (isPrefixOf, isInfixOf)
+import Data.List (isPrefixOf)
 
 -- | Recursively find all .euclid files
 findEuclidFiles :: FilePath -> IO [FilePath]
@@ -56,10 +56,6 @@ executeWithProver path = do
       return $ Left $ "Exit code " ++ show code ++ ": " ++ take 300 (err ++ "\n" ++ out)
   `catch` (\(e :: SomeException) -> return $ Left $ "Exception: " ++ show e)
 
-toLower :: Char -> Char
-toLower c | c >= 'A' && c <= 'Z' = toEnum (fromEnum c + 32)
-          | otherwise = c
-
 spec :: Spec
 spec = do
   describe "Integration Tests - REAL Prover Execution" $ do
@@ -84,8 +80,7 @@ spec = do
             Right msg -> putStrLn $ "  OK: " ++ msg
           return (file, result)
 
-        let failures = [(f, e) | (f, Left e) <- results]
-            successes = [(f, msg) | (f, Right msg) <- results]
+        let successes = [(f, msg) | (f, Right msg) <- results]
             timeouts = [(f, e) | (f, Left e) <- results, "TIMEOUT" `isPrefixOf` e]
             errors = [(f, e) | (f, Left e) <- results, not ("TIMEOUT" `isPrefixOf` e)]
 

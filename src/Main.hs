@@ -27,7 +27,7 @@ import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheS
 import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder, compareMonomials)
 import Preprocessing (preprocess, preprocessedTheory, preprocessedGoal)
 
-import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice)
+import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice, hSetBuffering, BufferMode(..))
 import System.Environment (getArgs)
 import Control.Monad (foldM)
 import Data.List (isPrefixOf)
@@ -36,6 +36,7 @@ import Data.Char (isDigit, toLower)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Control.Exception as CE
+import Control.Exception (try, ArithException(..))
 import System.Timeout (timeout)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Reader (ReaderT, runReaderT, ask)
@@ -48,9 +49,10 @@ import Control.Monad (unless)
 
 main :: IO ()
 main = do
+  hSetBuffering stdout NoBuffering
   args <- getArgs
   let env = defaultEnv
-  case args of
+  result <- try $ case args of
     [] -> do
       putStr "==================================================\n"
       putStrLn "   Hasclid v9.0 - Multi-Solver System"
@@ -62,6 +64,12 @@ main = do
       content <- readFile fileName
       _ <- processScriptStreaming env (initialState env) content
       return ()
+  
+  case result of
+    Left Underflow -> putStrLn "\n[FATAL ERROR] Arithmetic Underflow caught in main loop."
+    Left Overflow  -> putStrLn "\n[FATAL ERROR] Arithmetic Overflow caught in main loop."
+    Left _         -> putStrLn "\n[FATAL ERROR] Math exception caught in main loop."
+    Right _        -> return ()
 
 -- =============================================
 -- 2. REPL State
@@ -142,34 +150,36 @@ chooseBuchberger env st =
 -- | Expand geometric formulas into separate coordinate equations
 -- This fixes the sum-of-squares encoding issue with Groebner bases
 expandGeometricFormula :: Formula -> [Formula]
-expandGeometricFormula (Eq (Midpoint a b m) (Const 0)) = 
-  -- Expand: midpoint(A,B,M) = 0  into three coordinate equations:
-  -- 2xM - xA - xB = 0, 2yM - yA - yB = 0, 2zM - zA - zB = 0
-  let mkCoord prefix = Var (prefix ++ a)
-      mkCoordB prefix = Var (prefix ++ b)
-      mkCoordM prefix = Var (prefix ++ m)
-      two = Const 2
-      makeEq prefix = Eq (Sub (Sub (Mul two (mkCoordM prefix)) (mkCoord prefix)) (mkCoordB prefix)) (Const 0)
-  in [makeEq "x", makeEq "y", makeEq "z"]
+expandGeometricFormula f = 
+  case f of
+    (Eq (Midpoint a b m) (Const 0)) -> 
+      -- Expand: midpoint(A,B,M) = 0  into three coordinate equations:
+      -- 2xM - xA - xB = 0, 2yM - yA - yB = 0, 2zM - zA - zB = 0
+      let mkCoord prefix = Var (prefix ++ a)
+          mkCoordB prefix = Var (prefix ++ b)
+          mkCoordM prefix = Var (prefix ++ m)
+          two = Const 2
+          makeEq prefix = Eq (Sub (Sub (Mul two (mkCoordM prefix)) (mkCoord prefix)) (mkCoordB prefix)) (Const 0)
+      in [makeEq "x", makeEq "y", makeEq "z"]
 
-expandGeometricFormula (Eq (Parallel a b c d) (Const 0)) = 
-  -- Expand: parallel(A,B,C,D) = 0  into cross product = 0
-  -- AB × CD = 0 means each component of cross product is 0
-  let xa = Var ("x" ++ a); ya = Var ("y" ++ a); za = Var ("z" ++ a)
-      xb = Var ("x" ++ b); yb = Var ("y" ++ b); zb = Var ("z" ++ b)
-      xc = Var ("x" ++ c); yc = Var ("y" ++ c); zc = Var ("z" ++ c)
-      xd = Var ("x" ++ d); yd = Var ("y" ++ d); zd = Var ("z" ++ d)
-      -- Vector AB
-      ux = Sub xb xa; uy = Sub yb ya; uz = Sub zb za
-      -- Vector CD
-      vx = Sub xd xc; vy = Sub yd yc; vz = Sub zd zc
-      -- Cross product components: AB × CD = (u × v)
-      cx = Sub (Mul uy vz) (Mul uz vy)  -- uy*vz - uz*vy
-      cy = Sub (Mul uz vx) (Mul ux vz)  -- uz*vx - ux*vz
-      cz = Sub (Mul ux vy) (Mul uy vx)  -- ux*vy - uy*vx
-  in [Eq cx (Const 0), Eq cy (Const 0), Eq cz (Const 0)]
+    (Eq (Parallel a b c d) (Const 0)) -> 
+      -- Expand: parallel(A,B,C,D) = 0  into cross product = 0
+      -- AB × CD = 0 means each component of cross product is 0
+      let xa = Var ("x" ++ a); ya = Var ("y" ++ a); za = Var ("z" ++ a)
+          xb = Var ("x" ++ b); yb = Var ("y" ++ b); zb = Var ("z" ++ b)
+          xc = Var ("x" ++ c); yc = Var ("y" ++ c); zc = Var ("z" ++ c)
+          xd = Var ("x" ++ d); yd = Var ("y" ++ d); zd = Var ("z" ++ d)
+          -- Vector AB
+          ux = Sub xb xa; uy = Sub yb ya; uz = Sub zb za
+          -- Vector CD
+          vx = Sub xd xc; vy = Sub yd yc; vz = Sub zd zc
+          -- Cross product components: AB × CD = (u × v)
+          cx = Sub (Mul uy vz) (Mul uz vy)  -- uy*vz - uz*vy
+          cy = Sub (Mul uz vx) (Mul ux vz)  -- uz*vx - ux*vz
+          cz = Sub (Mul ux vy) (Mul uy vx)  -- ux*vy - uy*vx
+      in [Eq cx (Const 0), Eq cy (Const 0), Eq cz (Const 0)]
 
-expandGeometricFormula f = [f]  -- Other formulas pass through unchanged
+    _ -> [f]  -- Other formulas pass through unchanged
 
 -- | Expand geometric formula into conjunction for goals
 -- For goals, we need a single formula, so we use And to combine components
@@ -617,13 +627,18 @@ handleCommand state stateWithHist newHist input = do
                case stateAfterArea of
                  Just res -> pure res
                  Nothing -> do
-                   maybeResult <- liftIO $ runWithTimeout current $ do
+                   -- Catch numerical exceptions (underflow/overflow)
+                   eres <- liftIO $ try $ runWithTimeout current $ do
                      let res = autoSolve opts (pointSubs stateWithHist) fullContext goalForAlgebraic
                      _ <- CE.evaluate (isProved res)
                      return res
-                   case maybeResult of 
-                     Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-                     Just result -> 
+                   
+                   case eres of
+                     Left Underflow -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Underflow in solver. Problem is too complex for Double arithmetic.")
+                     Left Overflow  -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
+                     Left _         -> pure (stateWithHist, "[NUMERICAL ERROR] Math exception in solver.")
+                     Right Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                     Right (Just result) -> 
                        let msg = formatAutoSolveResult result (verbose state)
                        in pure (stateWithHist, msg)
 
@@ -665,13 +680,18 @@ handleCommand state stateWithHist newHist input = do
              let fullContext = theory state ++ lemmas state
                  current = solverTimeout state
              in do
-               maybeResult <- liftIO $ runWithTimeout current $ do
+               -- Catch numerical exceptions (underflow/overflow)
+               eres <- liftIO $ try $ runWithTimeout current $ do
                  let res = autoSolve (currentSolverOptions env state) (pointSubs state) fullContext formula
                  _ <- CE.evaluate (isProved res)
                  return res
-               case maybeResult of 
-                 Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-                 Just result -> 
+               
+               case eres of
+                 Left Underflow -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Underflow in solver.")
+                 Left Overflow  -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
+                 Left _         -> pure (stateWithHist, "[NUMERICAL ERROR] Math exception in solver.")
+                 Right Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                 Right (Just result) -> 
                    let msg = formatAutoSolveResult result (verbose state)
                    in pure (stateWithHist, msg)
            Left err -> pure (stateWithHist, formatError err)
@@ -753,13 +773,19 @@ processScriptStreaming env state content = go state (lines content)
                           Right formula -> do 
                             let fullContext = theory st ++ lemmas st
                                 current = solverTimeout st
-                            maybeRes <- runWithTimeout current $ do
+                            
+                            -- Catch numerical exceptions (underflow/overflow)
+                            eres <- try $ runWithTimeout current $ do
                               let res = autoSolve (currentSolverOptions env st) (pointSubs st) fullContext formula
                               _ <- CE.evaluate (isProved res)
                               return res
-                            case maybeRes of 
-                              Nothing -> return (st, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-                              Just res -> return (st, formatAutoSolveResult res (verbose st))
+                            
+                            case eres of
+                              Left (Underflow) -> return (st, "[NUMERICAL ERROR] Arithmetic Underflow in solver. Problem is too algebraically complex for Double arithmetic.")
+                              Left (Overflow) -> return (st, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
+                              Left _ -> return (st, "[NUMERICAL ERROR] Math exception in solver.")
+                              Right Nothing -> return (st, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                              Right (Just res) -> return (st, formatAutoSolveResult res (verbose st))
                           Left err -> return (st, formatError err)
                       _ -> do 
                         putStrLn ("> " ++ trimmed)

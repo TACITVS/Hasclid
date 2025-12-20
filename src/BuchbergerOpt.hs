@@ -18,7 +18,6 @@ import Data.List (nub, minimumBy, delete, sortBy)
 import Data.Ord (comparing)
 import Numeric.Natural
 import Control.Monad.IO.Class (liftIO)
-import System.IO.Unsafe (unsafePerformIO)
 
 -- =============================================
 -- Term Ordering Type

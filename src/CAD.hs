@@ -12,7 +12,7 @@ module CAD
 import Expr
 import Data.List (dropWhileEnd)
 import qualified Data.Map.Strict as M
-import Data.Maybe (mapMaybe) -- <--- FIXED: Added this import
+import Data.Maybe (mapMaybe)
 
 -- | Recursive Polynomial: Coefficients are themselves Polys
 --   Represents P(x) = c_n * x^n + ... + c_0
@@ -120,19 +120,68 @@ resultant f g var =
         rg = toRecursive g var
     in subresultantPRS rf rg
 
--- | Euclidean Algorithm variant for Polynomials (simplified Subresultant)
---   Technically this is the Euclidean PRS (Polynomial Remainder Sequence).
---   Standard Resultant = last non-zero term.
+-- | Subresultant PRS Algorithm (Algorithm 3.3.1)
+--   Keeps coefficients small using the precise Collins/Brown scaling factors.
 subresultantPRS :: RecPoly -> RecPoly -> Poly
-subresultantPRS f g
-  | normalizeRec f == [] = polyZero
-  | normalizeRec g == [] = polyZero
-  | degRec g == 0 = polyPow (lcRec g) (fromIntegral (degRec f)) -- Base case
-  | otherwise = 
-      let r = pseudoRem f g
-      in if normalizeRec r == [] 
-         then polyZero -- They share a factor!
-         else subresultantPRS g r -- Recurse
+subresultantPRS f g = 
+  let f' = normalizeRec f
+      g' = normalizeRec g
+  in if length f' < length g' then subresultantPRS g' f'
+     else go f' g' (polyFromConst 1) (polyFromConst 1)
+  where
+    go r0 r1 g h
+      | normalizeRec r1 == [] = polyZero
+      | degRec r1 == 0 = 
+          -- Final resultant calculation
+          let d0 = degRec r0
+              l1 = lcRec r1
+          in polyPow l1 (fromIntegral d0)
+      | otherwise =
+          let d0 = degRec r0
+              d1 = degRec r1
+              l1 = lcRec r1
+              delta = fromIntegral (d0 - d1)
+
+              -- 1. Compute pseudo-remainder
+              r_prem = pseudoRem r0 r1
+              
+              -- 2. Divide by scaling factor: divisor = g * h^delta
+              divisor = polyMul g (polyPow h delta)
+              r2 = map (\c -> polyDivExact c divisor) r_prem
+              
+              -- 3. Update g and h for next step
+              g_next = l1
+              -- h_next = l1^delta * h^(1-delta)
+              h_next = if delta == 1 then polyDivExact (polyPow g_next delta) (polyFromConst 1)
+                       else polyDivExact (polyPow g_next delta) (polyPow h (fromIntegral (delta - 1)))
+          in go r1 r2 g_next h_next
+
+-- | Exact polynomial division (fails if not exact or if it would loop)
+polyDivExact :: Poly -> Poly -> Poly
+polyDivExact p1 p2
+  | p1 == polyZero = polyZero
+  | p2 == polyFromConst 1 = p1
+  | otherwise =
+      case getLeadingTermByOrder compare p2 of
+        Nothing -> error "Division by zero polynomial"
+        Just (ltDiv, cDiv) -> 
+          let go remainder acc
+                | remainder == polyZero = acc
+                | otherwise = 
+                    case getLeadingTermByOrder compare remainder of
+                      Nothing -> acc
+                      Just (ltRem, cRem) -> 
+                        case monomialDiv ltRem ltDiv of
+                          Nothing -> error $ "Polynomial division not exact: remainder " ++ show remainder
+                          Just m -> 
+                            let qCoeff = cRem / cDiv
+                                qPoly = polyFromMonomial m qCoeff
+                                newRemainder = polySub remainder (polyMul qPoly p2)
+                            in go newRemainder (polyAdd acc qPoly)
+          in go p1 polyZero
+
+polyFromMonomial :: Monomial -> Rational -> Poly
+polyFromMonomial m c = Poly (M.singleton m c)
 
 -- | Discriminant: Resultant(f, f')
 --   Disc(f) = 0 implies f has a double root (turning point or singularity).

@@ -146,31 +146,49 @@ elimFormula (Eq (Div f g) c) | not (containsDivExpr c) = do
 
 elimFormula (Eq c (Div f g)) | not (containsDivExpr c) = elimFormula (Eq (Div f g) c)
 
+-- Inequality: f/g >= k  →  (f-kg)/g >= 0
+elimFormula (Ge (Div f g) k) | k /= Const 0 = do
+  f' <- elimExpr f
+  g' <- elimExpr g
+  k' <- elimExpr k
+  elimFormula (Ge (Div (Sub f' (Mul k' g')) g') (Const 0))
+
+elimFormula (Ge k (Div f g)) | k /= Const 0 = do
+  f' <- elimExpr f
+  g' <- elimExpr g
+  k' <- elimExpr k
+  elimFormula (Ge (Div (Sub (Mul k' g') f') g') (Const 0))
+
+-- Inequality: f/g > k  →  (f-kg)/g > 0
+elimFormula (Gt (Div f g) k) | k /= Const 0 = do
+  f' <- elimExpr f
+  g' <- elimExpr g
+  k' <- elimExpr k
+  elimFormula (Gt (Div (Sub f' (Mul k' g')) g') (Const 0))
+
+elimFormula (Gt k (Div f g)) | k /= Const 0 = do
+  f' <- elimExpr f
+  g' <- elimExpr g
+  k' <- elimExpr k
+  elimFormula (Gt (Div (Sub (Mul k' g') f') g') (Const 0))
+
 -- Inequality: f/g >= 0  →  (f >= 0 ∧ g > 0) ∨ (f <= 0 ∧ g < 0)
 elimFormula (Ge (Div f g) (Const 0)) = do
   f' <- elimExpr f
   g' <- elimExpr g
-  return $ Or (And (Ge f' (Const 0)) (Gt g' (Const 0)))
-              (And (Le f' (Const 0)) (Lt g' (Const 0)))
-
-elimFormula (Ge (Const 0) (Div f g)) = do
-  f' <- elimExpr f
-  g' <- elimExpr g
-  return $ Or (And (Le f' (Const 0)) (Gt g' (Const 0)))
-              (And (Ge f' (Const 0)) (Lt g' (Const 0)))
+  if isGeomPositive g'
+    then return $ And (Ge f' (Const 0)) (Gt g' (Const 0))
+    else return $ Or (And (Ge f' (Const 0)) (Gt g' (Const 0)))
+                    (And (Le f' (Const 0)) (Lt g' (Const 0)))
 
 -- Inequality: f/g > 0  →  (f > 0 ∧ g > 0) ∨ (f < 0 ∧ g < 0)
 elimFormula (Gt (Div f g) (Const 0)) = do
   f' <- elimExpr f
   g' <- elimExpr g
-  return $ Or (And (Gt f' (Const 0)) (Gt g' (Const 0)))
-              (And (Lt f' (Const 0)) (Lt g' (Const 0)))
-
-elimFormula (Gt (Const 0) (Div f g)) = do
-  f' <- elimExpr f
-  g' <- elimExpr g
-  return $ Or (And (Lt f' (Const 0)) (Gt g' (Const 0)))
-              (And (Gt f' (Const 0)) (Lt g' (Const 0)))
+  if isGeomPositive g'
+    then return $ And (Gt f' (Const 0)) (Gt g' (Const 0))
+    else return $ Or (And (Gt f' (Const 0)) (Gt g' (Const 0)))
+                    (And (Lt f' (Const 0)) (Lt g' (Const 0)))
 
 -- Inequality: f/g <= 0  →  (f <= 0 ∧ g > 0) ∨ (f >= 0 ∧ g < 0)
 elimFormula (Le (Div f g) (Const 0)) = do
@@ -218,24 +236,27 @@ elimFormula (Eq l r) = do
   return (Eq l' r')
 
 elimFormula (Ge l r) = do
-  l' <- elimExpr l
-  r' <- elimExpr r
-  return (Ge l' r')
+  let sa = simpExprArith l
+      sb = simpExprArith r
+  case simpExprArith (Sub sa sb) of
+    Div f g -> elimFormula (Ge (Div f g) (Const 0))
+    _ -> do
+      l' <- elimExpr' sa
+      r' <- elimExpr' sb
+      return (Ge l' r')
 
 elimFormula (Gt l r) = do
-  l' <- elimExpr l
-  r' <- elimExpr r
-  return (Gt l' r')
+  let sa = simpExprArith l
+      sb = simpExprArith r
+  case simpExprArith (Sub sa sb) of
+    Div f g -> elimFormula (Gt (Div f g) (Const 0))
+    _ -> do
+      l' <- elimExpr' sa
+      r' <- elimExpr' sb
+      return (Gt l' r')
 
-elimFormula (Le l r) = do
-  l' <- elimExpr l
-  r' <- elimExpr r
-  return (Le l' r')
-
-elimFormula (Lt l r) = do
-  l' <- elimExpr l
-  r' <- elimExpr r
-  return (Lt l' r')
+elimFormula (Le l r) = elimFormula (Ge r l)
+elimFormula (Lt l r) = elimFormula (Gt r l)
 
 elimFormula (And f1 f2) = And <$> elimFormula f1 <*> elimFormula f2
 elimFormula (Or f1 f2) = Or <$> elimFormula f1 <*> elimFormula f2
@@ -300,12 +321,12 @@ addDenominatorNonzero den = do
 -- | Heuristic: Is an expression definitely positive based on geometric axioms?
 isGeomPositive :: Expr -> Bool
 isGeomPositive (Dist2 _ _) = True
-isGeomPositive (Pow e 2) = True
+isGeomPositive (Pow _ 2) = True
 isGeomPositive (Sqrt _) = True
 isGeomPositive (Mul a b) = isGeomPositive a && isGeomPositive b
 isGeomPositive (Add a b) = isGeomPositive a && isGeomPositive b
 isGeomPositive (Var v) = 
-  -- Side lengths and distance variables are usually positive
-  v `elem` ["a", "b", "c", "R1", "R2", "R3", "ha", "hb", "hc"] || 
-  "ba_" `isPrefixOf` v -- Barycentric coords are non-negative for inside points
+  v `elem` ["a", "b", "c", "R1", "R2", "R3", "ha", "hb", "hc", "a2", "b2", "c2", "R1s", "R2s", "R3s"] || 
+  "ba_" `isPrefixOf` v ||
+  "zz_sqrt_aux" `isPrefixOf` v -- NEW: Auxiliary distance variables are positive
 isGeomPositive _ = False

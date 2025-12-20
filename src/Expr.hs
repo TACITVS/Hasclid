@@ -412,8 +412,8 @@ simplifyExpr (Mod e1 e2) =
                         "Attempted modulo by zero constant")
        (_, IntConst 0) -> error $ formatError (DivisionByZero
                            "Attempted modulo by zero integer")
-       (e, Const 1) -> Const 0              -- e mod 1 = 0
-       (e, IntConst 1) -> Const 0
+       (_, Const 1) -> Const 0              -- e mod 1 = 0
+       (_, IntConst 1) -> Const 0
        (Const r1, Const r2) | denominator r1 == 1 && denominator r2 == 1 ->
            Const (fromIntegral (numerator r1 `mod` numerator r2))  -- r2 /= 0 guaranteed
        (IntConst i1, IntConst i2) -> IntConst (i1 `mod` i2)  -- i2 /= 0 guaranteed
@@ -878,10 +878,18 @@ containsDivFormula (Exists _ f) = containsDivFormula f
 -- Integer square root helper
 -- =============================================
 
+-- | Integer square root (floor) using pure Integer arithmetic (Newton's method).
+-- Safe for massive integers where Double conversion would fail.
 integerSqrt :: Integer -> Integer
 integerSqrt n
   | n < 0 = 0
-  | otherwise = floor (sqrt (fromIntegral n :: Double))
+  | n == 0 = 0
+  | otherwise = go (n `div` 2 + 1)
+  where
+    go x
+      | y < x     = go y
+      | otherwise = x
+      where y = (x + n `div` x) `div` 2
 
 -- =============================================
 -- Logic helpers
@@ -940,10 +948,7 @@ evaluatePoly subM (Poly m) =
   in foldl polyAdd polyZero results
 
 toPolySub :: M.Map String Poly -> Expr -> Poly
-toPolySub subM expr = 
-  if hasNonPolynomial expr 
-  then polyZero
-  else evaluatePoly subM (toPoly expr)
+toPolySub subM expr = evaluatePoly subM (toPoly expr)
 
 -- =============================================
 -- Shared Polynomial Utilities

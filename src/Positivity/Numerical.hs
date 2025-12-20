@@ -26,9 +26,16 @@ fromPoly params (Poly m) =
   let terms = [ (mRes, val) 
               | (mono, c) <- M.toList m
               , let (mRes, fac) = evalMonomial params mono
-              , let val = fromRational c * fac
+              , let val = safeFromRational c * fac
               ]
   in PolyD $ M.fromListWith (+) terms
+
+-- | Safe fromRational that avoids underflow by clamping tiny values to 0.
+safeFromRational :: Rational -> Double
+safeFromRational r =
+  let d = fromRational r :: Double
+  in if isInfinite d || isNaN d then d else 
+     if d /= 0 && abs d < 1e-300 then 0.0 else d
 
 evalMonomial :: M.Map String Double -> Monomial -> (Monomial, Double)
 evalMonomial params (Monomial m) =
@@ -78,8 +85,8 @@ checkSOSNumeric params p =
        Just res -> Just res
        Nothing -> Nothing
 
-degree :: Monomial -> Integer
-degree (Monomial vars) = sum (map fromIntegral (M.elems vars))
+_degree :: Monomial -> Integer
+_degree (Monomial vars) = sum (map fromIntegral (M.elems vars))
 
 cholesky :: PolyD -> [PolyD] -> Maybe [PolyD]
 cholesky p acc

@@ -135,7 +135,7 @@ optimizeGroebnerOptions profile opts =
 
 -- | Pick the Gröbner routine based on solver options
 selectGroebner :: ProblemProfile -> SolverOptions -> Formula -> ([Poly] -> [Poly])
-selectGroebner profile opts goal =
+selectGroebner profile opts _goal =
   let 
       -- Use Block ordering if parameters are present
       params = symbolicParams profile
@@ -181,9 +181,11 @@ convertAndGoalRouter theory goal =
 autoSolve :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> AutoSolveResult
 autoSolve opts pointSubs theoryRaw goalRaw =
   let
-    -- 1. PREPROCESSING: Clear divisions and sqrts FIRST (Soundness & Legit Proof)
-    (theoryR, goalR) = eliminateRational theoryRaw goalRaw
-    (theoryP, goalP) = eliminateSqrt theoryR goalR
+    -- 1. PREPROCESSING: Clear sqrts then divisions (Soundness & Legit Proof)
+    -- Run Sqrt first because it might introduce divisions (sqrt(A/B) -> sqrt(A)/sqrt(B))
+    (theoryS, goalS) = eliminateSqrt theoryRaw goalRaw
+    
+    (theoryP, goalP) = eliminateRational theoryS goalS
 
     -- 2. Convert And goal to theory constraints + single goal
     (theoryWithAnd, singleGoal) = convertAndGoalRouter theoryP goalP
@@ -195,25 +197,37 @@ autoSolve opts pointSubs theoryRaw goalRaw =
 
     -- 4. Analyze the PREPROCESSED polynomial problem
     profile = analyzeProblem theory' goal'
-    groebner = selectGroebner profile opts goal'
   in
     case goal' of
       And f1 f2 ->
         let r1 = autoSolve opts pointSubs theory' f1
-            r2 = autoSolve opts pointSubs theory' f2
+            r2 = if isProved r1 then autoSolve opts pointSubs theory' f2 else r1 -- Skip if first failed, but preserve trace
+            combinedTrace = case (detailedTrace r1, detailedTrace r2) of
+                              (Just t1, Just t2) -> if r1 == r2 then Just t1 else Just (t1 ++ "\n\nAND\n\n" ++ t2)
+                              (Just t1, Nothing) -> Just t1
+                              (Nothing, Just t2) -> Just t2
+                              (Nothing, Nothing) -> Nothing
         in AutoSolveResult 
              { selectedSolver = selectedSolver r1
              , solverReason = "Conjunction decomposed"
              , problemProfile = profile
              , preprocessedGoalExpr = goal'
              , isProved = isProved r1 && isProved r2
-             , proofReason = proofReason r1 ++ " AND " ++ proofReason r2
+             , proofReason = if isProved r1 then proofReason r2 else proofReason r1
              , proofEvidence = Nothing
-             , detailedTrace = Nothing
+             , detailedTrace = combinedTrace
              }
       Or f1 f2 ->
         let r1 = autoSolve opts pointSubs theory' f1
-        in if isProved r1 then r1 else autoSolve opts pointSubs theory' f2
+        in if isProved r1 then r1 { preprocessedGoalExpr = goal' }
+           else let r2 = autoSolve opts pointSubs theory' f2
+                    combinedTrace = case (detailedTrace r1, detailedTrace r2) of
+                                      (Just t1, Just t2) -> Just ("--- Attempt 1 ---\n" ++ t1 ++ "\n\n--- Attempt 2 ---\n" ++ t2)
+                                      (Just t1, Nothing) -> Just t1
+                                      (Nothing, Just t2) -> Just t2
+                                      (Nothing, Nothing) -> Nothing
+                in if isProved r2 then r2 { preprocessedGoalExpr = goal', detailedTrace = combinedTrace }
+                   else r2 { preprocessedGoalExpr = goal', isProved = False, detailedTrace = combinedTrace }
       
       Exists qs inner
         | all (\q -> qvType q == QuantInt) qs ->
@@ -317,6 +331,11 @@ autoSolve opts pointSubs theoryRaw goalRaw =
                   }
            else
              let (proved', reason', trace') = executeSolver UseCAD opts profile theory' goal'
+                 combinedTrace = case (trace, trace') of
+                                   (Just t1, Just t2) -> Just (t1 ++ "\n\n--- FALLBACK TO CAD ---\n\n" ++ t2)
+                                   (Just t1, Nothing) -> Just t1
+                                   (Nothing, Just t2) -> Just t2
+                                   (Nothing, Nothing) -> Nothing
              in AutoSolveResult
                   { selectedSolver = UseCAD
                   , solverReason = "Inequality (Fallback to CAD after SOS failure)"
@@ -325,7 +344,7 @@ autoSolve opts pointSubs theoryRaw goalRaw =
                   , isProved = proved'
                   , proofReason = reason'
                   , proofEvidence = Nothing
-                  , detailedTrace = trace'
+                  , detailedTrace = combinedTrace
                   }
 
       -- Pure inequality / positivity goals: route directly to CAD/positivity (sound), never heuristics
@@ -528,12 +547,8 @@ proveInequalitySOS opts theoryRaw goalRaw =
                             , not (isDefinition eq)
                             ]
           
-          polyConstraints = eqConstraints
-          
           -- Skip Wu Reduction for SOS path to avoid polynomial explosion.
           -- Normal form reduction with F4 basis is more robust for high-degree goals.
-          remainders = [targetPoly] 
-          
           -- 5. Check SOS / Boundary SOS
           -- Compute Basis ONCE
           basis = selectGroebner profileFinal opts goalBary eqConstraints
@@ -541,16 +556,16 @@ proveInequalitySOS opts theoryRaw goalRaw =
           -- We need to know if the remainder is positive or negative!
           reducer p = F4Lite.reduceWithBasis (getLeadingOrder profileFinal goalBary) basis p
           
-          -- Numerical SOS Guidance
-          -- 1. Extract parameters values
-          paramMap = buildParamMap thBary
-          
-          -- 2. Try Numerical Cholesky
+          -- Numerical SOS Guidance (DISABLED for stability)
+          {-
           numericalSquares =
             if M.null paramMap && not (null (symbolicParams (analyzeProblem theory goalBary))) then Nothing -- Failed to resolve params
             else checkSOSNumeric paramMap targetPoly
-            
+          -}
+
           -- 3. If numerical success, reconstruct and verify
+          verifiedNumerical = False
+          {-
           verifiedNumerical = 
             case numericalSquares of
               Just sqs ->
@@ -565,6 +580,7 @@ proveInequalitySOS opts theoryRaw goalRaw =
                     remainder = reducer (subPoly targetPoly sumSq)
                 in remainder == polyZero
               Nothing -> False
+          -}
 
           -- 4. Lemma-Assisted SOS
           -- Collect all proven lemmata from the theory
@@ -611,20 +627,19 @@ proveInequalitySOS opts theoryRaw goalRaw =
           
           fullTrace = intro ++ wlogStep ++ squaringStep ++ reductionStep ++ sosStep ++ conclusion
           
-          bestPoly = case remainders of
-                       (r:_) -> r
-                       []    -> targetPoly
-          
       in
         if success
         then (True, "Proved via compositional Sum-of-Squares", Just fullTrace, evidence)
         else (False, "SOS check failed", Just (intro ++ reductionStep ++ "Conclusion: Could not prove non-negativity of the reduced expression."), Nothing)
 
     -- | Build parameter map from theory (e.g. s^2 = 3 -> s = 1.732)
-    buildParamMap :: Theory -> M.Map String Double
-    buildParamMap theory =
+    _buildParamMap :: Theory -> M.Map String Double
+    _buildParamMap theory =
       let eqs = [ (v, c) | Eq (Pow (Var v) 2) (Const c) <- theory, c > 0 ]
-      in M.fromList [ (v, sqrt (fromRational c)) | (v, c) <- eqs ]
+      in M.fromList [ (v, _safeSqrt (fromRational c)) | (v, c) <- eqs ]
+
+    _safeSqrt :: Double -> Double
+    _safeSqrt x = if x <= 0 then 0 else if x < 1e-300 then 0 else sqrt x
 
     -- | Check SOS on boundaries for homogeneous quadratic polynomials in P
     checkBoundarySOS :: Poly -> Bool
@@ -802,7 +817,7 @@ runInt opts theory goal =
 
 -- | Helper to get leading order for reduction
 getLeadingOrder :: ProblemProfile -> Formula -> (Monomial -> Monomial -> Ordering)
-getLeadingOrder profile goal =
+getLeadingOrder profile _goal =
   let params = symbolicParams profile
       allVars = variables profile
       activeVars = filter (`notElem` params) allVars
@@ -1078,12 +1093,11 @@ formatAutoSolveResult result verbose =
      else [])
 
 -- | Automatically generate fundamental geometric inequalities (Triangle, Ptolemy)
---   for all detected points in the problem.
+--   and equalities (Cayley-Menger) for all detected points.
 generateGeometricLemmas :: Theory -> Formula -> [Formula]
 generateGeometricLemmas theory goal =
   let pts = Geometry.WLOG.detectPoints (goal : theory)
       -- 1. Triangle Inequalities: d(A,B) + d(B,C) >= d(A,C)
-      --    For every triple of points {a, b, c}
       triples = [ (a, b, c) | a <- pts, b <- pts, c <- pts, a < b, b < c ]
       triLemmas = concatMap (\(a, b, c) -> 
         [ Ge (Add (Sqrt (Dist2 a b)) (Sqrt (Dist2 b c))) (Sqrt (Dist2 a c))
@@ -1092,7 +1106,6 @@ generateGeometricLemmas theory goal =
         ]) triples
       
       -- 2. Ptolemy Inequalities: d(A,B)*d(C,D) + d(B,C)*d(A,D) >= d(A,C)*d(B,D)
-      --    For every quadruple of points {a, b, c, d}
       quads = [ (a, b, c, d) | a <- pts, b <- pts, c <- pts, d <- pts, a < b, b < c, c < d ]
       ptolLemmas = concatMap (\(a, b, c, d) ->
         let d12 = Sqrt (Dist2 a b); d34 = Sqrt (Dist2 c d)
@@ -1103,4 +1116,14 @@ generateGeometricLemmas theory goal =
            , Ge (Add (Mul d23 d14) (Mul d13 d24)) (Mul d12 d34)
            ]) quads
            
-  in nub (triLemmas ++ ptolLemmas)
+      -- 3. Cayley-Menger Determinants (Plane constraints for 4 points)
+      --    For any 4 points in 2D, the Cayley-Menger determinant is 0.
+      cmLemmas = [ Eq (Determinant [ [Const 0, Dist2 a b, Dist2 a c, Dist2 a d, Const 1]
+                                   , [Dist2 a b, Const 0, Dist2 b c, Dist2 b d, Const 1]
+                                   , [Dist2 a c, Dist2 b c, Const 0, Dist2 c d, Const 1]
+                                   , [Dist2 a d, Dist2 b d, Dist2 c d, Const 0, Const 1]
+                                   , [Const 1, Const 1, Const 1, Const 1, Const 0]
+                                   ]) (Const 0)
+                 | (a, b, c, d) <- quads ]
+           
+  in nub (triLemmas ++ ptolLemmas ++ cmLemmas)

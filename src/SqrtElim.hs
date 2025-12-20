@@ -188,6 +188,11 @@ elimFormula (Forall vars f) = Forall vars <$> elimFormula f
 elimFormula (Exists vars f) = Exists vars <$> elimFormula f
 
 elimExpr :: Expr -> ElimM Expr
+-- Aggressive distribution of Sqrt over Mul and Div
+-- This ensures sqrt(R1s * R2s) -> R1 * R2, preventing redundant zz_ variables
+elimExpr (Sqrt (Mul a b)) = elimExpr (Mul (Sqrt a) (Sqrt b))
+elimExpr (Sqrt (Div a b)) = elimExpr (Div (Sqrt a) (Sqrt b))
+
 elimExpr (Add a b) = Add <$> elimExpr a <*> elimExpr b
 elimExpr (Sub a b) = Sub <$> elimExpr a <*> elimExpr b
 -- Smart sqrt multiplication: sqrt(a) * sqrt(b) → sqrt(a*b) OR sqrt(a) * sqrt(a) → a
@@ -214,11 +219,11 @@ elimExpr (Pow (Sqrt a) 2) = do
 elimExpr (Pow e n) = Pow <$> elimExpr e <*> pure n
 elimExpr (Sqrt e) = do
   e' <- elimExpr e
-  case e of
+  case e' of
+    -- Simplify sqrt(x^2) -> x (since lengths/distances are positive)
     Pow t 2 -> do
-      t' <- elimExpr t
-      addConstraint (Ge t' (Const 0))
-      return t'
+      addConstraint (Ge t (Const 0))
+      return t
     _ -> do
       -- Check memo first - reuse variable if we've seen this expression
       (_, memo) <- get
@@ -255,14 +260,14 @@ addConstraint :: Formula -> ElimM ()
 addConstraint f = modify (\(constraints, memo) -> (f : constraints, memo))
 
 -- Add non-negativity constraints for all sqrt subexpressions in an expression
-addNonNegConstraints :: Expr -> ElimM ()
-addNonNegConstraints (Sqrt e) = do
+_addNonNegConstraints :: Expr -> ElimM ()
+_addNonNegConstraints (Sqrt e) = do
   e' <- elimExpr e
   addConstraint (Ge e' (Const 0))
-  addNonNegConstraints e
-addNonNegConstraints (Add a b) = addNonNegConstraints a >> addNonNegConstraints b
-addNonNegConstraints (Sub a b) = addNonNegConstraints a >> addNonNegConstraints b
-addNonNegConstraints (Mul a b) = addNonNegConstraints a >> addNonNegConstraints b
-addNonNegConstraints (Div a b) = addNonNegConstraints a >> addNonNegConstraints b
-addNonNegConstraints (Pow e _) = addNonNegConstraints e
-addNonNegConstraints _ = return ()
+  _addNonNegConstraints e
+_addNonNegConstraints (Add a b) = _addNonNegConstraints a >> _addNonNegConstraints b
+_addNonNegConstraints (Sub a b) = _addNonNegConstraints a >> _addNonNegConstraints b
+_addNonNegConstraints (Mul a b) = _addNonNegConstraints a >> _addNonNegConstraints b
+_addNonNegConstraints (Div a b) = _addNonNegConstraints a >> _addNonNegConstraints b
+_addNonNegConstraints (Pow e _) = _addNonNegConstraints e
+_addNonNegConstraints _ = return ()
