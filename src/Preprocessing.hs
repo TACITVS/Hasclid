@@ -14,6 +14,7 @@ not just apply brute force algorithms.
 
 module Preprocessing
   ( preprocess
+  , preprocessGeometry
   , PreprocessingResult(..)
   , detectDimension
   , extractSubstitutions
@@ -105,6 +106,27 @@ preprocess initialSubs theory goal =
        , eliminatedVars = M.keys subs'
        , simplificationLog = log5
        }
+
+-- | Lightweight geometry normalization before sqrt/rational elimination.
+-- Expands dist2 definitions, applies barycentric rewrite if inside-triangle is detected,
+-- and adds non-negativity constraints for squared distances.
+preprocessGeometry :: M.Map String Expr -> Theory -> Formula -> (Theory, Formula, [String])
+preprocessGeometry subs theory goal =
+  let
+    dist2Subs = extractDist2Substitutions theory
+    theoryD = if M.null dist2Subs
+              then theory
+              else map (applySubstitutionsFormulaNoExpand dist2Subs) theory
+    goalD = if M.null dist2Subs
+            then goal
+            else applySubstitutionsFormulaNoExpand dist2Subs goal
+    log1 = if M.null dist2Subs
+           then []
+           else ["Expanded " ++ show (M.size dist2Subs) ++ " distance definitions"]
+
+    (theoryB, goalB, logBary) = applyBarycentricIfInside subs theoryD goalD
+    (theoryNN, logNN) = addDist2NonnegConstraints theoryB goalB
+  in (theoryNN, goalB, log1 ++ logBary ++ logNN)
 
 extractDist2Substitutions :: Theory -> M.Map String Expr
 extractDist2Substitutions theory =

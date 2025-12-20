@@ -43,7 +43,7 @@ module SolverRouter
 
 import Expr
 import Error
-import Preprocessing (preprocess, PreprocessingResult(..))
+import Preprocessing (preprocess, preprocessGeometry, PreprocessingResult(..))
 import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..))
 import Wu (wuProve, wuProveWithTrace, formatWuTrace, proveExistentialWu, reduceWithWu)
@@ -181,9 +181,12 @@ convertAndGoalRouter theory goal =
 autoSolve :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> AutoSolveResult
 autoSolve opts pointSubs theoryRaw goalRaw =
   let
+    -- 0. Geometry normalization (barycentric/dist2) before elimination
+    (theoryG, goalG, _logG) = preprocessGeometry pointSubs theoryRaw goalRaw
+
     -- 1. PREPROCESSING: Clear sqrts then divisions (Soundness & Legit Proof)
     -- Run Sqrt first because it might introduce divisions (sqrt(A/B) -> sqrt(A)/sqrt(B))
-    (theoryS, goalS) = eliminateSqrt theoryRaw goalRaw
+    (theoryS, goalS) = eliminateSqrt theoryG goalG
     
     (theoryP, goalP) = eliminateRational theoryS goalS
 
