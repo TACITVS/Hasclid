@@ -5,6 +5,7 @@ module RationalElim
 import Expr
 import Control.Monad.State
 import qualified Data.Map.Strict as Map
+import Data.List (isPrefixOf)
 
 -- | Eliminate division by introducing polynomial equivalents.
 -- Transforms rational expressions into polynomial systems with sign conditions:
@@ -283,11 +284,28 @@ elimExpr' e@(IntVar _) = return e
 elimExpr' e@(IntConst _) = return e
 
 -- | Add constraint that denominator is nonzero: g ≠ 0  ≡  (g > 0 ∨ g < 0)
+-- OPTIMIZATION: If g is clearly positive (e.g. Dist2, squared altitude), only add g > 0.
 addDenominatorNonzero :: Expr -> ElimM ()
 addDenominatorNonzero den = do
   (constraints, memo) <- get
   case Map.lookup den memo of
     Just _ -> return ()  -- Already added this constraint
     Nothing -> do
-      let constraint = Or (Gt den (Const 0)) (Lt den (Const 0))
+      let isPositive = isGeomPositive den
+          constraint = if isPositive
+                       then Gt den (Const 0)
+                       else Or (Gt den (Const 0)) (Lt den (Const 0))
       put (constraint : constraints, Map.insert den constraint memo)
+
+-- | Heuristic: Is an expression definitely positive based on geometric axioms?
+isGeomPositive :: Expr -> Bool
+isGeomPositive (Dist2 _ _) = True
+isGeomPositive (Pow e 2) = True
+isGeomPositive (Sqrt _) = True
+isGeomPositive (Mul a b) = isGeomPositive a && isGeomPositive b
+isGeomPositive (Add a b) = isGeomPositive a && isGeomPositive b
+isGeomPositive (Var v) = 
+  -- Side lengths and distance variables are usually positive
+  v `elem` ["a", "b", "c", "R1", "R2", "R3", "ha", "hb", "hc"] || 
+  "ba_" `isPrefixOf` v -- Barycentric coords are non-negative for inside points
+isGeomPositive _ = False

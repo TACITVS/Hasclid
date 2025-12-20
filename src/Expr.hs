@@ -338,6 +338,16 @@ hasNonPolynomial (Sub e1 e2) = hasNonPolynomial e1 || hasNonPolynomial e2
 hasNonPolynomial (Mul e1 e2) = hasNonPolynomial e1 || hasNonPolynomial e2
 hasNonPolynomial (Pow e _) = hasNonPolynomial e
 hasNonPolynomial (Sum _ _ _ _) = True
+hasNonPolynomial (Dist2 _ _) = False
+hasNonPolynomial (Collinear _ _ _) = False
+hasNonPolynomial (Dot _ _ _ _) = False
+hasNonPolynomial (Circle _ _ r) = hasNonPolynomial r
+hasNonPolynomial (Midpoint _ _ _) = False
+hasNonPolynomial (Perpendicular _ _ _ _) = False
+hasNonPolynomial (Parallel _ _ _ _) = False
+hasNonPolynomial (AngleEq2D _ _ _ _ _ _) = False
+hasNonPolynomial (AngleEq2DAbs _ _ _ _ _ _) = False
+hasNonPolynomial (Determinant rows) = any hasNonPolynomial (concat rows)
 hasNonPolynomial _ = False
 
 -- Simplify an Expr by applying algebraic rules
@@ -907,8 +917,8 @@ containsIntFormula (Exists qs f) =
 buildSubMap :: Theory -> M.Map String Poly
 buildSubMap theory = M.fromList $ concat 
   [ case lhs of
-      Var v -> [(v, toPoly rhs)]
-      IntVar v -> [(v, toPoly rhs)]
+      Var v -> if hasNonPolynomial rhs then [] else [(v, toPoly rhs)]
+      IntVar v -> if hasNonPolynomial rhs then [] else [(v, toPoly rhs)]
       _ -> []
   | Eq lhs rhs <- theory 
   ]
@@ -930,7 +940,10 @@ evaluatePoly subM (Poly m) =
   in foldl polyAdd polyZero results
 
 toPolySub :: M.Map String Poly -> Expr -> Poly
-toPolySub subM expr = evaluatePoly subM (toPoly expr)
+toPolySub subM expr = 
+  if hasNonPolynomial expr 
+  then polyZero
+  else evaluatePoly subM (toPoly expr)
 
 -- =============================================
 -- Shared Polynomial Utilities

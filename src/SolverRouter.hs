@@ -178,31 +178,43 @@ convertAndGoalRouter theory goal =
 -- =============================================
 
 -- | Automatically select and run the best solver for a problem
--- ARCHITECTURE: Two-phase solving approach
---
--- PHASE 1: Fast Geometric Constraint Propagation (the "screwdriver")
---   Try GeoSolver first - uses constraint propagation, not polynomial algebra
---   Returns in milliseconds with GeoProved/GeoDisproved/GeoUnknown
---
--- PHASE 2: Algebraic Solvers (the "hammers")
---   If GeoSolver returns GeoUnknown, fall back to Wu/Gröbner/CAD
---   These use polynomial manipulation - slower but more general
 autoSolve :: SolverOptions -> M.Map String Expr -> Theory -> Formula -> AutoSolveResult
-autoSolve opts pointSubs theory goal =
+autoSolve opts pointSubs theoryRaw goalRaw =
   let
-    -- Convert And goal to theory constraints + single goal
-    (theoryWithAnd, singleGoal) = convertAndGoalRouter theory goal
+    -- 1. PREPROCESSING: Clear divisions and sqrts FIRST (Soundness & Legit Proof)
+    (theoryR, goalR) = eliminateRational theoryRaw goalRaw
+    (theoryP, goalP) = eliminateSqrt theoryR goalR
 
-    -- INTELLIGENT PREPROCESSING: Automatically detect 2D, substitute known values (including point coordinates)
+    -- 2. Convert And goal to theory constraints + single goal
+    (theoryWithAnd, singleGoal) = convertAndGoalRouter theoryP goalP
+    
+    -- 3. INTELLIGENT PREPROCESSING: coordinate substitution, etc.
     preprocessResult = preprocess pointSubs theoryWithAnd singleGoal
     theory' = preprocessedTheory preprocessResult
     goal' = preprocessedGoal preprocessResult
 
-    -- Analyze the PREPROCESSED problem structure
+    -- 4. Analyze the PREPROCESSED polynomial problem
     profile = analyzeProblem theory' goal'
     groebner = selectGroebner profile opts goal'
   in
     case goal' of
+      And f1 f2 ->
+        let r1 = autoSolve opts pointSubs theory' f1
+            r2 = autoSolve opts pointSubs theory' f2
+        in AutoSolveResult 
+             { selectedSolver = selectedSolver r1
+             , solverReason = "Conjunction decomposed"
+             , problemProfile = profile
+             , preprocessedGoalExpr = goal'
+             , isProved = isProved r1 && isProved r2
+             , proofReason = proofReason r1 ++ " AND " ++ proofReason r2
+             , proofEvidence = Nothing
+             , detailedTrace = Nothing
+             }
+      Or f1 f2 ->
+        let r1 = autoSolve opts pointSubs theory' f1
+        in if isProved r1 then r1 else autoSolve opts pointSubs theory' f2
+      
       Exists qs inner
         | all (\q -> qvType q == QuantInt) qs ->
             let intNames = map qvName qs

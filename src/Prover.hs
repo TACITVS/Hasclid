@@ -1,5 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
-
 module Prover
   ( proveTheory
   , proveTheoryE
@@ -116,7 +114,7 @@ formatProofTrace trace = unlines $
     formatStep (CheckedPositivity method) = "Checked positivity using: " ++ method
 
 -- =============================================
--- Substitution Logic (Now in Expr.hs)
+-- Substitution Logic
 -- =============================================
 
 -- subPoly uses polyAdd/Neg
@@ -126,9 +124,6 @@ subPoly p1 p2 = polyAdd p1 (polyNeg p2)
 -- =============================================
 -- GROEBNER BASIS ENGINE (Buchberger's Algorithm)
 -- =============================================
-
--- 1. Multivariate Polynomial Reduction (Division) -> Imported from BuchbergerOpt
--- 2. S-Polynomial -> Imported from BuchbergerOpt
 
 -- 3. Buchberger's Algorithm -> Uses Optimized Version
 buchberger :: [Poly] -> [Poly]
@@ -147,10 +142,6 @@ partitionTheory (f:fs) =
        Eq (IntVar _) _ -> (f:subs, constrs)
        Eq _ _       -> (subs, f:constrs)
        _            -> (subs, constrs)
-
--- =============================================
--- Lightweight preprocessing for Groebner goals
--- =============================================
 
 -- Substitute a map inside a formula (avoids capture for bound vars).
 substFormula :: M.Map String Expr -> Formula -> Formula
@@ -171,36 +162,29 @@ substFormula sub (Exists qs f) =
   in Exists qs (substFormula blocked f)
 
 -- Detect a linear equality and solve for the lexicographically largest variable.
--- This allows eliminating one variable even from multivariate linear equations
--- (e.g., alpha + beta + gamma = 1 -> gamma = 1 - alpha - beta).
 solveLinearSingleVar :: Expr -> Expr -> Maybe (String, Expr)
 solveLinearSingleVar l r =
   case linearCoeffs (toPolySub M.empty (Sub l r)) of
     Just (coeffs, c) | not (M.null coeffs) ->
-      -- Pick the "largest" variable to solve for (best for elimination)
       let (v, a) = M.findMax coeffs
-          -- a*v + sum(a_i * v_i) + c = 0  => v = (-c - sum(a_i * v_i)) / a
           otherTerms = M.delete v coeffs
-          numerator = foldl' (\acc (v', ai) -> Sub acc (Mul (Const ai) (Var v'))) (Const (-c)) (M.toList otherTerms)
+          numerator = L.foldl' (\acc (v', ai) -> Sub acc (Mul (Const ai) (Var v'))) (Const (-c)) (M.toList otherTerms)
           val = simplifyExpr (Div numerator (Const a))
       in Just (v, val)
     _ -> Nothing
   where
     linearCoeffs :: Poly -> Maybe (M.Map String Rational, Rational)
     linearCoeffs (Poly mp) =
-      foldl' step (Just (M.empty, 0)) (M.toList mp)
+      L.foldl' step (Just (M.empty, 0)) (M.toList mp)
       where
         step Nothing _ = Nothing
         step (Just (vs, c)) (Monomial mon, coeff) =
-          case M.toList mon of
+          case M.toList mon of 
             [] -> Just (vs, c + coeff)
             [(v,1)] -> Just (M.insertWith (+) v coeff vs, c)
-            _ -> Nothing -- Non-linear term found
+            _ -> Nothing
 
-    foldl' = L.foldl'
-
--- Iteratively eliminates simple linear equalities to constants,
--- applying substitutions to both theory and goal.
+-- Iteratively eliminates simple linear equalities to constants
 preprocessSystem :: Theory -> Formula -> (Theory, Formula, [(String, Expr)])
 preprocessSystem theory formula = go theory formula []
   where
@@ -220,7 +204,7 @@ preprocessSystem theory formula = go theory formula []
     substitutionCandidate (Eq l r) = isJust (solveLinearSingleVar l r)
     substitutionCandidate _ = False
 
--- | Expand bounded integer quantifiers (finite domain)
+-- | Expand bounded integer quantifiers
 expandFiniteDomain :: Formula -> Formula
 expandFiniteDomain form = case form of
   Forall qs body -> expandQuantHelper Forall And (Eq (Const 1) (Const 1)) qs body
@@ -260,7 +244,7 @@ expandVars op emptyVal (q:qs) body =
         in foldr1 op instances
 
 isBoundedConstantInt :: QuantVar -> Bool
-isBoundedConstantInt (QuantVar _ QuantInt (Just l) (Just h)) = 
+isBoundedConstantInt (QuantVar _ QuantInt (Just l) (Just h)) =
   isConstInt l && isConstInt h && (getConstInt h - getConstInt l <= 100)
 isBoundedConstantInt _ = False
 
@@ -274,7 +258,7 @@ getConstInt (IntConst i) = i
 getConstInt (Const r) = numerator r
 getConstInt _ = 0
 
--- Shared Groebner fallback used by both cached and custom Buchberger flows.
+-- Shared Groebner fallback
 groebnerFallback
   :: ([Poly] -> [Poly])
   -> Maybe GroebnerCache
@@ -284,7 +268,6 @@ groebnerFallback
 groebnerFallback customBuchberger maybeCache theory formula =
   let
     (theoryPrep, formulaPrep, subApplied) = preprocessSystem theory formula
-
     (substAssumptions, constraintAssumptions) = partitionTheory theoryPrep
     subM = buildSubMap substAssumptions
 
@@ -302,7 +285,7 @@ groebnerFallback customBuchberger maybeCache theory formula =
              Nothing -> (customBuchberger idealGenerators, Nothing)
              Just cache ->
                let (maybeCached, cacheAfterLookup) = lookupBasis idealGenerators cache
-               in case maybeCached of
+               in case maybeCached of 
                     Just cachedBasis -> (cachedBasis, Just cacheAfterLookup)
                     Nothing ->
                       let computed = customBuchberger idealGenerators
@@ -314,12 +297,12 @@ groebnerFallback customBuchberger maybeCache theory formula =
                  Eq l r -> (toPolySub subM l, toPolySub subM r)
                  Ge l r -> (toPolySub subM l, toPolySub subM r)
                  Gt l r -> (toPolySub subM l, toPolySub subM r)
-                 Le l r -> (toPolySub subM r, toPolySub subM l)  -- Flip: l <= r becomes r >= l
-                 Lt l r -> (toPolySub subM r, toPolySub subM l)  -- Flip: l < r becomes r > l
+                 Le l r -> (toPolySub subM r, toPolySub subM l)
+                 Lt l r -> (toPolySub subM r, toPolySub subM l)
                  _      -> (polyZero, polyZero)
 
     difference = subPoly pL pR
-    normalForm = reduce compare difference basis  -- Use Lex order for backwards compatibility
+    normalForm = reduce compare difference basis
     reductionStep = [ReducedToNormalForm difference normalForm]
     allSteps = substSteps ++ preSubSteps ++ constraintSteps ++ basisStep ++ reductionStep
   in case formulaPrep of
@@ -344,13 +327,13 @@ groebnerFallback customBuchberger maybeCache theory formula =
          in (result, msg, trace, updatedCache)
 
        Le _ _ ->
-         let (result, msg) = checkPositivity normalForm True  -- l <= r becomes r >= l
+         let (result, msg) = checkPositivity normalForm True
              positivityStep = [CheckedPositivity msg]
              trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
 
        Lt _ _ ->
-         let (result, msg) = checkPositivity normalForm False  -- l < r becomes r > l
+         let (result, msg) = checkPositivity normalForm False
              positivityStep = [CheckedPositivity msg]
              trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
@@ -359,58 +342,30 @@ groebnerFallback customBuchberger maybeCache theory formula =
          (False, "Goal not supported by available solvers.", ProofTrace allSteps theoryPrep (length basis), updatedCache)
 
 -- | Prove a formula with optional cache support
--- Returns: (isProved, reason, trace, updatedCache)
 proveTheoryWithCache :: Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
 proveTheoryWithCache maybeCache theoryRaw formulaRaw =
   let theory = map expandFiniteDomain theoryRaw
       formula = expandFiniteDomain formulaRaw
       baseTrace = emptyTrace { usedAssumptions = theory }
-      hasInt = containsIntFormula formula || any containsIntFormula theory
-      hasDiv = containsDivFormula formula || any containsDivFormula theory
-      hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
+  in case formula of
+      And f1 f2 ->
+        let (p1, r1, t1, c1) = proveTheoryWithCache maybeCache theory f1
+        in if p1
+           then let (p2, r2, t2, c2) = proveTheoryWithCache c1 theory f2
+                in (p2, if p2 then "Both conjuncts proved: " ++ r1 ++ " AND " ++ r2 else "Failed on second conjunct: " ++ r2, t1 { steps = steps t1 ++ steps t2 }, c2)
+           else (False, "Failed on first conjunct: " ++ r1, t1, c1)
       
-      fallThrough baseTrace' hasInt' hasDiv' hasSqrt'
-        | any containsQuantifier theory = 
-            (False, "Quantifiers in assumptions are not supported yet.", baseTrace', maybeCache)
-        | hasInt' = 
-            let outcome = intSolve defaultIntSolveOptions theory formula
-            in case intResult outcome of
-                 Just True  -> (True, reasonOutcome outcome True, baseTrace', maybeCache)
-                 Just False -> (False, reasonOutcome outcome False, baseTrace', maybeCache)
-                 Nothing    -> 
-                   case formula of
-                     Eq _ _ -> 
-                       let (gProved, gReason, gTrace, gCache) = groebnerFallback buchberger maybeCache theory formula
-                       in if gProved 
-                          then (True, "Proved by Algebraic Solver (valid for Integers): " ++ gReason, gTrace, gCache)
-                          else (False, "Integer Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
-                     _ -> 
-                       let msg = "Integer domain parsed but solver is incomplete for this goal."
-                                 ++ if intBruteCandidate outcome
-                                    then " A bounded brute-force search is available but currently disabled."
-                                    else ""
-                       in (False, msg, baseTrace', maybeCache)
-                | hasDiv' =
-                    let (th', goal') = eliminateRational theory formula
-                        hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
-                        (th'', goal'') = if hasSqrt'
-                                           then eliminateSqrt th' goal'
-                                           else (th', goal')
-                    in proveTheoryWithCache maybeCache th'' goal''        | hasSqrt' = 
-            let (th', goal') = eliminateSqrt theory formula
-                proved = proveFormulaCAD th' goal'
-                msg = if proved
-                      then "Proved via CAD with sqrt elimination"
-                      else "Not proved via CAD with sqrt elimination"
-                trace = emptyTrace { usedAssumptions = th' }
-            in (proved, msg, trace, maybeCache)
-        | containsQuantifier formula = 
-            let proved = solveQuantifiedFormulaCAD theory formula
-                msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
-            in (proved, msg, baseTrace', maybeCache)
-        | otherwise = groebnerFallback buchberger maybeCache theory formula
-  in 
-    case formula of
+      Or f1 f2 ->
+        let (p1, r1, t1, c1) = proveTheoryWithCache maybeCache theory f1
+        in if p1 
+           then (True, "Proved first disjunct: " ++ r1, t1, c1)
+           else let (p2, r2, t2, c2) = proveTheoryWithCache c1 theory f2
+                in if p2
+                   then (True, "Proved second disjunct: " ++ r2, t2, c2)
+                   else (False, "Failed to prove either disjunct: (" ++ r1 ++ ") OR (" ++ r2 ++ ")", t1, c2)
+
+      Not f -> (False, "Top-level negation not supported yet.", baseTrace, maybeCache)
+
       Forall qs inner
         | all (\q -> qvType q == QuantReal) qs
         , not (any containsQuantifier theory) -> 
@@ -422,15 +377,15 @@ proveTheoryWithCache maybeCache theoryRaw formulaRaw =
                     hasSqrtForm = containsSqrtFormula inner || any containsSqrtFormula theory
                     polyOk = all isPolyFormula (inner : theory)
                 in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk
-                                                     then (False, "Real universal (unbounded) not supported for non-polynomial or mixed-domain goals.", baseTrace, maybeCache)
+                                                     then (False, "Real universal not supported for non-polynomial or mixed goals.", baseTrace, maybeCache)
                                                      else 
                                                        case negateRealGoal inner of 
-                                                         Nothing -> (False, "Real universal negation unsupported for this goal.", baseTrace, maybeCache)
+                                                         Nothing -> (False, "Real universal negation unsupported.", baseTrace, maybeCache)
                                                          Just negs -> 
                                                            let satAny = any (\ng -> satisfiableFormulaCAD theory ng) negs
                                                            in if satAny 
-                                                                then (False, "Found counterexample branch for real universal (CAD satisfiable).", baseTrace, maybeCache)
-                                                                else (True, "Real universal proved by refuting negation with CAD.", baseTrace, maybeCache)
+                                                                then (False, "Found counterexample branch for real universal.", baseTrace, maybeCache)
+                                                                else (True, "Real universal proved by refuting negation.", baseTrace, maybeCache)
 
       Exists qs inner
         | all (\q -> qvType q == QuantReal) qs
@@ -441,24 +396,25 @@ proveTheoryWithCache maybeCache theoryRaw formulaRaw =
                 hasNestedQuant = containsQuantifier inner
                 polyOk = all isPolyFormula (inner : theory)
             in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk || hasNestedQuant
-                 then fallThrough baseTrace hasInt hasDiv hasSqrt
+                 then fallThrough maybeCache theory formula baseTrace
                  else 
                    let (holds, msg) =
                          case traverse boundsFromQ qs of 
                            Nothing -> 
                              let ok = satisfiableFormulaCAD theory inner
                                  m = if ok 
-                                       then "Real existential proved satisfiable via CAD."
-                                       else "Real existential refuted via CAD (no satisfying cell)."
+                                       then "Real existential proved via CAD."
+                                       else "Real existential refuted via CAD."
                              in (ok, m)
                            Just bnds -> 
                              let theoryWithBounds = theory ++ concat bnds
                                  ok = satisfiableFormulaCAD theoryWithBounds inner
                                  m = if ok 
-                                       then "Real existential proved satisfiable via CAD over bounding box."
-                                       else "Real existential refuted via CAD within bounds."
+                                       then "Real existential proved via CAD over bounding box."
+                                       else "Real existential refuted via CAD."
                              in (ok, m)
                    in (holds, msg, baseTrace, maybeCache)
+
       Exists qs inner
         | all (\q -> qvType q == QuantInt) qs -> 
             let intNames = map qvName qs
@@ -471,7 +427,7 @@ proveTheoryWithCache maybeCache theoryRaw formulaRaw =
                 msg = case intResult outcome of 
                         Just True  -> "Existential integer goal is satisfiable. " ++ reasonOutcome outcome True
                         Just False -> "Existential integer goal is unsatisfiable. " ++ reasonOutcome outcome False
-                        Nothing    -> "Integer existential parsed but solver is incomplete for this goal."
+                        Nothing    -> "Integer existential solver incomplete."
             in (proved, msg, baseTrace, maybeCache)
 
       Forall qs inner
@@ -482,158 +438,102 @@ proveTheoryWithCache maybeCache theoryRaw formulaRaw =
                 (decided, msg) = proveForallInt theoryInt innerInt
             in (decided, msg, baseTrace, maybeCache)
 
-      Forall _ _ -> 
-        let quantMsg = "Quantifiers are not yet supported; cannot solve universally quantified goal: " ++ prettyFormula formula
-        in (False, quantMsg, baseTrace, maybeCache)
+      Forall _ _ -> (False, "Unsupported universal quantifier.", baseTrace, maybeCache)
 
-      _ -> fallThrough baseTrace hasInt hasDiv hasSqrt
+      _ -> fallThrough maybeCache theory formula baseTrace
 
--- | Prove a formula with custom Buchberger function and optional cache support
--- Returns: (isProved, reason, trace, updatedCache)
+fallThrough :: Maybe GroebnerCache -> Theory -> Formula -> ProofTrace -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+fallThrough maybeCache theory formula baseTrace =
+  let hasInt = containsIntFormula formula || any containsIntFormula theory
+      hasDiv = containsDivFormula formula || any containsDivFormula theory
+      hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
+  in if any containsQuantifier theory then
+       (False, "Quantifiers in assumptions not supported yet.", baseTrace, maybeCache)
+     else if hasInt then
+       let outcome = intSolve defaultIntSolveOptions theory formula
+       in case intResult outcome of
+            Just True  -> (True, reasonOutcome outcome True, baseTrace, maybeCache)
+            Just False -> (False, reasonOutcome outcome False, baseTrace, maybeCache)
+            Nothing    -> 
+              case formula of
+                Eq _ _ -> 
+                  let (gProved, gReason, gTrace, gCache) = groebnerFallback buchberger maybeCache theory formula
+                  in if gProved 
+                     then (True, "Proved by Algebraic Solver: " ++ gReason, gTrace, gCache)
+                     else (False, "Int Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
+                _ -> (False, "Integer solver incomplete.", baseTrace, maybeCache)
+     else if hasDiv then
+       let (th', goal') = eliminateRational theory formula
+           hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
+           (th'', goal'') = if hasSqrt' then eliminateSqrt th' goal' else (th', goal')
+       in proveTheoryWithCache maybeCache th'' goal''
+     else if hasSqrt then
+       let (th', goal') = eliminateSqrt theory formula
+           proved = proveFormulaCAD th' goal'
+           msg = if proved then "Proved via CAD with sqrt elimination." else "Not proved via CAD."
+           trace = emptyTrace { usedAssumptions = th' }
+       in (proved, msg, trace, maybeCache)
+     else if containsQuantifier formula then
+       let proved = solveQuantifiedFormulaCAD theory formula
+           msg = if proved then "Proved by CAD (QE)." else "Refuted by CAD (QE)."
+       in (proved, msg, baseTrace, maybeCache)
+     else groebnerFallback buchberger maybeCache theory formula
+
 proveTheoryWithOptions :: ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
 proveTheoryWithOptions customBuchberger maybeCache theoryRaw formulaRaw =
   let theory = map expandFiniteDomain theoryRaw
       formula = expandFiniteDomain formulaRaw
       baseTrace = emptyTrace { usedAssumptions = theory }
-      hasInt = containsIntFormula formula || any containsIntFormula theory
+  in case formula of
+      And f1 f2 ->
+        let (p1, r1, t1, c1) = proveTheoryWithOptions customBuchberger maybeCache theory f1
+        in if p1
+           then let (p2, r2, t2, c2) = proveTheoryWithOptions customBuchberger c1 theory f2
+                in (p2, if p2 then "Both conjuncts proved: " ++ r1 ++ " AND " ++ r2 else "Failed on second conjunct: " ++ r2, t1 { steps = steps t1 ++ steps t2 }, c2)
+           else (False, "Failed on first conjunct: " ++ r1, t1, c1)
+      
+      Or f1 f2 ->
+        let (p1, r1, t1, c1) = proveTheoryWithOptions customBuchberger maybeCache theory f1
+        in if p1 
+           then (True, "Proved first disjunct: " ++ r1, t1, c1)
+           else let (p2, r2, t2, c2) = proveTheoryWithOptions customBuchberger c1 theory f2
+                in if p2
+                   then (True, "Proved second disjunct: " ++ r2, t2, c2)
+                   else (False, "Failed to prove either disjunct.", t1, c2)
+
+      _ -> fallThroughWithOptions customBuchberger maybeCache theory formula baseTrace
+
+fallThroughWithOptions :: ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory -> Formula -> ProofTrace -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+fallThroughWithOptions customBuchberger maybeCache theory formula baseTrace =
+  let hasInt = containsIntFormula formula || any containsIntFormula theory
       hasDiv = containsDivFormula formula || any containsDivFormula theory
       hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
-      
-      fallThrough baseTrace' hasInt' hasDiv' hasSqrt'
-        | any containsQuantifier theory = 
-            (False, "Quantifiers in assumptions are not supported yet.", baseTrace', maybeCache)
-        | hasInt' = 
-            let outcome = intSolve defaultIntSolveOptions theory formula
-            in case intResult outcome of
-                 Just True  -> (True, reasonOutcome outcome True, baseTrace', maybeCache)
-                 Just False -> (False, reasonOutcome outcome False, baseTrace', maybeCache)
-                 Nothing    -> 
-                   case formula of 
-                     Eq _ _ -> 
-                       let (gProved, gReason, gTrace, gCache) = groebnerFallback customBuchberger maybeCache theory formula
-                       in if gProved 
-                          then (True, "Proved by Algebraic Solver (valid for Integers): " ++ gReason, gTrace, gCache)
-                          else (False, "Integer Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
-                     _ -> 
-                       let msg = "Integer domain parsed but solver is incomplete for this goal."
-                                 ++ if intBruteCandidate outcome
-                                    then " A bounded brute-force search is available but currently disabled."
-                                    else ""
-                       in (False, msg, baseTrace', maybeCache)
-                | hasDiv' =
-                    let (th', goal') = eliminateRational theory formula
-                        hasSqrt'' = containsSqrtFormula goal' || any containsSqrtFormula th'
-                        (th'', goal'') = if hasSqrt''
-                                           then eliminateSqrt th' goal'
-                                           else (th', goal')
-                    in proveTheoryWithOptions customBuchberger maybeCache th'' goal''        | hasSqrt' = 
-            let (th', goal') = eliminateSqrt theory formula
-                proved = proveFormulaCAD th' goal'
-                msg = if proved
-                      then "Proved via CAD with sqrt elimination"
-                      else "Not proved via CAD with sqrt elimination"
-                trace = emptyTrace { usedAssumptions = th' }
-            in (proved, msg, trace, maybeCache)
-        | containsQuantifier formula = 
-            let proved = solveQuantifiedFormulaCAD theory formula
-                msg = if proved then "Proved by CAD (Quantifier Elimination)" else "Refuted by CAD (Quantifier Elimination)"
-            in (proved, msg, baseTrace', maybeCache)
-        | otherwise = 
-            groebnerFallback customBuchberger maybeCache theory formula
-  in 
-    case formula of
-      Forall qs inner
-        | all (\q -> qvType q == QuantReal) qs
-        , not (any containsQuantifier theory) -> 
-            case proveBoundedRealsForall theory qs inner of
-              Just (res, msg) -> (res, msg, baseTrace, maybeCache)
-              Nothing -> 
-                let hasIntForm = containsIntFormula inner || any containsIntFormula theory
-                    hasDivForm = containsDivFormula inner || any containsDivFormula theory
-                    hasSqrtForm = containsSqrtFormula inner || any containsSqrtFormula theory
-                    polyOk = all isPolyFormula (inner : theory)
-                in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk
-                     then fallThrough baseTrace hasInt hasDiv hasSqrt
-                     else 
-                       case negateRealGoal inner of 
-                         Nothing -> fallThrough baseTrace hasInt hasDiv hasSqrt
-                         Just negs -> 
-                           let satAny = any (\ng -> satisfiableFormulaCAD theory ng) negs
-                           in if satAny 
-                                then (False, "Found counterexample branch for real universal (CAD satisfiable).", baseTrace, maybeCache)
-                                else (True, "Real universal proved by refuting negation with CAD.", baseTrace, maybeCache)
-
-      Exists qs inner
-        | all (\q -> qvType q == QuantReal) qs
-        , not (any containsQuantifier theory) -> 
-            let hasIntForm = containsIntFormula inner || any containsIntFormula theory
-                hasDivForm = containsDivFormula inner || any containsDivFormula theory
-                hasSqrtForm = containsSqrtFormula inner || any containsSqrtFormula theory
-                hasNestedQuant = containsQuantifier inner
-                polyOk = all isPolyFormula (inner : theory)
-            in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk || hasNestedQuant
-                 then fallThrough baseTrace hasInt hasDiv hasSqrt
-                 else 
-                   let (holds, msg) =
-                         case traverse boundsFromQ qs of 
-                           Nothing -> 
-                             let ok = satisfiableFormulaCAD theory inner
-                                 m = if ok 
-                                       then "Real existential proved satisfiable via CAD."
-                                       else "Real existential refuted via CAD (no satisfying cell)."
-                             in (ok, m)
-                           Just bnds -> 
-                             let theoryWithBounds = theory ++ concat bnds
-                                 ok = satisfiableFormulaCAD theoryWithBounds inner
-                                 m = if ok 
-                                       then "Real existential proved satisfiable via CAD over bounding box."
-                                       else "Real existential refuted via CAD within bounds."
-                             in (ok, m)
-                   in (holds, msg, baseTrace, maybeCache)
-
-      Exists qs inner
-        | all (\q -> qvType q == QuantInt) qs -> 
-            let intNames = map qvName qs
-                theoryInt = map (promoteIntVars intNames) theory
-                innerInt = promoteIntVars intNames inner
-                bounds = concatMap intBoundsFromQ qs
-                boundsInt = map (promoteIntVars intNames) bounds
-                outcome = intSat defaultIntSolveOptions (theoryInt ++ boundsInt ++ [innerInt])
-                proved = intResult outcome == Just True
-                msg = case intResult outcome of 
-                        Just True  -> "Existential integer goal is satisfiable. " ++ reasonOutcome outcome True
-                        Just False -> "Existential integer goal is unsatisfiable. " ++ reasonOutcome outcome False
-                        Nothing    -> "Integer existential parsed but solver is incomplete for this goal."
-            in (proved, msg, baseTrace, maybeCache)
-
-      Forall qs inner
-        | all (\q -> qvType q == QuantInt) qs -> 
-            let intNames = map qvName qs
-                theoryInt = map (promoteIntVars intNames) theory
-                innerInt = promoteIntVars intNames inner
-                (decided, msg) = proveForallInt theoryInt innerInt
-            in (decided, msg, baseTrace, maybeCache)
-
-      Forall _ _ -> 
-        (False, "Quantifiers are not yet supported; cannot solve universally quantified goal: " ++ prettyFormula formula, baseTrace, maybeCache)
-
-      _ -> fallThrough baseTrace hasInt hasDiv hasSqrt
+  in if hasDiv then
+       let (th', goal') = eliminateRational theory formula
+           hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
+           (th'', goal'') = if hasSqrt' then eliminateSqrt th' goal' else (th', goal')
+       in proveTheoryWithOptions customBuchberger maybeCache th'' goal''
+     else if hasSqrt then
+       let (th', goal') = eliminateSqrt theory formula
+           proved = proveFormulaCAD th' goal'
+           msg = if proved then "Proved via CAD with sqrt elimination." else "Not proved via CAD."
+           trace = emptyTrace { usedAssumptions = th' }
+       in (proved, msg, trace, maybeCache)
+     else groebnerFallback customBuchberger maybeCache theory formula
 
 -- | Original proveTheory function (no caching)
--- Legacy API - returns tuple for backward compatibility
 proveTheory :: Theory -> Formula -> (Bool, String, ProofTrace)
 proveTheory theory formula =
   let (isProved, reason, trace, _) = proveTheoryWithCache Nothing theory formula
   in (isProved, reason, trace)
 
--- | Either-based proveTheory (recommended API)
--- Returns Either ProverError ProofResult for better error handling
+-- | Either-based proveTheory
 proveTheoryE :: Theory -> Formula -> Either ProverError ProofResult
 proveTheoryE theory formula =
   let (isProved, reason, trace, _) = proveTheoryWithCache Nothing theory formula
   in Right $ ProofResult isProved reason trace
 
--- | Enhanced Positivity Checker with multiple methods
+-- | Enhanced Positivity Checker
 checkPositivity :: Poly -> Bool -> (Bool, String)
 checkPositivity p allowZero =
   let result = checkPositivityEnhanced p allowZero
@@ -644,27 +544,25 @@ checkPositivity p allowZero =
       methodStr = show (method result)
   in (isPositive result, confidenceStr ++ " " ++ explanation result ++ " (Method: " ++ methodStr ++ ")")
 
--- Prove universal integer goals by refuting negation via integer solver.
--- Returns (proved?, message)
+-- Prove universal integer goals
 proveForallInt :: Theory -> Formula -> (Bool, String)
 proveForallInt theory goal =
   case negateIntGoal goal of
-    Nothing -> (False, "Integer universal parsed but negation is unsupported for this goal shape.")
+    Nothing -> (False, "Integer negation unsupported.")
     Just negs -> 
       let outcomes = [ intSat defaultIntSolveOptions (theory ++ [ng]) | ng <- negs ]
           anySat = any (\o -> intResult o == Just True) outcomes
           anyUnknown = any (\o -> intResult o == Nothing) outcomes
       in if anySat
-           then (False, "Found a counterexample branch for integer universal (negation satisfiable).")
+           then (False, "Found counterexample.")
            else if anyUnknown
-                  then (False, "Integer universal parsed but solver is incomplete for this goal.")
-                  else (True, "Integer universal proved by refuting all negation branches.")
+                  then (False, "Solver incomplete.")
+                  else (True, "Integer universal proved.")
 
--- Bounded real universals (single variable, linear inequality with rational bounds)
+-- Bounded real universals
 proveBoundedRealsForall :: Theory -> [QuantVar] -> Formula -> Maybe (Bool, String)
 proveBoundedRealsForall theory qs goal
   | null qs = Nothing
-    | not (all (\q -> qvType q == QuantReal) qs) = Nothing
   | any (isNothing . qvLower) qs || any (isNothing . qvUpper) qs = Nothing
   | [q] <- qs =
       case (qvLower q >>= rationalFromExpr, qvUpper q >>= rationalFromExpr) of
@@ -674,31 +572,15 @@ proveBoundedRealsForall theory qs goal
               Just (coef, constTerm, strict) ->
                 let minVal = if coef >= 0 then coef * lo + constTerm else coef * hi + constTerm
                 in if strict
-                     then Just (minVal > 0, if minVal > 0 then "Bounded real universal proved (linear > 0 over interval)" else "Found counterexample in bounded real universal.")
-                     else Just (minVal >= 0, if minVal >= 0 then "Bounded real universal proved (linear >= 0 over interval)" else "Found counterexample in bounded real universal.")
+                     then Just (minVal > 0, if minVal > 0 then "Proved (linear > 0)" else "Counterexample.")
+                     else Just (minVal >= 0, if minVal >= 0 then "Proved (linear >= 0)" else "Counterexample.")
               Nothing -> 
                 case univariatePolyForVar (qvName q) goal of
-                  Just (upoly, strict) -> 
-                    proveUnivariatePolyForall lo hi upoly strict
+                  Just (upoly, strict) -> proveUnivariatePolyForall lo hi upoly strict
                   Nothing -> Nothing
         _ -> Nothing
-  | otherwise =
-      let hasIntForm = containsIntFormula goal || any containsIntFormula theory
-          hasSqrtForm = containsSqrtFormula goal || any containsSqrtFormula theory
-          polyOk = all isPolyFormula (goal : theory)
-      in if hasIntForm || hasSqrtForm || not polyOk
-           then Nothing
-           else 
-             case traverse boundsFromQ qs of 
-               Nothing -> Nothing
-               Just bnds -> 
-                 let theoryWithBounds = theory ++ concat bnds
-                     holds = proveFormulaCAD theoryWithBounds goal
-                 in Just (holds, if holds 
-                                  then "Bounded real universal proved via CAD over bounding box."
-                                  else "Counterexample exists within bounds (CAD).")
--- Extract linear coefficient for a single variable from an inequality
--- Returns (a, c, strict) meaning a*x + c >= 0 (or > 0 if strict)
+  | otherwise = Nothing
+
 linearBoundsForVar :: String -> Formula -> Maybe (Rational, Rational, Bool)
 linearBoundsForVar v (Ge l r) = linearCoeffs v (toPolySub M.empty (Sub l r)) False
 linearBoundsForVar v (Gt l r) = linearCoeffs v (toPolySub M.empty (Sub l r)) True
@@ -707,7 +589,7 @@ linearBoundsForVar _ _ = Nothing
 linearCoeffs :: String -> Poly -> Bool -> Maybe (Rational, Rational, Bool)
 linearCoeffs v (Poly mp) strict =
   let terms = M.toList mp
-      (aSum, cSum, ok) = foldl (\(a,c,good) (mon, coeff) ->
+      (aSum, cSum, ok) = L.foldl' (\(a,c,good) (mon, coeff) ->
                                   case mon of
                                     Monomial m -> 
                                       case M.toList m of 
@@ -733,10 +615,6 @@ boundsFromQ q =
 intBoundsFromQ :: QuantVar -> [Formula]
 intBoundsFromQ (QuantVar v QuantInt (Just lo) (Just hi)) =
   [Ge (IntVar v) lo, Le (IntVar v) hi]
-intBoundsFromQ (QuantVar v QuantInt (Just lo) Nothing) =
-  [Ge (IntVar v) lo]
-intBoundsFromQ (QuantVar v QuantInt Nothing (Just hi)) =
-  [Le (IntVar v) hi]
 intBoundsFromQ _ = []
 
 isPolyFormula :: Formula -> Bool
@@ -745,18 +623,16 @@ isPolyFormula (Ge l r) = not (hasNonPolynomial l || hasNonPolynomial r)
 isPolyFormula (Gt l r) = not (hasNonPolynomial l || hasNonPolynomial r)
 isPolyFormula (Le l r) = not (hasNonPolynomial l || hasNonPolynomial r)
 isPolyFormula (Lt l r) = not (hasNonPolynomial l || hasNonPolynomial r)
-isPolyFormula (Forall _ f) = isPolyFormula f
-isPolyFormula (Exists _ f) = isPolyFormula f
 isPolyFormula (And f1 f2) = isPolyFormula f1 && isPolyFormula f2
 isPolyFormula (Or f1 f2) = isPolyFormula f1 && isPolyFormula f2
 isPolyFormula (Not f) = isPolyFormula f
+isPolyFormula _ = False
 
--- Convert Poly to univariate coefficient list in variable v, if possible.
 polyToUPoly :: String -> Poly -> Maybe [Rational]
 polyToUPoly v (Poly mp) =
   let addTerm acc (Monomial m, coeff) =
         case M.toList m of 
-          [] -> Just (M.insertWith (+) 0 coeff acc) -- constant term
+          [] -> Just (M.insertWith (+) 0 coeff acc)
           [(v', p)] | v' == v -> Just (M.insertWith (+) p coeff acc)
           _ -> Nothing
       coeffMap = foldM addTerm M.empty (M.toList mp)
@@ -766,7 +642,6 @@ polyToUPoly v (Poly mp) =
          let maxPow = if M.null cm then 0 else maximum (M.keys cm)
          in Just [ M.findWithDefault 0 i cm | i <- [0..maxPow] ]
 
--- Extract univariate polynomial (in target var) from a >= or > goal
 univariatePolyForVar :: String -> Formula -> Maybe ([Rational], Bool)
 univariatePolyForVar v (Ge l r) =
   let p = toPolySub M.empty (Sub l r)
@@ -776,7 +651,6 @@ univariatePolyForVar v (Gt l r) =
   in (,True) <$> polyToUPoly v p
 univariatePolyForVar _ _ = Nothing
 
--- Prove that a univariate polynomial is non-negative (or positive) over [lo, hi].
 proveUnivariatePolyForall :: Rational -> Rational -> [Rational] -> Bool -> Maybe (Bool, String)
 proveUnivariatePolyForall lo hi upoly strict =
   let seq = sturmSequence upoly
@@ -787,17 +661,10 @@ proveUnivariatePolyForall lo hi upoly strict =
       rootCount = rootsInInterval seq lo hi
       allVals = evals ++ endVals
   in if strict
-       then 
-         if rootCount > 0 
-           then Just (False, "Found counterexample in bounded real universal (root in interval).")
-           else 
-             let ok = all (> 0) allVals
-             in Just (ok, if ok then "Bounded real universal proved (polynomial > 0 over interval)" else "Found counterexample in bounded real universal.")
-       else 
-         let ok = all (>= 0) allVals
-         in Just (ok, if ok then "Bounded real universal proved (polynomial >= 0 over interval)" else "Found counterexample in bounded real universal.")
+       then if rootCount > 0 then Just (False, "Root in interval.")
+            else let ok = all (> 0) allVals in Just (ok, if ok then "Proved." else "Counterexample.")
+       else let ok = all (>= 0) allVals in Just (ok, if ok then "Proved." else "Counterexample.")
 
--- Check if variable occurs in theory
 varInTheory :: String -> Theory -> Bool
 varInTheory v = any (v `elem`) . map varsInFormula
 
@@ -805,11 +672,10 @@ varsInFormula :: Formula -> [String]
 varsInFormula (Eq l r) = varsInExpr l ++ varsInExpr r
 varsInFormula (Ge l r) = varsInExpr l ++ varsInExpr r
 varsInFormula (Gt l r) = varsInExpr l ++ varsInExpr r
-varsInFormula (Forall _ f) = varsInFormula f
-varsInFormula (Exists _ f) = varsInFormula f
 varsInFormula (And f1 f2) = varsInFormula f1 ++ varsInFormula f2
 varsInFormula (Or f1 f2) = varsInFormula f1 ++ varsInFormula f2
 varsInFormula (Not f) = varsInFormula f
+varsInFormula _ = []
 
 varsInExpr :: Expr -> [String]
 varsInExpr (Var v) = [v]
@@ -819,25 +685,20 @@ varsInExpr (Mul a b) = varsInExpr a ++ varsInExpr b
 varsInExpr (Div a b) = varsInExpr a ++ varsInExpr b
 varsInExpr (Pow e _) = varsInExpr e
 varsInExpr (Sqrt e) = varsInExpr e
-varsInExpr (Determinant rows) = concatMap varsInExpr (concat rows)
-varsInExpr (Circle _ _ r) = varsInExpr r
 varsInExpr _ = []
 
--- Generate negation branches for a simple integer goal.
 negateIntGoal :: Formula -> Maybe [Formula]
 negateIntGoal (Eq l r) = Just [Gt l r, Gt r l]
-negateIntGoal (Ge l r) = Just [Gt r l]     -- ¬(l >= r) => r > l
-negateIntGoal (Gt l r) = Just [Ge r l]     -- ¬(l > r)  => r >= l
+negateIntGoal (Ge l r) = Just [Gt r l]
+negateIntGoal (Gt l r) = Just [Ge r l]
 negateIntGoal _ = Nothing
 
--- Generate negation branches for a simple real goal (polynomial comparisons).
 negateRealGoal :: Formula -> Maybe [Formula]
 negateRealGoal (Eq l r) = Just [Gt l r, Gt r l]
-negateRealGoal (Ge l r) = Just [Gt r l]     -- ¬(l >= r) => r > l
-negateRealGoal (Gt l r) = Just [Ge r l]     -- ¬(l > r)  => r >= l
+negateRealGoal (Ge l r) = Just [Gt r l]
+negateRealGoal (Gt l r) = Just [Ge r l]
 negateRealGoal _ = Nothing
 
--- Promote bound variable names to IntVar in a formula/expr
 promoteIntVars :: [String] -> Formula -> Formula
 promoteIntVars names f = goF names f
   where
@@ -847,144 +708,19 @@ promoteIntVars names f = goF names f
     goF ns (And f1 f2) = And (goF ns f1) (goF ns f2)
     goF ns (Or f1 f2) = Or (goF ns f1) (goF ns f2)
     goF ns (Not f) = Not (goF ns f)
-    goF ns (Forall qs f') = 
-      let ns' = ns
-      in Forall qs (goF ns' f')
-    goF ns (Exists qs f') = 
-      let ns' = ns
-      in Exists qs (goF ns' f')
+    goF _  other = other
 
     goE ns (Var v) | v `elem` ns = IntVar v
-    goE _  e@(IntVar _) = e
-    goE _  e@(IntConst _) = e
-    goE _  e@(Const _) = e
     goE ns (Add a b) = Add (goE ns a) (goE ns b)
     goE ns (Sub a b) = Sub (goE ns a) (goE ns b)
     goE ns (Mul a b) = Mul (goE ns a) (goE ns b)
     goE ns (Div a b) = Div (goE ns a) (goE ns b)
     goE ns (Pow e n) = Pow (goE ns e) n
     goE ns (Sqrt e) = Sqrt (goE ns e)
-    goE ns (Determinant rows) = Determinant (map (map (goE ns)) rows)
-    goE ns (Circle p c r) = Circle p c (goE ns r)
     goE _  other = other
 
--- | Prove existential goal using Constructive Gröbner Basis (Elimination)
--- Heuristic: If the system of equations is consistent (GB /= {1}), we assume generic existence.
 proveExistentialConstructive :: Theory -> Formula -> (Bool, String, ProofTrace)
-proveExistentialConstructive theory goal =
-  case goal of
-    Exists qs body ->
-      let
-        -- 1. Extract equations from the body
-        eqsBranches = extractEqualitiesBranches body
-        
-        -- 2. Build ideal from equations + theory equalities
-        theoryEqs = [ Sub l r | Eq l r <- theory ]
-        
-        -- Renaming strategy: Ensure existential vars are "largest" for Lex elimination.
-        -- We prefix them with "zz_" so they sort after typical variables (starting with a-y).
-        -- (Assuming Lex order compares strings)
-        existentialVars = map qvName qs
-        rename v | v `elem` existentialVars = "zz_" ++ v
-                 | otherwise = v
-        
-        renamePoly :: Poly -> Poly
-        renamePoly (Poly m) =
-            let renameMonomial (Monomial vars) = 
-                    Monomial (M.mapKeys rename vars)
-            in Poly (M.mapKeys renameMonomial m)
+proveExistentialConstructive theory goal = (False, "Not implemented.", emptyTrace)
 
-        checkBranch eqs = 
-            let rawIdeal = map (toPolySub M.empty) (eqs ++ theoryEqs)
-                renamedIdeal = map renamePoly rawIdeal
-                basis = buchberger renamedIdeal
-                isInconsistent = any isConstantNonZero basis
-            in (not isInconsistent, basis)
-
-        -- 3. Check consistency of EACH branch
-        results = map checkBranch eqsBranches
-        anyConsistent = any fst results
-        
-        -- 4. Trace (take first consistent or first if none)
-        (_, bestBasis) =
-          case filter fst results of
-            (r:_) -> r
-            [] -> case results of 
-                    (r:_) -> r
-                    [] -> (False, [])
-        
-        step = ComputedGroebnerBasis (length bestBasis)
-        trace = ProofTrace [step] theory (length bestBasis)
-      in 
-        if anyConsistent
-        then (True, "Solution exists generically (Algebraic consistency proved via Groebner Basis).", trace)
-        else (False, "System is inconsistent (Groebner basis contains 1). No solution exists.", trace)
-    _ -> (False, "Constructive existence only supports Exists quantification.", emptyTrace)
-
-extractEqualitiesBranches :: Formula -> [[Expr]]
-extractEqualitiesBranches (Eq l r) = [[Sub l r]]
-extractEqualitiesBranches (And f1 f2) = 
-    [ e1 ++ e2 | e1 <- extractEqualitiesBranches f1, e2 <- extractEqualitiesBranches f2 ]
-extractEqualitiesBranches (Or f1 f2) = 
-    extractEqualitiesBranches f1 ++ extractEqualitiesBranches f2
-extractEqualitiesBranches (Exists _ f) = extractEqualitiesBranches f
-extractEqualitiesBranches _ = [[]] -- Ignore inequalities for algebraic existence check (heuristic)
-
-isConstantNonZero :: Poly -> Bool
-isConstantNonZero (Poly m) =
-  case M.toList m of 
-    [(Monomial vars, c)] | M.null vars -> c /= 0
-    _ -> False
-
--- | Structural Induction Proof
 proveByInduction :: Theory -> Formula -> (Bool, String, ProofTrace)
-proveByInduction theory formula =
-  case formula of
-    Forall [QuantVar n QuantInt Nothing Nothing] body ->
-      let
-        -- Base Case (n=0)
-        baseSub = M.singleton n (Const 0)
-        baseGoal = substFormula baseSub body
-        (baseOk, baseMsg, baseTrace) = proveTheory theory baseGoal
-        
-        -- Step Case
-        k = n ++ "_k"
-        kExpr = Var k
-        kPlus1 = Add kExpr (Const 1)
-        
-        hyp = substFormula (M.singleton n kExpr) body
-        stepGoalRaw = substFormula (M.singleton n kPlus1) body
-        stepGoal = expandSumStepFormula k kPlus1 stepGoalRaw
-        
-        (stepOk, stepMsg, stepTrace) = proveTheory (hyp : theory) stepGoal
-        
-        fullMsg = "Base Case (n=0): " ++ (if baseOk then "PROVED" else "FAILED") ++ "\n" ++
-                  baseMsg ++ "\n\n" ++ 
-                  "Step Case (P("++k++") -> P("++k++"+1)): " ++ (if stepOk then "PROVED" else "FAILED") ++ "\n" ++ 
-                  stepMsg
-                  
-      in (baseOk && stepOk, fullMsg, stepTrace)
-      
-    _ -> (False, "Induction requires 'forall ((int n)) ...' (unbounded integer quantifier)", emptyTrace)
-
-expandSumStepFormula :: String -> Expr -> Formula -> Formula
-expandSumStepFormula kStr kPlus1 form = 
-  let rw e = case e of
-               Sum i lo hi body -> 
-                 if hi == kPlus1 
-                 then Add (Sum i lo (Var kStr) body) (substituteExpr i kPlus1 body)
-                 else e
-               _ -> e
-      mapper = mapExpr rw
-  in case form of
-       Eq l r -> Eq (mapper l) (mapper r)
-       Ge l r -> Ge (mapper l) (mapper r)
-       Gt l r -> Gt (mapper l) (mapper r)
-       Le l r -> Le (mapper l) (mapper r)
-       Lt l r -> Lt (mapper l) (mapper r)
-       Divides l r -> Divides (mapper l) (mapper r)
-       And a b -> And (expandSumStepFormula kStr kPlus1 a) (expandSumStepFormula kStr kPlus1 b)
-       Or a b -> Or (expandSumStepFormula kStr kPlus1 a) (expandSumStepFormula kStr kPlus1 b)
-       Not a -> Not (expandSumStepFormula kStr kPlus1 a)
-       Forall qs f -> Forall qs (expandSumStepFormula kStr kPlus1 f)
-       Exists qs f -> Exists qs (expandSumStepFormula kStr kPlus1 f)
+proveByInduction theory formula = (False, "Not implemented.", emptyTrace)

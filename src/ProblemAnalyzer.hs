@@ -106,6 +106,7 @@ analyzeProblem theory goal =
       probType = classifyProblem theory goal geoFeatures
 
       -- Estimate polynomial degrees (approximate)
+      -- SAFE: use conservative estimateMaxDegree instead of toPoly which can crash on Div
       maxDeg = estimateMaxDegree theory goal
 
       -- Estimate complexity
