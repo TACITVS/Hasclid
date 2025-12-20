@@ -20,14 +20,14 @@ eliminateRational theory goal =
       theory' = map simplifyRationalArithmetic theory
       goal' = simplifyRationalArithmetic goal
       -- Then eliminate divisions
-      ((theory'', goal''), (extras, _)) = runState (do
+      ((theory'', goal''), (extras, _, _)) = runState (do
         t' <- mapM elimFormula theory'
         g' <- elimFormula goal'
-        return (t', g')) ([], Map.empty)
+        return (t', g')) ([], Map.empty, 0)
   in (extras ++ theory'', goal'')
 
 type DivMemo = Map.Map Expr Formula
-type ElimM = State ([Formula], DivMemo)
+type ElimM = State ([Formula], DivMemo, Int)
 
 -- | Simplify rational arithmetic before elimination
 -- Combines fractions: (a/b) + (c/d) → (ad + bc)/(bd)
@@ -279,12 +279,20 @@ elimExpr' (Mul a b) = Mul <$> elimExpr' a <*> elimExpr' b
 -- Division in expression context: leave as-is (will be handled at formula level)
 -- However, we can do some smart simplifications:
 -- x/x → 1 (with x ≠ 0) - though simpExprArith should have caught this
-elimExpr' (Div a b)
-  | a == b = do
-      a' <- elimExpr' a
+elimExpr' (Div a b) = do
+  a' <- elimExpr' a
+  b' <- elimExpr' b
+  if a' == b'
+    then do
       addDenominatorNonzero a'
       return (Const 1)
-  | otherwise = Div <$> elimExpr' a <*> elimExpr' b
+    else if b' == Const 1
+         then return a'
+         else do
+           v <- freshDivVar
+           addDenominatorNonzero b'
+           addConstraint (Eq (Mul (Var v) b') a')
+           return (Var v)
 elimExpr' (Pow e n) = Pow <$> elimExpr' e <*> pure n
 elimExpr' (Sqrt e) = Sqrt <$> elimExpr' e
 elimExpr' (Sum i lo hi body) = Sum i <$> elimExpr' lo <*> elimExpr' hi <*> elimExpr' body
@@ -304,11 +312,23 @@ elimExpr' e@(Const _) = return e
 elimExpr' e@(IntVar _) = return e
 elimExpr' e@(IntConst _) = return e
 
+freshDivVar :: ElimM String
+freshDivVar = do
+  (constraints, memo, counter) <- get
+  let next = counter + 1
+  put (constraints, memo, next)
+  return ("zz_div_aux" ++ show next)
+
+addConstraint :: Formula -> ElimM ()
+addConstraint f = do
+  (constraints, memo, counter) <- get
+  put (f : constraints, memo, counter)
+
 -- | Add constraint that denominator is nonzero: g ≠ 0  ≡  (g > 0 ∨ g < 0)
 -- OPTIMIZATION: If g is clearly positive (e.g. Dist2, squared altitude), only add g > 0.
 addDenominatorNonzero :: Expr -> ElimM ()
 addDenominatorNonzero den = do
-  (constraints, memo) <- get
+  (constraints, memo, counter) <- get
   case Map.lookup den memo of
     Just _ -> return ()  -- Already added this constraint
     Nothing -> do
@@ -316,7 +336,7 @@ addDenominatorNonzero den = do
           constraint = if isPositive
                        then Gt den (Const 0)
                        else Or (Gt den (Const 0)) (Lt den (Const 0))
-      put (constraint : constraints, Map.insert den constraint memo)
+      put (constraint : constraints, Map.insert den constraint memo, counter)
 
 -- | Heuristic: Is an expression definitely positive based on geometric axioms?
 isGeomPositive :: Expr -> Bool

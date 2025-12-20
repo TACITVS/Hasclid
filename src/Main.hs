@@ -20,12 +20,13 @@ import qualified ReplSupport as RS
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Wu (wuProve, wuProveWithTrace, formatWuTrace)
 import Data.Bifunctor (first)
-import SolverRouter (autoSolve, autoSolveWithTrace, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions, GroebnerBackend(..))
+import SolverRouter (autoSolve, autoSolveWithTrace, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions, GroebnerBackend(..), executeSolver, SolverChoice(..))
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
 import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder, compareMonomials)
 import Preprocessing (preprocess, preprocessedTheory, preprocessedGoal)
+import ProblemAnalyzer (analyzeProblem)
 
 import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice, hSetBuffering, BufferMode(..))
 import System.Environment (getArgs)
@@ -139,6 +140,38 @@ currentSolverOptions env st =
     { useOptimizedGroebner = useOptimizedBuchberger st || envUseOptimized env
     , selectionStrategyOpt = selectionStrategy st
     }
+
+cadFallbackResult :: REPLEnv -> REPLState -> Theory -> Formula -> AutoSolveResult
+cadFallbackResult env st fullContext goal =
+  let (contextWithAnd, singleGoal) = convertAndGoal fullContext goal
+      preprocessResult = preprocess (pointSubs st) contextWithAnd singleGoal
+      theory' = preprocessedTheory preprocessResult
+      goal' = preprocessedGoal preprocessResult
+      profile = analyzeProblem theory' goal'
+      opts = currentSolverOptions env st
+      (proved, reason, trace) = executeSolver UseCAD opts profile theory' goal'
+  in AutoSolveResult
+       { selectedSolver = UseCAD
+       , solverReason = "CAD fallback after floating underflow in auto solver"
+       , problemProfile = profile
+       , preprocessedGoalExpr = goal'
+       , isProved = proved
+       , proofReason = reason
+       , proofEvidence = Nothing
+       , detailedTrace = trace
+       }
+
+cadFallbackMessage :: REPLEnv -> REPLState -> Theory -> Formula -> Int -> IO String
+cadFallbackMessage env st fullContext goal current = do
+  maybeRes <- runWithTimeout current $ do
+    let res = cadFallbackResult env st fullContext goal
+    _ <- CE.evaluate (isProved res)
+    return res
+  case maybeRes of
+    Nothing ->
+      pure ("[TIMEOUT] exceeded " ++ show current ++ "s during CAD fallback. Use :set-timeout to increase.")
+    Just res ->
+      pure ("[NUMERICAL ERROR] Arithmetic Underflow in solver. Falling back to CAD.\n" ++ formatAutoSolveResult res (verbose st))
 
 chooseBuchberger :: REPLEnv -> REPLState -> ([Poly] -> [Poly])
 chooseBuchberger env st = 
@@ -634,7 +667,9 @@ handleCommand state stateWithHist newHist input = do
                      return res
                    
                    case eres of
-                     Left Underflow -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Underflow in solver. Problem is too complex for Double arithmetic.")
+                     Left Underflow -> do
+                       msg <- liftIO $ cadFallbackMessage env stateWithHist fullContext goalForAlgebraic current
+                       pure (stateWithHist, msg)
                      Left Overflow  -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
                      Left _         -> pure (stateWithHist, "[NUMERICAL ERROR] Math exception in solver.")
                      Right Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
@@ -687,7 +722,9 @@ handleCommand state stateWithHist newHist input = do
                  return res
                
                case eres of
-                 Left Underflow -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Underflow in solver.")
+                 Left Underflow -> do
+                   msg <- liftIO $ cadFallbackMessage env stateWithHist fullContext formula current
+                   pure (stateWithHist, msg)
                  Left Overflow  -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
                  Left _         -> pure (stateWithHist, "[NUMERICAL ERROR] Math exception in solver.")
                  Right Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
@@ -781,7 +818,9 @@ processScriptStreaming env state content = go state (lines content)
                               return res
                             
                             case eres of
-                              Left (Underflow) -> return (st, "[NUMERICAL ERROR] Arithmetic Underflow in solver. Problem is too algebraically complex for Double arithmetic.")
+                              Left (Underflow) -> do
+                                msg <- cadFallbackMessage env st fullContext formula current
+                                return (st, msg)
                               Left (Overflow) -> return (st, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
                               Left _ -> return (st, "[NUMERICAL ERROR] Math exception in solver.")
                               Right Nothing -> return (st, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
