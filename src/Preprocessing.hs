@@ -54,9 +54,21 @@ preprocess initialSubs theory goal =
             show (M.size initialSubs) ++ " from point definitions: " ++
             show (take 5 $ M.toList subs)]
 
+    -- Step 1a: Expand distance definitions (R1s = dist2 A P, etc.) without expanding dist2 itself
+    dist2Subs = extractDist2Substitutions theory
+    theoryD = if M.null dist2Subs
+              then theory
+              else map (applySubstitutionsFormulaNoExpand dist2Subs) theory
+    goalD = if M.null dist2Subs
+            then goal
+            else applySubstitutionsFormulaNoExpand dist2Subs goal
+    log1a = if M.null dist2Subs
+            then log1
+            else log1 ++ ["Expanded " ++ show (M.size dist2Subs) ++ " distance definitions"]
+
     -- Step 1b: Apply barycentric distance substitution if inside-triangle constraints are present
-    (theoryB, goalB, logBary) = applyBarycentricIfInside subs theory goal
-    log1b = if null logBary then log1 else log1 ++ logBary
+    (theoryB, goalB, logBary) = applyBarycentricIfInside subs theoryD goalD
+    log1b = if null logBary then log1a else log1a ++ logBary
 
     -- Step 1c: Add non-negativity constraints for squared distances and definitions
     (theoryNN, logNN) = addDist2NonnegConstraints theoryB goalB
@@ -93,6 +105,48 @@ preprocess initialSubs theory goal =
        , eliminatedVars = M.keys subs'
        , simplificationLog = log5
        }
+
+extractDist2Substitutions :: Theory -> M.Map String Expr
+extractDist2Substitutions theory =
+  M.fromList $ mapMaybe extractDist2 theory
+  where
+    extractDist2 (Eq (Var v) e@(Dist2 _ _)) = Just (v, e)
+    extractDist2 (Eq e@(Dist2 _ _) (Var v)) = Just (v, e)
+    extractDist2 _ = Nothing
+
+applySubstitutionsFormulaNoExpand :: M.Map String Expr -> Formula -> Formula
+applySubstitutionsFormulaNoExpand subs = mapFormulaNoExpand (applySubstitutionsExprNoExpand subs)
+
+applySubstitutionsExprNoExpand :: M.Map String Expr -> Expr -> Expr
+applySubstitutionsExprNoExpand subs = go
+  where
+    go (Var v) = case M.lookup v subs of
+                   Just e -> e
+                   Nothing -> Var v
+    go (Add e1 e2) = Add (go e1) (go e2)
+    go (Sub e1 e2) = Sub (go e1) (go e2)
+    go (Mul e1 e2) = Mul (go e1) (go e2)
+    go (Div e1 e2) = Div (go e1) (go e2)
+    go (Mod e1 e2) = Mod (go e1) (go e2)
+    go (Pow e n) = Pow (go e) n
+    go (Sqrt e) = Sqrt (go e)
+    go (Determinant rows) = Determinant (map (map go) rows)
+    go (Circle p c r) = Circle p c (go r)
+    go (Sum i lo hi body) = Sum i (go lo) (go hi) (go body)
+    go e = e
+
+mapFormulaNoExpand :: (Expr -> Expr) -> Formula -> Formula
+mapFormulaNoExpand f (Eq e1 e2) = Eq (f e1) (f e2)
+mapFormulaNoExpand f (Le e1 e2) = Le (f e1) (f e2)
+mapFormulaNoExpand f (Lt e1 e2) = Lt (f e1) (f e2)
+mapFormulaNoExpand f (Ge e1 e2) = Ge (f e1) (f e2)
+mapFormulaNoExpand f (Gt e1 e2) = Gt (f e1) (f e2)
+mapFormulaNoExpand f (Divides e1 e2) = Divides (f e1) (f e2)
+mapFormulaNoExpand f (And f1 f2) = And (mapFormulaNoExpand f f1) (mapFormulaNoExpand f f2)
+mapFormulaNoExpand f (Or f1 f2) = Or (mapFormulaNoExpand f f1) (mapFormulaNoExpand f f2)
+mapFormulaNoExpand f (Not form) = Not (mapFormulaNoExpand f form)
+mapFormulaNoExpand f (Forall qvs form) = Forall qvs (mapFormulaNoExpand f form)
+mapFormulaNoExpand f (Exists qvs form) = Exists qvs (mapFormulaNoExpand f form)
 
 addDist2NonnegConstraints :: Theory -> Formula -> (Theory, [String])
 addDist2NonnegConstraints theory goal =
