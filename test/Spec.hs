@@ -1,8 +1,7 @@
 module Main where
 
 import Test.Hspec
-import Test.QuickCheck
-import Control.Exception (evaluate, catch, SomeException)
+import Control.Exception (evaluate)
 import Control.Concurrent (threadDelay)
 import Expr
 import BuchbergerOpt (reduce, buchbergerWithStrategyT, SelectionStrategy(..))
@@ -130,7 +129,7 @@ coreSpec = do
 
   describe "Timeout Infrastructure" $ do
     it "creates timeout context with deadline" $ do
-      ctx <- withTimeout 1.0
+      ctx <- withTimeout 1
       deadline ctx `shouldSatisfy` isJust
 
     it "creates no-timeout context" $ do
@@ -138,13 +137,13 @@ coreSpec = do
       deadline ctx `shouldBe` Nothing
 
     it "detects timeout expiration" $ do
-      ctx <- withTimeout 0.1  -- 100ms timeout
-      threadDelay 150000      -- Sleep 150ms
+      ctx <- withTimeout 1  -- 1 second timeout
+      threadDelay 1500000      -- Sleep 1.5s
       result <- runTimeoutM ctx checkTimeout
       result `shouldBe` True
 
     it "does not timeout before deadline" $ do
-      ctx <- withTimeout 1.0  -- 1 second timeout
+      ctx <- withTimeout 1  -- 1 second timeout
       result <- runTimeoutM ctx checkTimeout
       result `shouldBe` False
 
@@ -178,11 +177,8 @@ coreSpec = do
                   , polyAdd (polyAdd (polyMul x w) (polyMul y z)) (polyFromConst 1)
                   , polyAdd (polyMul y w) (polyFromConst 1)
                   ]
-      ctx <- withTimeout 0.01  -- 10ms timeout
-      -- This should timeout and throw an error
-      let computation = runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys)
-      (computation >> return False) `catch` (\(_ :: SomeException) -> return True)
-        `shouldReturn` True
+      ctx <- withTimeout 0  -- 0 second timeout (immediate)
+      runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys) `shouldThrow` anyErrorCall
 
   describe "CAD Implementation Correctness" $ do
     describe "Discriminant" $ do
