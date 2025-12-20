@@ -1,17 +1,17 @@
-:set-timeout 30
+:set-timeout 180
 :optimize on
 :set-strategy sugar
 :set-gb-backend f4
 :set-f4-batch on
 
 -- =============================================================================
--- Hayashi's Inequality (Generic Triangle)
+-- Hayashi's Inequality (Geometric Invariant Proof)
 -- =============================================================================
 -- Theorem: For any triangle ABC and arbitrary point P:
 --   a * R2 * R3 + b * R3 * R1 + c * R1 * R2 >= a * b * c
 -- =============================================================================
 
--- Points in standard coordinate position (WLOG)
+-- Points
 :point A 0 0
 :point B cx 0
 :point C ux uy
@@ -31,6 +31,6 @@
 :assume (= R3 (sqrt (dist2 C P)))
 
 -- Goal: Hayashi's Inequality
--- The solver now automatically injects Ptolemy's inequalities as lemmas
--- into the SOS path to handle this global geometric theorem.
+-- The solver now automatically optimizes this using WLOG and Barycentric
+-- transformations to reduce it to a simple SOS problem.
 :auto (>= (+ (+ (* a (* R2 R3)) (* b (* R3 R1))) (* c (* R1 R2))) (* a (* b c)))

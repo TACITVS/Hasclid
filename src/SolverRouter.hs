@@ -57,6 +57,7 @@ import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
 import F4Lite (f4LiteGroebner, f4ReduceModular, reduceWithF4, reduceWithBasis)
 import Geometry.WLOG (applyWLOG, detectPoints)
+import Geometry.Barycentric (applyBarycentric)
 import Positivity.SOS (checkSOS, checkSOSWithLemmas, SOSCertificate(..), getSOSCertificate)
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD)
 import AreaMethod (proveArea, deriveConstruction)
@@ -492,20 +493,26 @@ proveInequalitySOS opts theoryRaw goalRaw =
       let
           -- 1. Apply WLOG
           (thWLOG, wlogLog) = applyWLOG theory goalFull
+          
+          -- 2. Apply Barycentric Optimization (NEW)
+          pts = detectPoints (goalFull : theory)
+          (thBary, goalBary, baryLog) = applyBarycentric pts thWLOG goalFull
+          
+          fullLog = wlogLog ++ baryLog
 
-          -- 2. Substitution (Pre-processing)
-          subMap = buildSubMap thWLOG
+          -- 3. Substitution (Pre-processing)
+          subMap = buildSubMap thBary
           
           isDefinition (Eq (Var _) _) = True
           isDefinition _ = False
           
           -- Apply to target
-          targetPoly = toPolySub subMap targetExpr
+          targetPoly = toPolySub subMap (case goalBary of Ge l r -> Sub l r; Gt l r -> Sub l r; _ -> targetExpr)
           
-          -- 3. Wu Reduction (The "Wu-SOS Bridge")
+          -- 4. Wu Reduction (The "Wu-SOS Bridge")
           -- Constraints as polynomials
           eqConstraints = [ toPolySub subMap (Sub l r) 
-                            | eq@(Eq l r) <- thWLOG 
+                            | eq@(Eq l r) <- thBary 
                             , not (isDefinition eq)
                             ]
           
@@ -515,20 +522,20 @@ proveInequalitySOS opts theoryRaw goalRaw =
           -- Normal form reduction with F4 basis is more robust for high-degree goals.
           remainders = [targetPoly] 
           
-          -- 4. Check SOS / Boundary SOS
+          -- 5. Check SOS / Boundary SOS
           -- Compute Basis ONCE
-          basis = selectGroebner profileFinal opts goalFull eqConstraints
+          basis = selectGroebner profileFinal opts goalBary eqConstraints
           -- USE EXACT REDUCER (Buchberger) because F4 Modular reduction normalizes coefficients (loses sign)
           -- We need to know if the remainder is positive or negative!
-          reducer p = F4Lite.reduceWithBasis (getLeadingOrder profileFinal goalFull) basis p
+          reducer p = F4Lite.reduceWithBasis (getLeadingOrder profileFinal goalBary) basis p
           
           -- Numerical SOS Guidance
           -- 1. Extract parameters values
-          paramMap = buildParamMap thWLOG
+          paramMap = buildParamMap thBary
           
           -- 2. Try Numerical Cholesky
           numericalSquares =
-            if M.null paramMap && not (null (symbolicParams (analyzeProblem theory goalFull))) then Nothing -- Failed to resolve params
+            if M.null paramMap && not (null (symbolicParams (analyzeProblem theory goalBary))) then Nothing -- Failed to resolve params
             else checkSOSNumeric paramMap targetPoly
             
           -- 3. If numerical success, reconstruct and verify
@@ -557,14 +564,14 @@ proveInequalitySOS opts theoryRaw goalRaw =
           success = isJust maybeCert || verifiedNumerical || checkBoundarySOS (reducer targetPoly)
           
           -- Evidence construction
-          evidence = fmap (\c -> EvidenceSOS c wlogLog) maybeCert
+          evidence = fmap (\c -> EvidenceSOS c fullLog) maybeCert
 
           -- 5. Semantic Trace Construction (Step-by-Step Explanation)
           intro = "STEP-BY-STEP MATHEMATICAL PROOF:\n" ++ replicate 40 '=' ++ "\n"
           
-          wlogStep = if null wlogLog then "" 
-                     else "1. Coordinate Simplification (WLOG):\n" ++ 
-                          unlines (map ("   * " ++) wlogLog) ++ "\n"
+          wlogStep = if null fullLog then "" 
+                     else "1. Geometric Optimization (WLOG + Barycentric):\n" ++ 
+                          unlines (map ("   * " ++) fullLog) ++ "\n"
           
           squaringStep = if goalFull == goalOriginal then ""
                          else "2. Handling Square Roots:\n" ++
