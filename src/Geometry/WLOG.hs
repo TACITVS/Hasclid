@@ -2,6 +2,7 @@ module Geometry.WLOG
   ( applyWLOG
   , detectPoints
   , isTranslationInvariant
+  , parsePointVar
   ) where
 
 import Expr

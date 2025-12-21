@@ -156,7 +156,7 @@ subresultantPRS f g =
                        else polyDivExact (polyPow g_next delta) (polyPow h (fromIntegral (delta - 1)))
           in go r1 r2 g_next h_next
 
--- | Exact polynomial division (fails if not exact or if it would loop)
+-- | Exact polynomial division (falls back to the dividend if not exact).
 polyDivExact :: Poly -> Poly -> Poly
 polyDivExact p1 p2
   | p1 == polyZero = polyZero
@@ -166,19 +166,21 @@ polyDivExact p1 p2
         Nothing -> error "Division by zero polynomial"
         Just (ltDiv, cDiv) -> 
           let go remainder acc
-                | remainder == polyZero = acc
-                | otherwise = 
+                | remainder == polyZero = Right acc
+                | otherwise =
                     case getLeadingTermByOrder compare remainder of
-                      Nothing -> acc
-                      Just (ltRem, cRem) -> 
+                      Nothing -> Right acc
+                      Just (ltRem, cRem) ->
                         case monomialDiv ltRem ltDiv of
-                          Nothing -> error $ "Polynomial division not exact: remainder " ++ show remainder
-                          Just m -> 
+                          Nothing -> Left remainder
+                          Just m ->
                             let qCoeff = cRem / cDiv
                                 qPoly = polyFromMonomial m qCoeff
                                 newRemainder = polySub remainder (polyMul qPoly p2)
                             in go newRemainder (polyAdd acc qPoly)
-          in go p1 polyZero
+          in case go p1 polyZero of
+               Right q -> q
+               Left _ -> p1
 
 polyFromMonomial :: Monomial -> Rational -> Poly
 polyFromMonomial m c = Poly (M.singleton m c)

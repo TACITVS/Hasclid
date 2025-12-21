@@ -10,22 +10,16 @@ import qualified Data.Map.Strict as Map
 -- Each (sqrt e) becomes a fresh variable v with constraints:
 --   v^2 = e    and    v >= 0    and    e >= 0
 -- MEMOIZATION: Reuses same auxiliary variable for identical sqrt expressions
--- Special rewrites:
---   sqrt(t^2)  -> t with added constraint t >= 0
---   sqrt a >= sqrt b  ->  a >= b  AND a >= 0 AND b >= 0
---   sqrt a >  sqrt b  ->  a >  b  AND a >= 0 AND b >= 0
---   sqrt a =  sqrt b  ->  a = b   AND a >= 0 AND b >= 0
---   sqrt a == b       ->  a == b^2 AND a >= 0 AND b >= 0
---   sqrt a >= b       ->  a >= b^2 AND a >= 0 AND b >= 0
---   sqrt a >  b       ->  a >  b^2 AND a >= 0 AND b >= 0
--- Returns (transformedTheory, transformedGoal) both sqrt-free.
-eliminateSqrt :: Theory -> Formula -> (Theory, Formula)
+-- Returns (transformedTheory, transformedGoal, varDefinitions) both sqrt-free.
+eliminateSqrt :: Theory -> Formula -> (Theory, Formula, Map.Map String Expr)
 eliminateSqrt theory goal =
-  let ((theory', goal'), (extras, _)) = runState (do
+  let ((theory', goal'), (extras, memo)) = runState (do
         t' <- mapM elimFormula theory
         g' <- elimFormula goal
         return (t', g')) ([], Map.empty)
-  in (extras ++ theory', goal')
+      -- Reverse the memo to get VarName -> SqrtExpr
+      varDefs = Map.fromList [ (v, Sqrt e) | (e, v) <- Map.toList memo ]
+  in (extras ++ theory', goal', varDefs)
 
 type SqrtMemo = Map.Map Expr String
 type ElimM = State ([Formula], SqrtMemo)

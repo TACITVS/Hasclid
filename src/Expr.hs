@@ -950,6 +950,17 @@ evaluatePoly subM (Poly m) =
 toPolySub :: M.Map String Poly -> Expr -> Poly
 toPolySub subM expr = evaluatePoly subM (toPoly expr)
 
+-- | Convert Poly back to Expr
+polyToExpr :: Poly -> Expr
+polyToExpr (Poly m)
+  | M.null m = Const 0
+  | otherwise =
+      let termExpr (Monomial vars, c) =
+            let base = foldl (\acc (v, e) -> Mul acc (Pow (Var v) (fromIntegral e))) (Const 1) (M.toList vars)
+            in Mul (Const c) base
+          terms = map termExpr (M.toList m)
+      in foldl1 Add terms
+
 -- =============================================
 -- Shared Polynomial Utilities
 -- =============================================

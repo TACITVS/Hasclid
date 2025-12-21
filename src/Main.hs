@@ -25,8 +25,11 @@ import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
 import TermOrder (TermOrder, defaultTermOrder, parseTermOrder, showTermOrder, compareMonomials)
-import Preprocessing (preprocess, preprocessedTheory, preprocessedGoal)
+import Preprocessing (preprocess, preprocessGeometry, preprocessedTheory, preprocessedGoal)
 import ProblemAnalyzer (analyzeProblem)
+import Geometry.WLOG (detectPoints)
+import RationalElim (eliminateRational)
+import SqrtElim (eliminateSqrt)
 
 import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice, hSetBuffering, BufferMode(..))
 import System.Environment (getArgs)
@@ -69,7 +72,7 @@ main = do
   case result of
     Left Underflow -> putStrLn "\n[FATAL ERROR] Arithmetic Underflow caught in main loop."
     Left Overflow  -> putStrLn "\n[FATAL ERROR] Arithmetic Overflow caught in main loop."
-    Left _         -> putStrLn "\n[FATAL ERROR] Math exception caught in main loop."
+    Left e         -> putStrLn $ "\n[FATAL ERROR] Math exception caught in main loop: " ++ show e
     Right _        -> return ()
 
 -- =============================================
@@ -177,7 +180,8 @@ cadFallbackResult env st fullContext goal =
       goal' = preprocessedGoal preprocessResult
       profile = analyzeProblem theory' goal'
       opts = currentSolverOptions env st
-      (proved, reason, trace) = executeSolver UseCAD opts profile theory' goal'
+      pts = detectPoints (goal : fullContext)
+      (proved, reason, trace, varDefs) = executeSolver pts UseCAD opts profile theory' goal'
   in AutoSolveResult
        { selectedSolver = UseCAD
        , solverReason = "CAD fallback after floating underflow in auto solver"
@@ -187,19 +191,22 @@ cadFallbackResult env st fullContext goal =
        , proofReason = reason
        , proofEvidence = Nothing
        , detailedTrace = trace
+       , varDefinitions = varDefs
        }
 
 cadFallbackMessage :: REPLEnv -> REPLState -> Theory -> Formula -> Int -> IO String
 cadFallbackMessage env st fullContext goal current = do
-  maybeRes <- runWithTimeout current $ do
+  maybeMsg <- runWithTimeout current $ do
     let res = cadFallbackResult env st fullContext goal
-    _ <- CE.evaluate (isProved res)
-    return res
-  case maybeRes of
+        msg = "[NUMERICAL ERROR] Arithmetic Underflow in solver. Falling back to CAD.\n" ++
+              formatAutoSolveResult res (verbose st)
+    _ <- CE.evaluate (length msg)
+    return msg
+  case maybeMsg of
     Nothing ->
       pure ("[TIMEOUT] exceeded " ++ show current ++ "s during CAD fallback. Use :set-timeout to increase.")
-    Just res ->
-      pure ("[NUMERICAL ERROR] Arithmetic Underflow in solver. Falling back to CAD.\n" ++ formatAutoSolveResult res (verbose st))
+    Just msg ->
+      pure msg
 
 chooseBuchberger :: REPLEnv -> REPLState -> ([Poly] -> [Poly])
 chooseBuchberger env st = 
@@ -693,16 +700,18 @@ handleCommand state stateWithHist newHist input = do
                                                        _      -> Eq reducedExpr (Const 0)
                                      in return (Nothing, finalGoal)
                          Nothing -> return (Nothing, expandedFormula)
-                  else return (Nothing, expandedFormula)
+                 else return (Nothing, expandedFormula)
                
                case stateAfterArea of
                  Just res -> pure res
                  Nothing -> do
+                   let isVerbose = verbose stateWithHist
                    -- Catch numerical exceptions (underflow/overflow)
                    eres <- liftIO $ try $ runWithTimeout current $ do
                      let res = autoSolve opts (pointSubs stateWithHist) fullContext goalForAlgebraic
-                     _ <- CE.evaluate (isProved res)
-                     return res
+                         msg = formatAutoSolveResult res isVerbose
+                     _ <- CE.evaluate (length msg)
+                     return msg
                    
                    case eres of
                      Left Underflow -> do
@@ -711,9 +720,7 @@ handleCommand state stateWithHist newHist input = do
                      Left Overflow  -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
                      Left _         -> pure (stateWithHist, "[NUMERICAL ERROR] Math exception in solver.")
                      Right Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-                     Right (Just result) -> 
-                       let msg = formatAutoSolveResult result (verbose state)
-                       in pure (stateWithHist, msg)
+                     Right (Just msg) -> pure (stateWithHist, msg)
 
     (":induction":_) -> 
       let str = drop 11 input
@@ -753,11 +760,13 @@ handleCommand state stateWithHist newHist input = do
              let fullContext = theory state ++ lemmas state
                  current = solverTimeout state
              in do
+               let isVerbose = verbose state
                -- Catch numerical exceptions (underflow/overflow)
                eres <- liftIO $ try $ runWithTimeout current $ do
                  let res = autoSolve (currentSolverOptions env state) (pointSubs state) fullContext formula
-                 _ <- CE.evaluate (isProved res)
-                 return res
+                     msg = formatAutoSolveResult res isVerbose
+                 _ <- CE.evaluate (length msg)
+                 return msg
                
                case eres of
                  Left Underflow -> do
@@ -766,9 +775,7 @@ handleCommand state stateWithHist newHist input = do
                  Left Overflow  -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
                  Left _         -> pure (stateWithHist, "[NUMERICAL ERROR] Math exception in solver.")
                  Right Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-                 Right (Just result) -> 
-                   let msg = formatAutoSolveResult result (verbose state)
-                   in pure (stateWithHist, msg)
+                 Right (Just msg) -> pure (stateWithHist, msg)
            Left err -> pure (stateWithHist, formatError err)
 
 -- =============================================
@@ -823,12 +830,22 @@ processFormulaLine env state line =
   let trimmed = dropWhile (== ' ') line
   in if null trimmed || isCommentLine trimmed 
        then return ""
-       else case parseFormulaWithMacros (macros state) (intVars state) trimmed of 
-              Left err -> return $ formatError err
-              Right formula -> do 
+      else case parseFormulaWithMacros (macros state) (intVars state) trimmed of 
+             Left err -> return $ formatError err
+             Right formula -> do 
                 let fullContext = theory state ++ lemmas state
-                let result = autoSolve (currentSolverOptions env state) (pointSubs state) fullContext formula
-                return (formatAutoSolveResult result (verbose state))
+                    current = solverTimeout state
+                    isVerbose = verbose state
+                eres <- try $ do
+                  let result = autoSolve (currentSolverOptions env state) (pointSubs state) fullContext formula
+                      msg = formatAutoSolveResult result isVerbose
+                  _ <- CE.evaluate (length msg)
+                  return msg
+                case eres of
+                  Left Underflow -> cadFallbackMessage env state fullContext formula current
+                  Left Overflow  -> return "[NUMERICAL ERROR] Arithmetic Overflow in solver."
+                  Left _         -> return "[NUMERICAL ERROR] Math exception in solver."
+                  Right msg      -> return msg
 
 -- Streaming script processing: prints each result as it is produced
 processScriptStreaming :: REPLEnv -> REPLState -> String -> IO REPLState
@@ -848,12 +865,14 @@ processScriptStreaming env state content = go state (lines content)
                           Right formula -> do 
                             let fullContext = theory st ++ lemmas st
                                 current = solverTimeout st
+                                isVerbose = verbose st
                             
                             -- Catch numerical exceptions (underflow/overflow)
                             eres <- try $ runWithTimeout current $ do
                               let res = autoSolve (currentSolverOptions env st) (pointSubs st) fullContext formula
-                              _ <- CE.evaluate (isProved res)
-                              return res
+                                  msg = formatAutoSolveResult res isVerbose
+                              _ <- CE.evaluate (length msg)
+                              return msg
                             
                             case eres of
                               Left (Underflow) -> do
@@ -862,11 +881,27 @@ processScriptStreaming env state content = go state (lines content)
                               Left (Overflow) -> return (st, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
                               Left _ -> return (st, "[NUMERICAL ERROR] Math exception in solver.")
                               Right Nothing -> return (st, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-                              Right (Just res) -> return (st, formatAutoSolveResult res (verbose st))
+                              Right (Just msg) -> return (st, msg)
                           Left err -> return (st, formatError err)
                       _ -> do 
                         putStrLn ("> " ++ trimmed)
-                        processLine env st trimmed
+                        cmdRes <- try (processLine env st trimmed)
+                        case cmdRes of
+                          Left Underflow -> do
+                            case words trimmed of
+                              (":auto":_) ->
+                                case parseFormulaWithMacros (macros st) (intVars st) (drop 6 trimmed) of
+                                  Left err -> return (st, formatError err)
+                                  Right formula -> do
+                                    let expandedFormula = expandGeometricGoal formula
+                                        fullContext = theory st ++ lemmas st
+                                        current = solverTimeout st
+                                    msg <- cadFallbackMessage env st fullContext expandedFormula current
+                                    return (st, msg)
+                              _ -> return (st, "[NUMERICAL ERROR] Arithmetic Underflow in solver.")
+                          Left Overflow -> return (st, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
+                          Left _ -> return (st, "[NUMERICAL ERROR] Math exception in solver.")
+                          Right res -> return res
       unless (null msg) (putStrLn msg)
       go st' rest
 

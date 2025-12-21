@@ -29,7 +29,7 @@ emptyCert = SOSCertificate [] [] polyZero
 -- | Check if polynomial is a Sum of Squares, potentially modulo an ideal (via reducer)
 -- and potentially using a list of known non-negative lemmata.
 checkSOS :: (Poly -> Poly) -> Poly -> Bool
-checkSOS reducer p = isJust (getSOSCertificate [] reducer p)
+checkSOS reducer p = isJust (getSOSCertificate [] reducer p) || checkSOS_SDP p
 
 -- | Get SOS certificate if it exists, using known non-negative variables and lemmata.
 getSOSCertificate :: [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate

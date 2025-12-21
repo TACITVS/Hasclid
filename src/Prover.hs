@@ -76,25 +76,27 @@ data ProofResult = ProofResult
 emptyTrace :: ProofTrace
 emptyTrace = ProofTrace [] [] 0
 
--- Format proof trace for display
 formatProofTrace :: ProofTrace -> String
 formatProofTrace trace = unlines $ 
-  [ "=========================================="
-  , "PROOF EXPLANATION:"
-  , "=========================================="
-  , ""
+  [ "\nGROEBNER BASIS ALGEBRAIC PROOF DEVELOPMENT:"
+  , replicate 40 '='
   , "Used Assumptions (" ++ show (length (usedAssumptions trace)) ++ "):"
   ] ++ 
-  [ "  * " ++ showFormula f | f <- usedAssumptions trace ] ++ 
+  [ "   * " ++ showFormula f | f <- usedAssumptions trace ] ++ 
   [ ""
-  , "Proof Steps:"
+  , "Proof Logic and Algebraic Steps:"
   ] ++ 
-  [ "  " ++ show (i :: Int) ++ ". " ++ formatStep s | (i, s) <- zip [1..] (steps trace) ] ++ 
+  [ "   " ++ show (i :: Int) ++ ". " ++ formatStep s | (i, s) <- zip [1..] (steps trace) ] ++ 
   [ ""
-  , "Groebner Basis Size: " ++ show (basisSize trace)
-  , "=========================================="
+  , "Canonical Basis Size: " ++ show (basisSize trace) ++ " polynomials"
+  , replicate 40 '='
+  , "OVERALL RESULT: " ++ if provedCorrect trace then "[PROVED]" else "[NOT PROVED]"
   ]
   where
+    provedCorrect t = any isComplete (steps t)
+    isComplete (ReducedToNormalForm _ p) = p == polyZero
+    isComplete _ = False
+
     showFormula (Eq l r) = prettyExpr l ++ " = " ++ prettyExpr r
     showFormula (Ge l r) = prettyExpr l ++ " >= " ++ prettyExpr r
     showFormula (Gt l r) = prettyExpr l ++ " > " ++ prettyExpr r
@@ -103,15 +105,15 @@ formatProofTrace trace = unlines $
     showFormula (Divides l r) = prettyExpr l ++ " | " ++ prettyExpr r
     showFormula f        = prettyFormula f
 
-    formatStep (UsedSubstitution v e) = "Used substitution: " ++ v ++ " -> " ++ prettyExpr e
-    formatStep (UsedConstraint f) = "Applied constraint: " ++ prettyFormula f
-    formatStep (UsedLemma f) = "Applied lemma: " ++ prettyFormula f
-    formatStep (ComputedGroebnerBasis n) = "Computed Groebner basis (" ++ show n ++ " polynomials)"
+    formatStep (UsedSubstitution v e) = "Applied variable substitution: " ++ v ++ " -> " ++ prettyExpr e
+    formatStep (UsedConstraint f) = "Applied geometric constraint: " ++ prettyFormula f
+    formatStep (UsedLemma f) = "Utilized proven geometric lemma: " ++ prettyFormula f
+    formatStep (ComputedGroebnerBasis n) = "Constructed canonical Groebner basis using " ++ show n ++ " polynomials"
     formatStep (ReducedToNormalForm _ p2) =
       if p2 == polyZero
-      then "Reduced to normal form: 0 (PROOF COMPLETE)"
-      else "Reduced to normal form: " ++ prettyPoly p2
-    formatStep (CheckedPositivity method) = "Checked positivity using: " ++ method
+      then "Reduced expression to normal form: 0 (IDENTITY VERIFIED)"
+      else "Reduced expression to normal form: " ++ prettyPoly p2 ++ " (NON-ZERO REMAINDER)"
+    formatStep (CheckedPositivity method) = "Verified expression positivity via " ++ method
 
 -- =============================================
 -- Substitution Logic
@@ -463,12 +465,12 @@ fallThrough maybeCache theory formula baseTrace =
                      else (False, "Int Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
                 _ -> (False, "Integer solver incomplete.", baseTrace, maybeCache)
      else if hasDiv then
-       let (th', goal') = eliminateRational theory formula
+       let (th', goal', _) = eliminateRational theory formula
            hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
-           (th'', goal'') = if hasSqrt' then eliminateSqrt th' goal' else (th', goal')
+           (th'', goal'', _) = if hasSqrt' then eliminateSqrt th' goal' else (th', goal', M.empty)
        in proveTheoryWithCache maybeCache th'' goal''
      else if hasSqrt then
-       let (th', goal') = eliminateSqrt theory formula
+       let (th', goal', _) = eliminateSqrt theory formula
            proved = proveFormulaCAD th' goal'
            msg = if proved then "Proved via CAD with sqrt elimination." else "Not proved via CAD."
            trace = emptyTrace { usedAssumptions = th' }
@@ -508,12 +510,12 @@ fallThroughWithOptions customBuchberger maybeCache theory formula _baseTrace =
   let hasDiv = containsDivFormula formula || any containsDivFormula theory
       hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
   in if hasDiv then
-       let (th', goal') = eliminateRational theory formula
+       let (th', goal', _) = eliminateRational theory formula
            hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
-           (th'', goal'') = if hasSqrt' then eliminateSqrt th' goal' else (th', goal')
+           (th'', goal'', _) = if hasSqrt' then eliminateSqrt th' goal' else (th', goal', M.empty)
        in proveTheoryWithOptions customBuchberger maybeCache th'' goal''
      else if hasSqrt then
-       let (th', goal') = eliminateSqrt theory formula
+       let (th', goal', _) = eliminateSqrt theory formula
            proved = proveFormulaCAD th' goal'
            msg = if proved then "Proved via CAD with sqrt elimination." else "Not proved via CAD."
            trace = emptyTrace { usedAssumptions = th' }
