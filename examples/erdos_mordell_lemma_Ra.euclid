@@ -1,6 +1,7 @@
 :set-timeout 180
 :optimize on
 :set-strategy normal
+:verbose on
 
 ; ==========================================================
 ; Erdős-Mordell Lemma (Manual Variable Reduction)

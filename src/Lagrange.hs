@@ -3,6 +3,9 @@ module Lagrange (solve4Squares, solve4SquaresE) where
 import Data.List (find)
 import Error
 
+square :: Integer -> Integer
+square x = x * x
+
 -- | Solve n = a^2 + b^2 + c^2 + d^2 (Either-based API)
 solve4SquaresE :: Integer -> Either ProverError [Integer]
 solve4SquaresE n
@@ -55,7 +58,7 @@ descent p =
             y = map (\xi -> centeredMod xi m) x
             
             -- m' = sum y^2 / m
-            sumY2 = sum (map (^2) y)
+            sumY2 = sum (map square y)
             m' = sumY2 `div` m
             
             -- 3. Compute z = x * conj(y) (Quaternion product)
@@ -85,9 +88,9 @@ descent p =
         let limit = p `div` 2
             pairs = [ (x, y) | x <- [0..limit], y <- [0..limit] ]
             -- Brute force search for Lemma 1
-            res = [ (x,y) | (x,y) <- pairs, (x^2 + y^2 + 1) `mod` p == 0 ]
+            res = [ (x,y) | (x,y) <- pairs, (square x + square y + 1) `mod` p == 0 ]
             (x, y) = case res of
                        (h:_) -> h
                        [] -> error "Lemma 1 failure: Should not happen for primes"
-            val = x^2 + y^2 + 1
+            val = square x + square y + 1
         in (val `div` p, [x, y, 1, 0])

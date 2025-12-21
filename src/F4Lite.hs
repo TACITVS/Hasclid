@@ -27,7 +27,7 @@ module F4Lite
   , reduceWithBasis
   ) where
 
-import Expr (Poly(..), Monomial(..), monomialLCM, monomialMul, monomialDiv, getLeadingTermByOrder, monomialGCD, monomialOne)
+import Expr (Poly(..), Monomial(..), monomialLCM, monomialMul, monomialDiv, getLeadingTermByOrder, monomialGCD, monomialOne, integerSqrt)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..), sPoly, reduce, interreduceBasis)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -37,9 +37,6 @@ import Data.Maybe (mapMaybe)
 import Data.Ratio (numerator, denominator, (%))
 import Modular (toMod, addM, subM, mulM, invM, ModVal, prime)
 import TermOrder (compareMonomials, TermOrder(..))
-import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
-import Control.Monad (zipWithM_)
-import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Vector as V
 import Control.Monad.ST (runST)
 
@@ -94,8 +91,8 @@ generateF4Pairs ord basis =
   -- Use existing nub from Data.List
   nub [ F4Pair (f, g) lcm (fromIntegral (monomialDegree lcm))
       | (f:rest) <- tails basis, g <- rest
-      , let Just (ltF, _) = getLeadingTermByOrder ord f
-      , let Just (ltG, _) = getLeadingTermByOrder ord g
+      , Just (ltF, _) <- [getLeadingTermByOrder ord f]
+      , Just (ltG, _) <- [getLeadingTermByOrder ord g]
       , let lcm = monomialLCM ltF ltG
       , not (monomialGCD ltF ltG == monomialOne) -- Buchberger Criterion 1
       ]
@@ -158,27 +155,18 @@ modularRowReduce cols rows =
            then n'
            else if d' == 0 then 0 else mulM n' (invM d')
 
--- | Run modular reduction over several small primes in PARALLEL.
+-- | Run modular reduction over several small primes.
 --   Uses CRT and Rational Reconstruction to recover the exact result.
 modularRowReduceMulti :: S.Set Col -> [Row] -> [Row]
-modularRowReduceMulti cols rows = unsafePerformIO $ do
+modularRowReduceMulti cols rows =
   let primes = smallPrimes
-  mvars <- mapM (\_ -> newEmptyMVar) primes
-  
-  -- Launch parallel threads for each prime
-  zipWithM_ (\p mvar -> forkIO $ do
-    let res = rowReducePrime cols rows p
-    putMVar mvar res) primes mvars
-    
-  -- Collect results
-  reductions <- mapM takeMVar mvars
-  
-  case reductions of
-       []       -> return $ modularRowReduce cols rows
+      reductions = map (rowReducePrime cols rows) primes
+  in case reductions of
+       [] -> modularRowReduce cols rows
        (r0 : _) ->
          if any null reductions
-           then return $ modularRowReduce cols rows
-           else return $ crtRows cols primes r0 reductions
+           then modularRowReduce cols rows
+           else crtRows cols primes r0 reductions
   where
     smallPrimes :: [Integer]
     smallPrimes = [2147483647, 2147483629, 2147483587, 2147483579, 2147483563]
@@ -188,7 +176,7 @@ modularRowReduceMulti cols rows = unsafePerformIO $ do
 modGaussVector :: Integer -> Int -> [V.Vector ModVal] -> [V.Vector ModVal]
 modGaussVector p numCols rows = go 0 rows []
   where
-    go col [] acc = reverse acc
+    go _ [] acc = reverse acc
     go col rs acc 
       | col >= numCols = reverse acc ++ rs
       | otherwise =
@@ -267,7 +255,7 @@ normalizeIntegerRow modulus m
       let reconstructed = M.map (rationalReconstruction modulus) m
       in if any (== Nothing) (M.elems reconstructed)
          then M.empty -- Reconstruction failed for some coeff -> discard row
-         else M.map (\(Just r) -> r) reconstructed
+         else M.mapMaybe id reconstructed
 
 -- Rational Reconstruction: find n/d = a (mod m)
 -- using Extended Euclidean Algorithm.
@@ -275,7 +263,7 @@ normalizeIntegerRow modulus m
 rationalReconstruction :: Integer -> Integer -> Maybe Rational
 rationalReconstruction m a =
   let
-    limit = floor (sqrt (fromIntegral m / 2 :: Double))
+    limit = integerSqrt (m `div` 2)
     
     go r0 r1 t0 t1
       | r1 <= limit = Just (fromIntegral r1 % fromIntegral t1)
@@ -447,7 +435,9 @@ f4ReduceModular ord basis target =
           
       remainders = filter isRemainder rowsReduced
   in case remainders of
-       (r:_) -> head (rowsToPolys cols [r])
+       (r:_) -> case rowsToPolys cols [r] of
+                  (p:_) -> p
+                  [] -> Poly M.empty
        [] -> 
          -- If all rows are reducible to something with basis LTs, check if there's a zero row or small remainder
          Poly M.empty

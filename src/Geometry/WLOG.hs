@@ -2,12 +2,11 @@ module Geometry.WLOG
   ( applyWLOG
   , detectPoints
   , isTranslationInvariant
+  , parsePointVar
   ) where
 
 import Expr
-import Data.List (nub, sort, isPrefixOf, find)
-import qualified Data.Set as S
-import qualified Data.Map.Strict as M
+import Data.List (nub, sort, isPrefixOf)
 
 -- | Apply Without Loss of Generality (WLOG) simplifications
 -- Returns (New Theory, Description of changes)
@@ -53,6 +52,7 @@ detectPoints formulas =
 
 parsePointVar :: String -> (String, String)
 parsePointVar v
+  | "zz_" `isPrefixOf` v = ("", "") -- Ignore auxiliary variables
   | "x" `isPrefixOf` v && length v > 1 = (drop 1 v, "x")
   | "y" `isPrefixOf` v && length v > 1 = (drop 1 v, "y")
   | "z" `isPrefixOf` v && length v > 1 = (drop 1 v, "z")

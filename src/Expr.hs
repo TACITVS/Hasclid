@@ -338,6 +338,16 @@ hasNonPolynomial (Sub e1 e2) = hasNonPolynomial e1 || hasNonPolynomial e2
 hasNonPolynomial (Mul e1 e2) = hasNonPolynomial e1 || hasNonPolynomial e2
 hasNonPolynomial (Pow e _) = hasNonPolynomial e
 hasNonPolynomial (Sum _ _ _ _) = True
+hasNonPolynomial (Dist2 _ _) = False
+hasNonPolynomial (Collinear _ _ _) = False
+hasNonPolynomial (Dot _ _ _ _) = False
+hasNonPolynomial (Circle _ _ r) = hasNonPolynomial r
+hasNonPolynomial (Midpoint _ _ _) = False
+hasNonPolynomial (Perpendicular _ _ _ _) = False
+hasNonPolynomial (Parallel _ _ _ _) = False
+hasNonPolynomial (AngleEq2D _ _ _ _ _ _) = False
+hasNonPolynomial (AngleEq2DAbs _ _ _ _ _ _) = False
+hasNonPolynomial (Determinant rows) = any hasNonPolynomial (concat rows)
 hasNonPolynomial _ = False
 
 -- Simplify an Expr by applying algebraic rules
@@ -402,8 +412,8 @@ simplifyExpr (Mod e1 e2) =
                         "Attempted modulo by zero constant")
        (_, IntConst 0) -> error $ formatError (DivisionByZero
                            "Attempted modulo by zero integer")
-       (e, Const 1) -> Const 0              -- e mod 1 = 0
-       (e, IntConst 1) -> Const 0
+       (_, Const 1) -> Const 0              -- e mod 1 = 0
+       (_, IntConst 1) -> Const 0
        (Const r1, Const r2) | denominator r1 == 1 && denominator r2 == 1 ->
            Const (fromIntegral (numerator r1 `mod` numerator r2))  -- r2 /= 0 guaranteed
        (IntConst i1, IntConst i2) -> IntConst (i1 `mod` i2)  -- i2 /= 0 guaranteed
@@ -868,10 +878,18 @@ containsDivFormula (Exists _ f) = containsDivFormula f
 -- Integer square root helper
 -- =============================================
 
+-- | Integer square root (floor) using pure Integer arithmetic (Newton's method).
+-- Safe for massive integers where Double conversion would fail.
 integerSqrt :: Integer -> Integer
 integerSqrt n
   | n < 0 = 0
-  | otherwise = floor (sqrt (fromIntegral n :: Double))
+  | n == 0 = 0
+  | otherwise = go (n `div` 2 + 1)
+  where
+    go x
+      | y < x     = go y
+      | otherwise = x
+      where y = (x + n `div` x) `div` 2
 
 -- =============================================
 -- Logic helpers
@@ -907,8 +925,8 @@ containsIntFormula (Exists qs f) =
 buildSubMap :: Theory -> M.Map String Poly
 buildSubMap theory = M.fromList $ concat 
   [ case lhs of
-      Var v -> [(v, toPoly rhs)]
-      IntVar v -> [(v, toPoly rhs)]
+      Var v -> if hasNonPolynomial rhs then [] else [(v, toPoly rhs)]
+      IntVar v -> if hasNonPolynomial rhs then [] else [(v, toPoly rhs)]
       _ -> []
   | Eq lhs rhs <- theory 
   ]
@@ -931,6 +949,17 @@ evaluatePoly subM (Poly m) =
 
 toPolySub :: M.Map String Poly -> Expr -> Poly
 toPolySub subM expr = evaluatePoly subM (toPoly expr)
+
+-- | Convert Poly back to Expr
+polyToExpr :: Poly -> Expr
+polyToExpr (Poly m)
+  | M.null m = Const 0
+  | otherwise =
+      let termExpr (Monomial vars, c) =
+            let base = foldl (\acc (v, e) -> Mul acc (Pow (Var v) (fromIntegral e))) (Const 1) (M.toList vars)
+            in Mul (Const c) base
+          terms = map termExpr (M.toList m)
+      in foldl1 Add terms
 
 -- =============================================
 -- Shared Polynomial Utilities

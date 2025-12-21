@@ -54,10 +54,10 @@ solveGeo theory goal =
     GeoDisproved _ _ -> Just False
     GeoUnknown _ -> Nothing
 
--- | Solve with detailed trace information
 solveGeoWithTrace :: Theory -> Formula -> GeoResult
 solveGeoWithTrace theory goal =
-  let
+  -- Phase 1: Simple syntactic check
+    let
     -- Step 1: Build initial knowledge base
     kb0 = buildKnowledgeBase theory M.empty
     

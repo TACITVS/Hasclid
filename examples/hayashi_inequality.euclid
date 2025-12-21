@@ -1,0 +1,47 @@
+:set-timeout 180
+:verbose
+:optimize on
+:set-strategy sugar
+:set-gb-backend f4
+:set-f4-batch on
+
+-- =============================================================================
+-- THE LEGIT HAYASHI INEQUALITY (Rigorous Formulation v2)
+-- =============================================================================
+-- Theorem: For any triangle ABC and arbitrary point P:
+--   sqrt(R1s*R2s/(a2*b2)) + sqrt(R2s*R3s/(b2*c2)) + sqrt(R3s*R1s/(c2*a2)) >= 1
+--
+-- We use squared distances directly to minimize sqrt-aux variables.
+-- =============================================================================
+
+-- 1. Setup Coordinates (Standard position)
+:point A 0 0
+:point B cx 0
+:point C ux uy
+:point P px py
+
+-- 2. Constraints (Non-degenerate triangle)
+:assume (> cx 0)
+:assume (> uy 0)
+
+-- 2b. Point P inside triangle ABC (barycentric coordinates)
+:inside P A B C
+
+-- 3. Define Squared Entities (Implicitly)
+:assume (= R1s (dist2 A P))
+:assume (= R2s (dist2 B P))
+:assume (= R3s (dist2 C P))
+
+:assume (= a2 (dist2 B C))
+:assume (= b2 (dist2 A C))
+:assume (= c2 (dist2 A B))
+
+-- Side lengths are strictly positive
+:assume (> a2 0)
+:assume (> b2 0)
+:assume (> c2 0)
+
+-- 4. THE GOAL (Raw Geometric Inequality)
+-- We feed the inequality using sqrt of ratios.
+-- Hasclid handles rational/sqrt elimination automatically.
+:auto (>= (+ (sqrt (/ (* R1s R2s) (* a2 b2))) (+ (sqrt (/ (* R2s R3s) (* b2 c2))) (sqrt (/ (* R3s R1s) (* c2 a2))))) 1)

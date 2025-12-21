@@ -44,17 +44,17 @@ runTimeoutM ctx action = runReaderT (unTimeoutM action) ctx
 -- =============================================
 
 -- | Create a timeout context with a deadline (in seconds from now)
-withTimeout :: Double -> IO TimeoutContext
+withTimeout :: Integer -> IO TimeoutContext
 withTimeout seconds = do
   now <- getCurrentTime
-  let deadline' = addUTCTime (realToFrac seconds :: NominalDiffTime) now
-  return $ TimeoutContext (Just deadline') now
+  let deadline' = addUTCTime (fromIntegral seconds :: NominalDiffTime) now
+  pure $ TimeoutContext (Just deadline') now
 
 -- | Create a timeout context with no timeout
 noTimeout :: IO TimeoutContext
 noTimeout = do
   now <- getCurrentTime
-  return $ TimeoutContext Nothing now
+  pure $ TimeoutContext Nothing now
 
 -- | Check if timeout has been exceeded
 -- Returns True if deadline has passed, False otherwise

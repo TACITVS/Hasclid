@@ -1,32 +1,89 @@
 module Positivity.SOS
   ( checkSOS
+  , checkSOSWithLemmas
   , checkSumOfSquares
   , isPerfectSquare
+  , SOSCertificate(..)
+  , getSOSCertificate
   ) where
 
 import Expr
 import qualified Data.Map.Strict as M
-import Data.List (sortBy, nub, sort)
-import Data.Ratio (numerator, denominator)
+import Data.List (sortBy, nub, sort, delete)
+import Data.Ratio (numerator, denominator, (%))
+import Data.Maybe (isJust, mapMaybe)
 import TermOrder (compareMonomials, TermOrder(..))
 import Positivity.SDP (checkSOS_SDP)
 
+-- | Certificate showing that a polynomial is a sum of squares.
+--   P = sum (coefficients_i * squares_i^2) + sum (lemmata_j) + remainder
+data SOSCertificate = SOSCertificate
+  { sosTerms :: [(Rational, Poly)] -- (coefficient, base_polynomial) such that coeff * base^2
+  , sosLemmas :: [Poly]            -- Known non-negative lemmata used
+  , sosRemainder :: Poly           -- Remaining part (should be 0 modulo ideal)
+  } deriving (Show, Eq)
+
+emptyCert :: SOSCertificate
+emptyCert = SOSCertificate [] [] polyZero
+
 -- | Check if polynomial is a Sum of Squares, potentially modulo an ideal (via reducer)
+-- and potentially using a list of known non-negative lemmata.
 checkSOS :: (Poly -> Poly) -> Poly -> Bool
-checkSOS reducer p = isWeightedSOS p || checkSumOfSquares reducer p || checkSOS_SDP (reducer p)
+checkSOS reducer p = isJust (getSOSCertificate [] reducer p) || checkSOS_SDP p
+
+-- | Get SOS certificate if it exists, using known non-negative variables and lemmata.
+getSOSCertificate :: [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate
+getSOSCertificate lemmata reducer pRaw = 
+  let p = reducer pRaw
+      -- Extract variables known to be non-negative from lemmata (e.g., v >= 0)
+      posVars = mapMaybe posVarName [m | Poly m <- lemmata]
+  in case getPositionalSOS posVars p of
+       Just cert -> Just cert
+       Nothing -> 
+         case robustCholesky reducer p emptyCert of
+           Just cert -> Just cert
+           Nothing -> tryLemmaReduction lemmata reducer p
+
+-- | Advanced SOS check that leverages previously proven lemmata.
+checkSOSWithLemmas :: [Poly] -> (Poly -> Poly) -> Poly -> Bool
+checkSOSWithLemmas lemmata reducer p = isJust (getSOSCertificate lemmata reducer p)
+
+-- | Check if a polynomial is a sum of monomials that are products of known non-negative variables.
+-- This handles "Trivial SOS" for variables like sqrt-auxiliaries.
+getPositionalSOS :: [String] -> Poly -> Maybe SOSCertificate
+getPositionalSOS posVars (Poly m) =
+  if not (M.null m) && all isNonNegativeTerm (M.toList m)
+  -- We return this as 'remainder' or a special type of 'lemma' usage?
+  -- For now, we'll just say the whole thing is proved if all terms are non-negative.
+  then Just (emptyCert { sosRemainder = polyZero, sosLemmas = [Poly m] })
+  else Nothing
+  where
+    isNonNegativeTerm (Monomial vars, c) = 
+      c > 0 && all (\(v, e) -> even e || v `elem` posVars) (M.toList vars)
+
+posVarName :: M.Map Monomial Rational -> Maybe String
+posVarName m =
+  case M.toList m of
+    [(Monomial v, coeff)] | coeff == 1 ->
+      case M.toList v of
+        [(name, 1)] -> Just name
+        _ -> Nothing
+    _ -> Nothing
+
+_isPosVariable :: M.Map Monomial Rational -> Bool
+_isPosVariable m = isJust (posVarName m)
 
 -- | Check for weighted sum of even powers (trivial SOS)
-isWeightedSOS :: Poly -> Bool
-isWeightedSOS (Poly m) =
-  not (M.null m) &&
-  all (\(Monomial vars, c) -> c > 0 && all even (M.elems vars)) (M.toList m)
+_getWeightedSOS :: Poly -> Maybe SOSCertificate
+_getWeightedSOS (Poly m) =
+  if not (M.null m) && all (\(Monomial vars, c) -> c > 0 && all even (M.elems vars)) (M.toList m)
+  then let terms = [ (c, Poly (M.singleton (sqrtMono mono) 1)) | (mono, c) <- M.toList m ]
+       in Just (emptyCert { sosTerms = terms })
+  else Nothing
 
 -- | Check if polynomial is a perfect square (P = Q^2)
 isPerfectSquare :: Poly -> Bool
-isPerfectSquare p =
-  case polynomialSqrt p of
-    Just _ -> True
-    Nothing -> False
+isPerfectSquare p = isJust (polynomialSqrt p)
 
 -- | Compute exact square root of polynomial if it exists
 polynomialSqrt :: Poly -> Maybe Poly
@@ -73,77 +130,101 @@ findRoot target currentRoot =
 -- ============================================================================
 
 -- | Check if polynomial is SOS by constructing its Gram Matrix.
--- P(x) is SOS iff there exists a PSD matrix Q s.t. P(x) = m(x)^T Q m(x)
--- where m(x) is the vector of monomials up to half the degree of P.
 checkSumOfSquares :: (Poly -> Poly) -> Poly -> Bool
-checkSumOfSquares reducer pRaw =
-  let p = reducer pRaw
-  in if p == polyZero then True
-  else
-    let 
-        -- 1. Get half-degree monomials (the basis for the square)
-        basis = getSOSBasis p
-        n = length basis
-        
-        -- 2. Build the Gram Matrix Q
-        -- In this "lite" version, we try to find a diagonal-dominant or 
-        -- simple LDL decomposition for Q. 
-        -- For a full commercial prover, we would use SDP here.
-        -- We implement a robust Cholesky-like search that handles cross-terms.
-        
-    in if null basis then False else robustCholesky reducer p
+checkSumOfSquares reducer pRaw = isJust (robustCholesky reducer pRaw emptyCert)
 
 -- | Extract the basis of monomials m_i such that m_i*m_j could form terms in P
-getSOSBasis :: Poly -> [Monomial]
-getSOSBasis (Poly m) =
+_getSOSBasis :: Poly -> [Monomial]
+_getSOSBasis (Poly m) =
   let allMonos = M.keys m
       halfDegrees = map sqrtMono (filter isSquareMono allMonos)
-      -- Also include monomials that are "halfway" between existing terms
-      -- (Heuristic for cross-terms)
   in nub (sort halfDegrees)
 
 -- | Robust Cholesky decomposition that allows for pivot selection and 
---   handles non-diagonal SOS forms.
-robustCholesky :: (Poly -> Poly) -> Poly -> Bool
-robustCholesky reducer p
-  | p == polyZero = True
+--   returns a certificate of the squares found.
+robustCholesky :: (Poly -> Poly) -> Poly -> SOSCertificate -> Maybe SOSCertificate
+robustCholesky reducer p cert
+  | p == polyZero = Just cert
   | otherwise =
-      case findBestPivot p of
-        Nothing -> False -- No valid square term found to eliminate
-        Just (m, c) ->
+      -- Extract posVars from context (via cert lemmata)
+      let posVars = mapMaybe posVarName [m | Poly m <- sosLemmas cert]
+      in case findBestPivotEnhanced posVars p of
+        Nothing -> Nothing -- No valid square term found to eliminate
+        Just (m, c, maybeV) ->
           let
-             -- P = c * m^2 + 2 * m * (\sum a_i n_i) + rest
-             --   = (sqrt(c) m + (1/sqrt(c)) \sum a_i n_i)^2 + (rest - (1/c)(\sum a_i n_i)^2)
+             -- We want to eliminate all terms in p divisible by m.
+             -- Let p = c * v * m^2 + m * Q + R  (if maybeV = Just v)
+             -- or p = c * m^2 + m * Q + R      (if maybeV = Nothing)
+             
+             pivotPoly = case maybeV of
+                           Just v -> polyMul (polyFromVar v) (polyFromMonomial (monomialMul m m) c)
+                           Nothing -> polyFromMonomial (monomialMul m m) c
              
              (divisible, _) = partitionPolyByDivisibility p m
-             quotient = case polyDivMonomial divisible m of
-                          Just q -> q
-                          Nothing -> error "Partition logic failed"
              
-             ltPoly = polyFromMonomial m c
-             xPoly = polySub quotient ltPoly -- The cross terms: \sum a_i n_i
+             -- rest = m * Q = divisible - pivotPoly
+             rest = polySub divisible pivotPoly
              
-             subtraction = polyScale (polyMul quotient quotient) (1/c)
-             -- Actually, the correct subtraction to eliminate m is:
-             -- quotient = c*m + cross
-             -- (quotient)^2 / c = (c*m + cross)^2 / c = c*m^2 + 2*m*cross + cross^2/c
-             -- This eliminates all terms in 'p' divisible by 'm'.
+             -- Q = rest / m
+             qPoly = case polyDivMonomial rest m of
+                       Just q -> q
+                       Nothing -> error "Partition logic failed"
              
-             newP = reducer (polySub p subtraction)
-          in robustCholesky reducer newP
+             -- base = sqrt(c) * m + (1/(2*sqrt(c))) * Q  (if maybeV = Nothing)
+             -- For maybeV = Just v, we treat v as part of the coefficient or use it as a factor.
+             -- SIMPLIFIED: For now, only support standard squares for completion, 
+             -- but allow non-negative monomials as positive remainders.
+          in case maybeV of
+               Nothing -> -- Standard square completion
+                 let base = polyAdd (polyScale (polyFromMonomial m 1) c) (polyScale qPoly (1/2))
+                     subtraction = polyScale (polyMul base base) (1/c)
+                     newP = reducer (polySub p subtraction)
+                     newCert = cert { sosTerms = (1/c, base) : sosTerms cert }
+                 in robustCholesky reducer newP newCert
+               Just _v -> -- Non-negative remainder: subtract the term and continue
+                 let newP = reducer (polySub p pivotPoly)
+                     -- We add it to lemmata or a new field 'sosPositiveTerms'?
+                     -- Let's just put it in sosLemmas for now.
+                     newCert = cert { sosLemmas = pivotPoly : sosLemmas cert }
+                 in robustCholesky reducer newP newCert
 
--- | Find the best monomial to use as a square pivot.
---   Favors monomials that appear as squares with positive coefficients.
-findBestPivot :: Poly -> Maybe (Monomial, Rational)
-findBestPivot (Poly m) =
-  let candidates = [ (sqrtMono mono, c) 
-                   | (mono, c) <- M.toList m
-                   , c > 0 && isSquareMono mono ]
-      -- Pick the largest monomial (by term order) to ensure termination
-      sorted = sortBy (\(m1,_) (m2,_) -> compareMonomials GrevLex m2 m1) candidates
+-- | Find the best monomial to use as a square pivot, including non-negative variables.
+findBestPivotEnhanced :: [String] -> Poly -> Maybe (Monomial, Rational, Maybe String)
+findBestPivotEnhanced posVars (Poly m) =
+  let -- 1. Standard square candidates
+      squares = [ (sqrtMono mono, c, Nothing) 
+                | (mono, c) <- M.toList m
+                , c > 0 && isSquareMono mono ]
+      
+      -- 2. Non-negative variable candidates (v * m^2)
+      posTerms = [ (sqrtMono (Monomial (M.delete v vm)), c, Just v)
+                 | (Monomial vm, c) <- M.toList m
+                 , c > 0
+                 , v <- posVars
+                 , M.findWithDefault 0 v vm == 1 -- Odd power 1
+                 , isSquareMono (Monomial (M.delete v vm))
+                 ]
+      
+      candidates = squares ++ posTerms
+      sorted = sortBy (\(m1,_,_) (m2,_,_) -> compareMonomials GrevLex m2 m1) candidates
   in case sorted of
        (x:_) -> Just x
        []    -> Nothing
+
+-- | Find the best monomial to use as a square pivot.
+_findBestPivot :: Poly -> Maybe (Monomial, Rational)
+_findBestPivot p = case findBestPivotEnhanced [] p of
+                     Just (m, c, Nothing) -> Just (m, c)
+                     _ -> Nothing
+
+-- | Attempt to subtract known non-negative lemmata from the target to make it SOS.
+tryLemmaReduction :: [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate
+tryLemmaReduction [] _ _ = Nothing
+tryLemmaReduction (l:ls) reducer p =
+  let remainder = reducer (polySub p l)
+  in case getSOSCertificate ls reducer remainder of
+       Just cert -> Just (cert { sosLemmas = l : sosLemmas cert })
+       Nothing -> tryLemmaReduction ls reducer p
 
 -- | Partition polynomial into (terms divisible by m, terms not divisible)
 partitionPolyByDivisibility :: Poly -> Monomial -> (Poly, Poly)
@@ -156,11 +237,10 @@ isDivisible (Monomial a) (Monomial b) = M.isSubmapOfBy (<=) b a
 
 polyDivMonomial :: Poly -> Monomial -> Maybe Poly
 polyDivMonomial (Poly mapping) m =
-  let divided = M.mapKeysMonotonic (\k -> case monomialDiv k m of Just r -> r; Nothing -> k) mapping 
-      -- Note: mapKeysMonotonic assumes order preservation. Division preserves Lex order? 
-      -- Div by const monomial yes.
-      -- We must ensure all keys were divisible.
-  in Just (Poly divided)
+  let dividedList = [ (res, c) | (k, c) <- M.toList mapping, let res = monomialDiv k m ]
+  in if any (\(r, _) -> r == Nothing) dividedList
+     then Nothing
+     else Just (Poly (M.fromList [ (r, c) | (Just r, c) <- dividedList ]))
 
 polyScale :: Poly -> Rational -> Poly
 polyScale (Poly m) s = Poly (M.map (*s) m)
@@ -184,11 +264,11 @@ isSquare :: Integer -> Bool
 isSquare x 
   | x < 0 = False
   | otherwise =
-      let s = round (sqrt (fromIntegral x :: Double))
+      let s = integerSqrt x
       in s * s == x
 
 sqrtRat :: Rational -> Rational
 sqrtRat r =
   let n = numerator r
       d = denominator r
-  in (toRational (round (sqrt (fromIntegral n :: Double)) :: Integer)) / (toRational (round (sqrt (fromIntegral d :: Double)) :: Integer))
+  in integerSqrt n % integerSqrt d

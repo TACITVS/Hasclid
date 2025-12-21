@@ -165,14 +165,19 @@ exprFromSExpr intVars (Atom t)
              (n, d) -> Right $ Const (read n % read (drop 1 d))
       else if '.' `elem` t
            then -- Parse decimal as exact rational (e.g., "1.25" -> 125/100 -> 5/4)
-                let t' = if head t == '-' then tail t else t
-                    isNeg = head t == '-'
-                    (intPart, _:decPart) = span (/= '.') t'
-                    numDigits = length decPart
-                    denom = 10 ^ numDigits
-                    numer = read (intPart ++ decPart) :: Integer
-                    numer' = if isNeg then -numer else numer
-                in Right $ Const (numer' % denom)
+                let (isNeg, t') = case t of
+                                    ('-':rest) -> (True, rest)
+                                    _          -> (False, t)
+                    (intPart, rest) = span (/= '.') t'
+                in case rest of
+                     ('.':decPart) ->
+                       let numDigits = length decPart
+                           denom = 10 ^ numDigits
+                           numer = read (intPart ++ decPart) :: Integer
+                           numer' = if isNeg then -numer else numer
+                       in Right $ Const (numer' % denom)
+                     _ ->
+                       Left $ ParseError (InvalidNumber t) "Malformed decimal number"
            else Right $ Const (fromInteger (read t) % 1)
   | S.member t intVars = Right $ IntVar t
   | otherwise = Right $ Var t
@@ -303,7 +308,7 @@ exprFromSExpr intVars (List (Atom op : args)) = case op of
       -- Usage: (det e1 e2 e3 e4 ...) - flattens a square matrix
       -- Calculate dimension
       let len = length args
-      let n = floor (sqrt (fromIntegral len) :: Double)
+      let n = fromIntegral (integerSqrt (fromIntegral len))
       if n * n /= len 
       then Left $ ParseError (InvalidSyntax "matrix must be square") 
                      ("det expects square number of arguments (1, 4, 9, 16...), got " ++ show len)

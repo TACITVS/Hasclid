@@ -602,12 +602,12 @@ evaluateFormula formula (cell, signs) =
   case formula of
     -- Equality: f = g  ⟺  f - g = 0
     Eq lhs rhs ->
-      let diff = exprToPoly (Sub lhs rhs)
+      let diff = toPolySub M.empty (Sub lhs rhs)
       in M.lookup diff signs == Just Zero
 
     -- Greater or equal: f >= g  ⟺  f - g >= 0
     Ge lhs rhs ->
-      let diff = exprToPoly (Sub lhs rhs)
+      let diff = toPolySub M.empty (Sub lhs rhs)
       in case M.lookup diff signs of
            Just Positive -> True
            Just Zero -> True
@@ -615,12 +615,12 @@ evaluateFormula formula (cell, signs) =
 
     -- Greater than: f > g  ⟺  f - g > 0
     Gt lhs rhs ->
-      let diff = exprToPoly (Sub lhs rhs)
+      let diff = toPolySub M.empty (Sub lhs rhs)
       in M.lookup diff signs == Just Positive
 
     -- Less or equal: f <= g  ⟺  g >= f  ⟺  g - f >= 0
     Le lhs rhs ->
-      let diff = exprToPoly (Sub rhs lhs)
+      let diff = toPolySub M.empty (Sub rhs lhs)
       in case M.lookup diff signs of
            Just Positive -> True
            Just Zero -> True
@@ -628,7 +628,7 @@ evaluateFormula formula (cell, signs) =
 
     -- Less than: f < g  ⟺  g > f  ⟺  g - f > 0
     Lt lhs rhs ->
-      let diff = exprToPoly (Sub rhs lhs)
+      let diff = toPolySub M.empty (Sub rhs lhs)
       in M.lookup diff signs == Just Positive
 
     And f1 f2 -> evaluateFormula f1 (cell, signs) && evaluateFormula f2 (cell, signs)
@@ -693,11 +693,11 @@ satisfiableFormulaCAD theory goal =
 formulaToPolys :: Formula -> [Poly]
 formulaToPolys formula =
   case formula of
-    Eq lhs rhs -> [exprToPoly (Sub lhs rhs)]
-    Ge lhs rhs -> [exprToPoly (Sub lhs rhs)]
-    Gt lhs rhs -> [exprToPoly (Sub lhs rhs)]
-    Le lhs rhs -> [exprToPoly (Sub rhs lhs)]  -- Flip: l <= r becomes r - l
-    Lt lhs rhs -> [exprToPoly (Sub rhs lhs)]  -- Flip: l < r becomes r - l
+    Eq lhs rhs -> [toPolySub M.empty (Sub lhs rhs)]
+    Ge lhs rhs -> [toPolySub M.empty (Sub lhs rhs)]
+    Gt lhs rhs -> [toPolySub M.empty (Sub lhs rhs)]
+    Le lhs rhs -> [toPolySub M.empty (Sub rhs lhs)]  -- Flip: l <= r becomes r - l
+    Lt lhs rhs -> [toPolySub M.empty (Sub rhs lhs)]  -- Flip: l < r becomes r - l
     And f1 f2 -> formulaToPolys f1 ++ formulaToPolys f2
     Or f1 f2 -> formulaToPolys f1 ++ formulaToPolys f2
     Not f -> formulaToPolys f
@@ -705,8 +705,8 @@ formulaToPolys formula =
     Exists _ f -> formulaToPolys f
 
 -- | Convert an expression to a polynomial
-exprToPoly :: Expr -> Poly
-exprToPoly = toPoly
+_exprToPoly :: Expr -> Poly
+_exprToPoly = toPoly
 
 -- Extract variables from a polynomial
 extractPolyVars :: Poly -> S.Set String
@@ -862,7 +862,7 @@ checkBounds :: QuantVar -> EvaluationTree -> Bool
 checkBounds q tree =
     let pt = case tree of EvalNode c _ -> samplePoint c; EvalLeaf c _ -> samplePoint c
         valQ = M.lookup (qvName q) pt
-        eval e = polyToRational (evaluatePolyRational pt (exprToPoly e))
+        eval e = polyToRational (evaluatePolyRational pt (toPolySub M.empty e))
     in case valQ of
          Nothing -> True -- Should not happen if tree is correct
          Just val ->

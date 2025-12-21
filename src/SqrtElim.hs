@@ -10,22 +10,16 @@ import qualified Data.Map.Strict as Map
 -- Each (sqrt e) becomes a fresh variable v with constraints:
 --   v^2 = e    and    v >= 0    and    e >= 0
 -- MEMOIZATION: Reuses same auxiliary variable for identical sqrt expressions
--- Special rewrites:
---   sqrt(t^2)  -> t with added constraint t >= 0
---   sqrt a >= sqrt b  ->  a >= b  AND a >= 0 AND b >= 0
---   sqrt a >  sqrt b  ->  a >  b  AND a >= 0 AND b >= 0
---   sqrt a =  sqrt b  ->  a = b   AND a >= 0 AND b >= 0
---   sqrt a == b       ->  a == b^2 AND a >= 0 AND b >= 0
---   sqrt a >= b       ->  a >= b^2 AND a >= 0 AND b >= 0
---   sqrt a >  b       ->  a >  b^2 AND a >= 0 AND b >= 0
--- Returns (transformedTheory, transformedGoal) both sqrt-free.
-eliminateSqrt :: Theory -> Formula -> (Theory, Formula)
+-- Returns (transformedTheory, transformedGoal, varDefinitions) both sqrt-free.
+eliminateSqrt :: Theory -> Formula -> (Theory, Formula, Map.Map String Expr)
 eliminateSqrt theory goal =
-  let ((theory', goal'), (extras, _)) = runState (do
+  let ((theory', goal'), (extras, memo)) = runState (do
         t' <- mapM elimFormula theory
         g' <- elimFormula goal
         return (t', g')) ([], Map.empty)
-  in (extras ++ theory', goal')
+      -- Reverse the memo to get VarName -> SqrtExpr
+      varDefs = Map.fromList [ (v, Sqrt e) | (e, v) <- Map.toList memo ]
+  in (extras ++ theory', goal', varDefs)
 
 type SqrtMemo = Map.Map Expr String
 type ElimM = State ([Formula], SqrtMemo)
@@ -162,55 +156,21 @@ elimFormula (Eq l r) = do
   r' <- elimExpr r
   return (Eq l' r')
 -- Smart squaring for inequalities with sqrt in sums
--- e.g., sqrt(a) + sqrt(b) >= sqrt(c) becomes (sqrt(a) + sqrt(b))^2 >= c
--- ITERATIVE: Keep squaring until no sqrt in sums remain
-elimFormula (Ge l r)
-  | containsSqrtInSum l || containsSqrtInSum r = do
-      -- Square both sides (valid since all sqrt are >= 0)
-      l' <- elimExpr (Mul l l)
-      r' <- elimExpr (Mul r r)
-      -- Add non-negativity constraints for the original expressions
-      addNonNegConstraints l
-      addNonNegConstraints r
-      -- Recursively eliminate if still has sqrt in sums
-      elimFormula (Ge l' r')
+-- REMOVED: Aggressive recursive squaring caused infinite loops/blowup.
+-- We now fall back to the standard elimExpr strategy (introducing auxiliary variables)
+-- which is safer for complex expressions.
 elimFormula (Ge l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
   return (Ge l' r')
-elimFormula (Gt l r)
-  | containsSqrtInSum l || containsSqrtInSum r = do
-      -- Square both sides
-      l' <- elimExpr (Mul l l)
-      r' <- elimExpr (Mul r r)
-      addNonNegConstraints l
-      addNonNegConstraints r
-      -- Recursively eliminate
-      elimFormula (Gt l' r')
 elimFormula (Gt l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
   return (Gt l' r')
-elimFormula (Le l r)
-  | containsSqrtInSum l || containsSqrtInSum r = do
-      l' <- elimExpr (Mul l l)
-      r' <- elimExpr (Mul r r)
-      addNonNegConstraints l
-      addNonNegConstraints r
-      -- Recursively eliminate
-      elimFormula (Le l' r')
 elimFormula (Le l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
   return (Le l' r')
-elimFormula (Lt l r)
-  | containsSqrtInSum l || containsSqrtInSum r = do
-      l' <- elimExpr (Mul l l)
-      r' <- elimExpr (Mul r r)
-      addNonNegConstraints l
-      addNonNegConstraints r
-      -- Recursively eliminate
-      elimFormula (Lt l' r')
 elimFormula (Lt l r) = do
   l' <- elimExpr l
   r' <- elimExpr r
@@ -222,6 +182,11 @@ elimFormula (Forall vars f) = Forall vars <$> elimFormula f
 elimFormula (Exists vars f) = Exists vars <$> elimFormula f
 
 elimExpr :: Expr -> ElimM Expr
+-- Aggressive distribution of Sqrt over Mul and Div
+-- This ensures sqrt(R1s * R2s) -> R1 * R2, preventing redundant zz_ variables
+elimExpr (Sqrt (Mul a b)) = elimExpr (Mul (Sqrt a) (Sqrt b))
+elimExpr (Sqrt (Div a b)) = elimExpr (Div (Sqrt a) (Sqrt b))
+
 elimExpr (Add a b) = Add <$> elimExpr a <*> elimExpr b
 elimExpr (Sub a b) = Sub <$> elimExpr a <*> elimExpr b
 -- Smart sqrt multiplication: sqrt(a) * sqrt(b) → sqrt(a*b) OR sqrt(a) * sqrt(a) → a
@@ -248,11 +213,11 @@ elimExpr (Pow (Sqrt a) 2) = do
 elimExpr (Pow e n) = Pow <$> elimExpr e <*> pure n
 elimExpr (Sqrt e) = do
   e' <- elimExpr e
-  case e of
+  case e' of
+    -- Simplify sqrt(x^2) -> x (since lengths/distances are positive)
     Pow t 2 -> do
-      t' <- elimExpr t
-      addConstraint (Ge t' (Const 0))
-      return t'
+      addConstraint (Ge t (Const 0))
+      return t
     _ -> do
       -- Check memo first - reuse variable if we've seen this expression
       (_, memo) <- get
@@ -289,14 +254,14 @@ addConstraint :: Formula -> ElimM ()
 addConstraint f = modify (\(constraints, memo) -> (f : constraints, memo))
 
 -- Add non-negativity constraints for all sqrt subexpressions in an expression
-addNonNegConstraints :: Expr -> ElimM ()
-addNonNegConstraints (Sqrt e) = do
+_addNonNegConstraints :: Expr -> ElimM ()
+_addNonNegConstraints (Sqrt e) = do
   e' <- elimExpr e
   addConstraint (Ge e' (Const 0))
-  addNonNegConstraints e
-addNonNegConstraints (Add a b) = addNonNegConstraints a >> addNonNegConstraints b
-addNonNegConstraints (Sub a b) = addNonNegConstraints a >> addNonNegConstraints b
-addNonNegConstraints (Mul a b) = addNonNegConstraints a >> addNonNegConstraints b
-addNonNegConstraints (Div a b) = addNonNegConstraints a >> addNonNegConstraints b
-addNonNegConstraints (Pow e _) = addNonNegConstraints e
-addNonNegConstraints _ = return ()
+  _addNonNegConstraints e
+_addNonNegConstraints (Add a b) = _addNonNegConstraints a >> _addNonNegConstraints b
+_addNonNegConstraints (Sub a b) = _addNonNegConstraints a >> _addNonNegConstraints b
+_addNonNegConstraints (Mul a b) = _addNonNegConstraints a >> _addNonNegConstraints b
+_addNonNegConstraints (Div a b) = _addNonNegConstraints a >> _addNonNegConstraints b
+_addNonNegConstraints (Pow e _) = _addNonNegConstraints e
+_addNonNegConstraints _ = return ()

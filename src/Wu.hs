@@ -398,31 +398,73 @@ isConstantNonZero (Poly m) =
     _ -> False
 
 formatWuTrace :: WuTrace -> String
+
 formatWuTrace trace = unlines $ 
-  [ "=== Wu's Method Trace ==="
-  , "Branching Factor: " ++ show (length (branches trace))
+
+  [ "\nWU'S METHOD ALGEBRAIC PROOF DEVELOPMENT:"
+
+  , replicate 40 '='
+
+  , "Hypothesis Polynomials: " ++ show (length (hypothesisPolys trace))
+
+  , "Conclusion Polynomial: " ++ prettyPoly (conclusionPoly trace)
+
+  , "Algebraic Branching Factor: " ++ show (length (branches trace))
+
   , ""
+
   ] ++ map formatBranch (branches trace) ++ 
+
   [ ""
-  , "Overall Result: " ++ if isProved trace then "[PROVED]" else "[NOT PROVED]"
-  , "Reason: " ++ proofReason trace
+
+  , replicate 40 '='
+
+  , "OVERALL RESULT: " ++ if isProved trace then "[PROVED]" else "[NOT PROVED]"
+
+  , "REASON: " ++ proofReason trace
+
   ]
 
+
+
 formatBranch :: WuBranchTrace -> String
+
 formatBranch b = unlines $ 
-  [ "--- Branch " ++ show (branchId b) ++ " ---"
-  , "Characteristic Set:"
+
+  [ "BRANCH " ++ show (branchId b) ++ ":"
+
+  , "1. Characteristic Set (Triangular Form):"
+
   ] ++ 
-  [ "  CS" ++ show i ++ ": " ++ prettyPoly p 
+
+  [ "   * CS" ++ show i ++ ": " ++ prettyPoly p 
+
   | (i, p) <- zip [1 :: Int ..] (characteristicSet b)
+
   ] ++ 
-  [ "Pseudo-Division:"
+
+  [ ""
+
+  , "2. Successive Pseudo-Division (Algebraic Reduction):"
+
   ] ++ 
-  [ "  " ++ desc ++ "\n    -> " ++ prettyPoly poly 
+
+  [ "   * " ++ desc ++ "\n     -> Result: " ++ prettyPoly poly 
+
   | (desc, poly) <- reductionSteps b 
+
   ] ++ 
-  [ "Remainder: " ++ prettyPoly (finalRemainder b)
-  , "Status: " ++ if branchProved b then "Proved" else "Failed"
+
+  [ ""
+
+  , "3. Final Remainder Evaluation:"
+
+  , "   * Remainder: " ++ prettyPoly (finalRemainder b)
+
+  , "   * Branch Status: " ++ if branchProved b then "Verified" else "Failed"
+
   ] ++ 
+
   (if null (degeneracyConditions b) then [] else 
-    ["Degeneracy Conditions:"] ++ checkDegeneracy (degeneracyConditions b))
+
+    ["" , "4. Geometric Degeneracy Conditions (Assumed Non-Zero):"] ++ map ("   * " ++) (checkDegeneracy (degeneracyConditions b)))
