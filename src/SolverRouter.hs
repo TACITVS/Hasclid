@@ -74,12 +74,10 @@ data SolverOptions = SolverOptions
 
 data GroebnerBackend = BuchbergerBackend | F4Backend deriving (Show, Eq)
 
+defaultSolverOptions :: SolverOptions
 defaultSolverOptions = SolverOptions defaultIntSolveOptions True SugarStrategy F4Backend True
 
-optimizeGroebnerOptions profile opts = 
-  if numConstraints profile >= 3 || (problemType profile == Geometric && numPoints (geometricFeatures profile) >= 3) || maxDegree profile >= 3
-  then opts { groebnerBackend = F4Backend } else opts
-
+selectGroebner :: ProblemProfile -> SolverOptions -> Formula -> [Poly] -> [Poly]
 selectGroebner profile opts _goal =
   let params = symbolicParams profile
       allVars = variables profile
@@ -93,7 +91,7 @@ selectGroebner profile opts _goal =
 -- Main Automatic Solving Functions
 -- =============================================
 
-
+autoSolve :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
 autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
   let safeProfile = analyzeProblem theoryRaw goalRaw
       pts = Geometry.WLOG.detectPoints (goalRaw : theoryRaw)
@@ -106,6 +104,7 @@ autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
   where
     errorResult profile msg = AutoSolveResult Unsolvable msg profile goalRaw False msg Nothing Nothing M.empty
 
+autoSolveInternal :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
 autoSolveInternal pts allowSplit opts pointSubs theoryRaw goalRaw =
   let (theoryG, goalG, _logG) = preprocessGeometry pointSubs theoryRaw goalRaw
       (theoryS, goalS, varDefsS) = eliminateSqrt theoryG goalG
@@ -186,6 +185,7 @@ autoSolveInternal pts allowSplit opts pointSubs theoryRaw goalRaw =
                 in AutoSolveResult solver ("PHASE 2: " ++ explainSolverChoice solver profile) profile goal' proved proofMsg Nothing trace (M.union varDefs defs)
   in applyInsideSplit pts allowSplit opts pointSubs theoryRaw goalRaw baseResult
 
+applyInsideSplit :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult -> AutoSolveResult
 applyInsideSplit pts allowSplit opts pointSubs theoryRaw goalRaw baseResult =
   if not allowSplit || isProved baseResult || not (shouldSplitInside pointSubs theoryRaw goalRaw)
   then baseResult
@@ -198,21 +198,27 @@ applyInsideSplit pts allowSplit opts pointSubs theoryRaw goalRaw baseResult =
     in if allProved then baseResult { isProved = True, proofReason = "Proved by boundary case split", detailedTrace = mergeTrace (detailedTrace baseResult) traceStr }
        else baseResult { proofReason = proofReason baseResult ++ " (failed on: " ++ intercalate ", " failed ++ ")", detailedTrace = mergeTrace (detailedTrace baseResult) traceStr }
 
+shouldSplitInside :: M.Map String Expr -> [Formula] -> Formula -> Bool
 shouldSplitInside subs theory goal = isInequality goal && M.member "ba_u" subs && any (\f -> case f of Ge (Var "ba_v") _ -> True; Gt (Var "ba_v") _ -> True; _ -> False) theory
 
+insideSplitCases :: [(String, [Formula])]
 insideSplitCases = let v = Var "ba_v"; w = Var "ba_w"; u = Sub (Const 1) (Add v w) in [("u=0", [Eq u (Const 0)]), ("v=0", [Eq v (Const 0)]), ("w=0", [Eq w (Const 0)]), ("interior", [Gt u (Const 0), Gt v (Const 0), Gt w (Const 0)])]
 
+mergeTrace :: Maybe String -> String -> Maybe String
 mergeTrace Nothing extra = Just extra
 mergeTrace (Just base) extra = Just (base ++ "\n\n" ++ extra)
 
+formatSOSCertificate :: SOSCertificate -> String
 formatSOSCertificate cert =
   let terms = sosTerms cert; lemmas = sosLemmas cert
       formatTerm (c, p) = (if c == 1 then "" else prettyRational c ++ "*") ++ "(" ++ prettyPolyNice p ++ ")^2"
       sumParts = map formatTerm (reverse terms) ++ map prettyPolyNice lemmas
   in if null sumParts then "0" else intercalate " + " sumParts ++ (if sosRemainder cert == polyZero then "" else " + [" ++ prettyPolyNice (sosRemainder cert) ++ "]")
 
+autoSolveE :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> Either String AutoSolveResult
 autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory goal
 
+proveInequalitySOS :: [String] -> SolverOptions -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr, Maybe ProofEvidence)
 proveInequalitySOS pts opts theoryRaw goalRaw =
   let geomLemmas = generateGeometricLemmas theoryRaw goalRaw
       (thPrep, goalPrep, varDefsP) = eliminateRational (theoryRaw ++ geomLemmas) goalRaw
@@ -221,26 +227,22 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
       -- 1. Iterative Squaring Heuristic (REMOVED: Caused tautology (A-B)^2 >= 0)
       -- We now rely on Global Square Substitution (v -> v_sq^2) in trySOS.
       
-      doSquaring _ f = f
       -- goalSquared = doSquaring 3 goalPoly -- REMOVED
       goalSquared = goalPoly -- Renamed for consistency with rest of function
-      
-      targetExprFinal = case goalSquared of
-                          Ge l r -> Sub l r
       
       profileFinal = analyzeProblem thPoly goalSquared
       
   in case goalSquared of
-    Ge _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared targetExprFinal goalPoly profileFinal varDefs in (b, r, t, varDefs, ev)
-    Gt _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared targetExprFinal goalPoly profileFinal varDefs in (b, r, t, varDefs, ev)
+    Ge _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
+    Gt _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
     _ -> (False, "Not an inequality after preprocessing", Nothing, varDefs, Nothing)
   where
 
-    trySOS theory goalFull targetExpr goalOriginal profileFinal varDefs =
+    trySOS theory goalFull goalOriginal profileFinal =
       let (thWLOG, wlogLog) = applyWLOG theory goalFull
           (thBary, goalBary, baryLog) = applyBarycentric pts thWLOG goalFull
           fullLog = wlogLog ++ baryLog
-          subMap = buildSubMap thBary
+          -- subMap = buildSubMap thBary -- Removed unused binding
           
           isDefinition (Eq (Var _) _) = True
           isDefinition _ = False
@@ -302,10 +304,12 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
 
     _buildParamMap theory = M.fromList [ (v, sqrt (fromRational c)) | Eq (Pow (Var v) 2) (Const c) <- theory, c > 0 ]
     isAlwaysNonNeg v theory = any (\f -> case f of Ge (Var x) _ -> x == v; Gt (Var x) _ -> x == v; _ -> False) theory
-    polyDegreeIn (Poly m) var = if M.null m then 0 else maximum (0 : [ fromIntegral (M.findWithDefault 0 var vars) | (mono, _) <- M.toList m, let Monomial vars = mono ])
+    polyDegreeIn (Poly m) var = if M.null m then 0 else maximum ((0 :: Int) : [ fromIntegral (M.findWithDefault 0 var vars) | (mono, _) <- M.toList m, let Monomial vars = mono ])
 
+autoSolveWithTrace :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> Maybe String -> AutoSolveResult
 autoSolveWithTrace opts pointSubs theory goal _ = autoSolve opts pointSubs theory goal
 
+selectAlgebraicSolver :: ProblemProfile -> Formula -> SolverChoice
 selectAlgebraicSolver profile goal
   | containsSqrtFormula goal = UseCAD
   | containsDivFormula goal = UseCAD  
@@ -313,32 +317,40 @@ selectAlgebraicSolver profile goal
   | problemType profile == Geometric && isInequality goal && numVariables profile > 2 = UseSOS
   | otherwise = UseGroebner
 
+isEquality :: Formula -> Bool
 isEquality (Eq _ _) = True
 isEquality (Forall _ f) = isEquality f
 isEquality (Exists _ f) = isEquality f
 isEquality _ = False
 
+isInequality :: Formula -> Bool
 isInequality (Ge _ _) = True
 isInequality (Gt _ _) = True
 isInequality (Le _ _) = True
 isInequality (Lt _ _) = True
 isInequality _ = False
 
-executeSolver pts solver opts profile theory goal =
+executeSolver :: [String] -> SolverChoice -> SolverOptions -> ProblemProfile -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
+executeSolver pts solver opts _profile theory goal =
   case solver of
     UseSOS -> let (proved, reason, trace, defs, _) = proveInequalitySOS pts opts theory goal in (proved, reason, trace, defs)
     UseCAD -> let (proved, reason, trace, defs) = runCadRational theory goal in (proved, reason, trace, defs)
     _ -> (False, "Not implemented", Nothing, M.empty)
 
-executeCADInequality theory lhs rhs isStrict = (False, "Not implemented", Nothing)
+extractPolyVars :: Poly -> S.Set String
 extractPolyVars (Poly m) = S.fromList $ concatMap (\(mono, _) -> let Monomial vars = mono in M.keys vars) (M.toList m)
+
+runCadRational :: [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
 runCadRational theory goal = let (th', goal', varDefs) = eliminateSqrt theory goal; proved = proveFormulaCAD th' goal' in (proved, "CAD", Nothing, varDefs)
-preprocessForCAD theory goal = let (th', goal', defs) = eliminateSqrt theory goal in (th', goal', defs)
+
+explainSolverChoice :: SolverChoice -> ProblemProfile -> String
 explainSolverChoice _ _ = "Automatic Solver"
 
+replaceString :: String -> String -> String -> String
 replaceString _ _ "" = ""
 replaceString old new s@(c:cs) | old `isPrefixOf` s = new ++ replaceString old new (drop (length old) s) | otherwise = c : replaceString old new cs
 
+formatAutoSolveResult :: AutoSolveResult -> Bool -> String
 formatAutoSolveResult result verbose =
   let header = "=== HASCLID AUTOMATIC PROOF SYSTEM ==="
       analysis = "PROBLEM ANALYSIS:\n  Structure: " ++ show (problemType (problemProfile result)) ++ "\n  Variables: " ++ show (numVariables (problemProfile result))
@@ -347,4 +359,5 @@ formatAutoSolveResult result verbose =
       traceStr = if verbose then case detailedTrace result of Just t -> "\nPROOF DEVELOPMENT:" ++ beautify t; Nothing -> "" else ""
   in unlines [header, "", analysis, "SOLVER SELECTION: " ++ solverReason result, "", "VERDICT: " ++ if isProved result then "PROVED" else "NOT PROVED", proofReason result, traceStr]
 
+generateGeometricLemmas :: [Formula] -> Formula -> [Formula]
 generateGeometricLemmas theory goal = let pts = Geometry.WLOG.detectPoints (goal : theory) in [ Ge (Add (Sqrt (Dist2 a b)) (Sqrt (Dist2 b c))) (Sqrt (Dist2 a c)) | a <- pts, b <- pts, c <- pts, a < b, b < c ]
