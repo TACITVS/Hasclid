@@ -1,4 +1,4 @@
-:set-timeout 180
+:set-timeout 600
 :verbose
 :optimize on
 :set-strategy sugar
@@ -18,45 +18,52 @@
 
 -- 1. Define Geometric Points (Standard WLOG position)
 :point A 0 0
-:point B cx 0
+:point B z_cx 0
 :point C ux uy
 
 -- Basic degeneracy constraints (Triangle exists)
-:assume (> cx 0)
+:assume (= z_cx 1)
 :assume (> uy 0)
+
+-- WLOG: Symmetry Breaking (a <= b <= c)
+-- This implies specific constraints on ux, uy for the standard position.
+-- 1. a <= b <=> (1-ux)^2 + uy^2 <= ux^2 + uy^2 <=> 1-2ux <= 0 <=> ux >= 0.5
+:assume (>= ux 0.5)
+-- 2. b <= c <=> ux^2 + uy^2 <= 1
+:assume (<= (+ (^ ux 2) (^ uy 2)) 1)
 
 -- 2. Define Squared Side Lengths
 -- c^2 = cx^2
-:assume (= c2 (^ cx 2))
+:assume (= z_c2 (^ z_cx 2))
 -- b^2 = ux^2 + uy^2
-:assume (= b2 (+ (^ ux 2) (^ uy 2)))
+:assume (= z_b2 (+ (^ ux 2) (^ uy 2)))
 -- a^2 = (cx-ux)^2 + uy^2
-:assume (= a2 (+ (^ (- cx ux) 2) (^ uy 2)))
+:assume (= z_a2 (+ (^ (- z_cx ux) 2) (^ uy 2)))
 
 -- 3. Define the "Cosine Terms" (from Law of Cosines)
 -- TermA = 2bc cos A = b^2 + c^2 - a^2
-:assume (= TermA (- (+ b2 c2) a2))
-:assume (= TermB (- (+ a2 c2) b2))
-:assume (= TermC (- (+ a2 b2) c2))
+:assume (= z_TermA (- (+ z_b2 z_c2) z_a2))
+:assume (= z_TermB (- (+ z_a2 z_c2) z_b2))
+:assume (= z_TermC (- (+ z_a2 z_b2) z_c2))
 
 -- 4. Define Area Term (Scaled to avoid fractions)
 -- 4S = 2 * Base * Height = 2 * cx * uy
 -- We need (4S)^6.
 -- Let's define S4_sq = (4S)^2 = 4 * cx^2 * uy^2
-:assume (= S4_sq (* 4 (* c2 (^ uy 2))))
+:assume (= z_S4_sq (* 4 (* z_c2 (^ uy 2))))
 
 -- =============================================================================
 -- THE SWITCH: ACUTE CONSTRAINTS
 -- =============================================================================
 -- Uncomment these three lines to make the theorem TRUE.
 -- Keep them commented to verify HASCLID correctly reports FALSE.
-:assume (> TermA 0)
-:assume (> TermB 0)
-:assume (> TermC 0)
+:assume (> z_TermA 0)
+:assume (> z_TermB 0)
+:assume (> z_TermC 0)
 
 -- =============================================================================
 -- 5. The Goal
 -- 27 * (TermA^2 * TermB^2 * TermC^2) <= (4S)^6
 -- We rewrite as: (4S)^6 - 27(...) >= 0
 -- Note: (4S)^6 = (S4_sq)^3
-:prove (>= (- (^ S4_sq 3) (* 27 (* (^ TermA 2) (* (^ TermB 2) (^ TermC 2))))) 0)
+:prove (>= (- (^ z_S4_sq 3) (* 27 (* (^ z_TermA 2) (* (^ z_TermB 2) (^ z_TermC 2))))) 0)

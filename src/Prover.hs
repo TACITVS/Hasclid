@@ -44,6 +44,8 @@ import qualified Data.List as L
 import Data.Ratio (numerator, denominator)
 import qualified Data.Map.Strict as Map
 import Control.Monad (foldM)
+import Control.Exception (try, evaluate, ArithException(..), ArithException)
+import System.IO.Unsafe (unsafePerformIO)
 import Data.Maybe (fromMaybe, maybeToList, catMaybes, isJust, isNothing)
 import Data.List (delete)
 import Numeric.Natural (Natural)
@@ -309,16 +311,45 @@ groebnerFallback customBuchberger maybeCache theory formula =
     reductionStep = [ReducedToNormalForm difference normalForm]
     allSteps = substSteps ++ preSubSteps ++ constraintSteps ++ basisStep ++ reductionStep
 
+    -- CRITICAL FIX: Reduce the theory (inequalities) using the Groebner Basis
+    -- This ensures that constraints on eliminated variables are translated 
+    -- to the remaining variables, allowing CAD to use them.
+    reduceExpr :: Expr -> Expr
+    reduceExpr e = 
+       let p = toPolySub subM e
+           p' = reduce compare p basis
+       in polyToExpr p'
+
+    reduceFormula :: Formula -> Formula
+    reduceFormula f = case f of
+      Ge l r -> Ge (reduceExpr l) (reduceExpr r)
+      Gt l r -> Gt (reduceExpr l) (reduceExpr r)
+      Le l r -> Le (reduceExpr l) (reduceExpr r)
+      Lt l r -> Lt (reduceExpr l) (reduceExpr r)
+      Eq l r -> Eq (reduceExpr l) (reduceExpr r)
+      _ -> f
+
+    reducedTheory = map reduceFormula theoryPrep
+
     checkPositivityWithFallback poly allowZero theory =
       let (posResult, posMsg) = checkPositivity poly allowZero
       in if posResult
          then (True, posMsg)
          else
-           let vars = S.toList (getVars poly)
+           let goalExpr = unsafePerformIO $ do
+                 r <- try (evaluate (polyToExpr poly)) :: IO (Either ArithException Expr)
+                 case r of
+                   Left e -> error ("CATCHED IN POLYTOEXPR: " ++ show e)
+                   Right ex -> return ex
+               vars = S.toList (getVars poly)
                relevantTheory = filter (\f -> all (`elem` vars) (varsInFormula f)) theory
-               goal = if allowZero then Ge (polyToExpr poly) (Const 0) else Gt (polyToExpr poly) (Const 0)
-               cadProved = proveFormulaCAD relevantTheory goal
-           in if cadProved
+               goal = if allowZero then Ge goalExpr (Const 0) else Gt goalExpr (Const 0)
+               res = unsafePerformIO $ do
+                 r <- try (evaluate (proveFormulaCAD relevantTheory goal)) :: IO (Either ArithException Bool)
+                 case r of
+                   Left e -> error ("CATCHED IN PROVER: " ++ show e)
+                   Right b -> return b
+           in if res
               then (True, "Proved via CAD on Normal Form (Generic).")
               else (False, posMsg)
 
@@ -332,25 +363,25 @@ groebnerFallback customBuchberger maybeCache theory formula =
          in (result, msg, trace, updatedCache)
 
        Ge _ _ ->
-         let (result, msg) = checkPositivityWithFallback normalForm True theoryPrep
+         let (result, msg) = checkPositivityWithFallback normalForm True reducedTheory
              positivityStep = [CheckedPositivity msg]
              trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
 
        Gt _ _ ->
-         let (result, msg) = checkPositivityWithFallback normalForm False theoryPrep
+         let (result, msg) = checkPositivityWithFallback normalForm False reducedTheory
              positivityStep = [CheckedPositivity msg]
              trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
 
        Le _ _ ->
-         let (result, msg) = checkPositivityWithFallback normalForm True theoryPrep
+         let (result, msg) = checkPositivityWithFallback normalForm True reducedTheory
              positivityStep = [CheckedPositivity msg]
              trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
 
        Lt _ _ ->
-         let (result, msg) = checkPositivityWithFallback normalForm False theoryPrep
+         let (result, msg) = checkPositivityWithFallback normalForm False reducedTheory
              positivityStep = [CheckedPositivity msg]
              trace = ProofTrace (allSteps ++ positivityStep) theoryPrep (length basis)
          in (result, msg, trace, updatedCache)
