@@ -1,0 +1,11 @@
+pkgid: filepath-1.4.301.0
+component: ComponentLib
+src: 2532474c48f0753fe05c7ccb67c9b1b734b62fec3e1ceded9a8c5fc65fcef4da
+pkg-config-deps: 
+deps: base-4.21.0.0-55e3, bytestring-0.12.2.0-f832, deepseq-1.5.1.0-ee5d, exceptions-0.10.9-04e0, template-haskell-2.23.0.0-2522
+compilerid: ghc-9.12.2
+compilerabi: 4764
+platform: x86_64-windows
+flags: -cpphs
+stripped-exe: False
+debug-info: 0

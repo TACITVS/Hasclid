@@ -1,0 +1,14 @@
+Installing executable hsc2hs in C:\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\incoming\new-14556\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\hsc2hs-0.68.10-a91d86cf9fcd86cdfab8730e6f5c479e33c61964\bin
+Warning: The directory
+C:\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\incoming\new-14556\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\hsc2hs-0.68.10-a91d86cf9fcd86cdfab8730e6f5c479e33c61964\bin
+is not in the system search path.
+       ( src\Common.hs, dist\build\hsc2hs\hsc2hs-tmp\Common.o )
+[ 5 of 12] Compiling Flags            ( src\Flags.hs, dist\build\hsc2hs\hsc2hs-tmp\Flags.o )
+[ 6 of 12] Compiling HSCParser        ( src\HSCParser.hs, dist\build\hsc2hs\hsc2hs-tmp\HSCParser.o )
+[ 7 of 12] Compiling C                ( src\C.hs, dist\build\hsc2hs\hsc2hs-tmp\C.o )
+[ 8 of 12] Compiling CrossCodegen     ( src\CrossCodegen.hs, dist\build\hsc2hs\hsc2hs-tmp\CrossCodegen.o )
+[ 9 of 12] Compiling Paths_hsc2hs     ( dist\build\hsc2hs\autogen\Paths_hsc2hs.hs, dist\build\hsc2hs\hsc2hs-tmp\Paths_hsc2hs.o )
+[10 of 12] Compiling UtilsCodegen     ( src\UtilsCodegen.hs, dist\build\hsc2hs\hsc2hs-tmp\UtilsCodegen.o )
+[11 of 12] Compiling DirectCodegen    ( src\DirectCodegen.hs, dist\build\hsc2hs\hsc2hs-tmp\DirectCodegen.o )
+[12 of 12] Compiling Main             ( src\Main.hs, dist\build\hsc2hs\hsc2hs-tmp\Main.o )
+[13 of 13] Linking dist\build\hsc2hs\hsc2hs.exe

@@ -1,0 +1,11 @@
+pkgid: vector-0.13.2.0
+component: ComponentLib
+src: 28f203c786cbf8ac6dc3fea3378ec36f34173d505fb4a1dd60fc8418ad91c423
+pkg-config-deps: 
+deps: base-4.21.0.0-55e3, deepseq-1.5.1.0-ee5d, primitive-0.9.1.0-03d2e43546be109c005915eb71c92e8e4cc3a115, vector-stream-0.1.0.1-a02d17dc8e046ceef00168e49dde2947168d4ec2
+compilerid: ghc-9.12.2
+compilerabi: 4764
+platform: x86_64-windows
+flags: +boundschecks -internalchecks -unsafechecks -wall
+stripped-exe: False
+debug-info: 0

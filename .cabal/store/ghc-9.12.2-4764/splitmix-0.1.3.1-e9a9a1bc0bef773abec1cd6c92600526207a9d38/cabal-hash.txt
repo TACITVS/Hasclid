@@ -1,0 +1,11 @@
+pkgid: splitmix-0.1.3.1
+component: ComponentLib
+src: b6bcd0d79bd4fe40975c8ebe803be2f3bfbf6006069a59745a325a0df3f86270
+pkg-config-deps: 
+deps: base-4.21.0.0-55e3, deepseq-1.5.1.0-ee5d
+compilerid: ghc-9.12.2
+compilerabi: 4764
+platform: x86_64-windows
+flags: -optimised-mixer
+stripped-exe: False
+debug-info: 0

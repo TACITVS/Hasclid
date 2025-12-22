@@ -885,22 +885,9 @@ processScriptStreaming env state content = go state (lines content)
                           Left err -> return (st, formatError err)
                       _ -> do 
                         putStrLn ("> " ++ trimmed)
-                        cmdRes <- try (processLine env st trimmed)
+                        cmdRes <- try (processLine env st trimmed) :: IO (Either ArithException (REPLState, String))
                         case cmdRes of
-                          Left Underflow -> do
-                            case words trimmed of
-                              (":auto":_) ->
-                                case parseFormulaWithMacros (macros st) (intVars st) (drop 6 trimmed) of
-                                  Left err -> return (st, formatError err)
-                                  Right formula -> do
-                                    let expandedFormula = expandGeometricGoal formula
-                                        fullContext = theory st ++ lemmas st
-                                        current = solverTimeout st
-                                    msg <- cadFallbackMessage env st fullContext expandedFormula current
-                                    return (st, msg)
-                              _ -> return (st, "[NUMERICAL ERROR] Arithmetic Underflow in solver.")
-                          Left Overflow -> return (st, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
-                          Left _ -> return (st, "[NUMERICAL ERROR] Math exception in solver.")
+                          Left e -> return (st, "[NUMERICAL ERROR] Arithmetic exception: " ++ show e)
                           Right res -> return res
       unless (null msg) (putStrLn msg)
       go st' rest

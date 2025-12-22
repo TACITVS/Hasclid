@@ -1,0 +1,10 @@
+Preprocessing library for filepath-1.4.301.0...
+Building library for filepath-1.4.301.0...
+[ 1 of 29] Compiling System.FilePath.Posix ( System\FilePath\Posix.hs, dist\build\System\FilePath\Posix.o )
+[ 2 of 29] Compiling System.FilePath.Windows ( System\FilePath\Windows.hs, dist\build\System\FilePath\Windows.o )
+[ 3 of 29] Compiling System.FilePath  ( System\FilePath.hs, dist\build\System\FilePath.o )
+[ 4 of 29] Compiling System.OsPath.Data.ByteString.Short.Internal.Hidden ( System\OsPath\Data\ByteString\Short\Internal\Hidden.hs, dist\build\System\OsPath\Data\ByteString\Short\Internal\Hidden.o )
+[ 5 of 29] Compiling System.OsPath.Data.ByteString.Short.Internal ( System\OsPath\Data\ByteString\Short\Internal.hs, dist\build\System\OsPath\Data\ByteString\Short\Internal.o )
+[ 6 of 29] Compiling System.OsPath.Data.ByteString.Short.Hidden ( System\OsPath\Data\ByteString\Short\Hidden.hs, dist\build\System\OsPath\Data\ByteString\Short\Hidden.o )
+[ 7 of 29] Compiling System.OsPath.Data.ByteString.Short ( System\OsPath\Data\ByteString\Short.hs, dist\build\System\OsPath\Data\ByteString\Short.o )
+[ 8 of 29] Compiling System.OsPath.Data.ByteString.Short.Word16.Hidden ( System\OsPath\Data\ByteString\Short\Word16\Hidden.hs, dist\build\System\OsPath\Data\ByteString\Short\Word16\Hidden.o )

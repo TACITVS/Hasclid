@@ -24,6 +24,8 @@ import Expr
 import CAD (completeProjection, mcCallumProjection)
 import Sturm (isolateRoots)
 import Timeout
+import Control.Exception (try, evaluate, ArithException(..))
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Map.Strict as M
 import Data.List (nub, sort, sortBy, partition)
 import Data.Ord (comparing)
@@ -459,11 +461,11 @@ refineToExactRoot coeffs (lo, hi) =
 -- | Numerically refine a root interval
 refineRootNumerically :: [Rational] -> (Rational, Rational) -> Rational
 refineRootNumerically coeffs (lo, hi)
-  | hi - lo < 1/100000 = (lo + hi) / 2  -- Close enough
+  | hi - lo < (1 % 100000) = (lo + hi) / 2  -- Close enough
   | otherwise =
       let mid = (lo + hi) / 2
           valMid = evalPolyAt coeffs mid
-      in if abs valMid < 1/1000000000
+      in if abs valMid < (1 % 1000000000)
          then mid  -- Found it!
          else
            let valLo = evalPolyAt coeffs lo
@@ -473,7 +475,7 @@ refineRootNumerically coeffs (lo, hi)
 
 -- | Test if a value is a root of the polynomial
 isRoot :: [Rational] -> Rational -> Bool
-isRoot coeffs x = abs (evalPolyAt coeffs x) < 1/1000000000
+isRoot coeffs x = abs (evalPolyAt coeffs x) < (1 % 1000000000)
 
 -- | Evaluate polynomial at a point (for refinement)
 evalPolyAt :: [Rational] -> Rational -> Rational
@@ -661,21 +663,25 @@ proveWithCAD formula vars =
 --   1. Variable ordering: Heuristic-based ordering (1.5-2x speedup)
 --   2. Early termination: Stops when counterexample found (2-10x speedup)
 proveFormulaCAD :: Theory -> Formula -> Bool
-proveFormulaCAD theory goal =
-  let polys = concatMap formulaToPolys (goal : theory)
-      vars = S.toList (extractPolyVarsList polys)
-      -- OPTIMIZATION 1: Use heuristic variable ordering
-      optimizedVars = optimizeVariableOrder polys vars
-      -- OPTIMIZATION 2: Try early termination first
-      earlyResult = cadDecomposeEarlyStop polys optimizedVars theory goal
-  in case earlyResult of
-       Just False -> False  -- Early refutation (found counterexample)
-       Just True -> True    -- Early proof (all cells so far satisfy)
-       Nothing ->
-         -- Fall back to full decomposition (need all cells)
-         let cells = cadDecompose polys optimizedVars
-             validCells = filter (\c -> all (`evaluateFormula` c) theory) cells
-         in not (null validCells) && all (evaluateFormula goal) validCells
+proveFormulaCAD theory goal = unsafePerformIO $ do
+  res <- try $ evaluate $ 
+    let polys = concatMap formulaToPolys (goal : theory)
+        vars = S.toList (extractPolyVarsList polys)
+        -- OPTIMIZATION 1: Use heuristic variable ordering
+        optimizedVars = optimizeVariableOrder polys vars
+        -- OPTIMIZATION 2: Try early termination first
+        earlyResult = cadDecomposeEarlyStop polys optimizedVars theory goal
+    in case earlyResult of
+         Just False -> False  -- Early refutation (found counterexample)
+         Just True -> True    -- Early proof (all cells so far satisfy)
+         Nothing ->
+           -- Fall back to full decomposition (need all cells)
+           let cells = cadDecompose polys optimizedVars
+               validCells = filter (\c -> all (`evaluateFormula` c) theory) cells
+           in not (null validCells) && all (evaluateFormula goal) validCells
+  case res of
+    Left e -> error ("CATCHED IN CADLIFT: " ++ show (e :: ArithException))
+    Right b -> return b
 
 -- | Check satisfiability of a goal with supporting theory using CAD.
 --   WITH VARIABLE ORDERING: Heuristic-based ordering (1.5-2x speedup)
