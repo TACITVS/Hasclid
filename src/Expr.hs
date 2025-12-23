@@ -614,10 +614,10 @@ toPoly (IntConst i) = polyFromConst (fromIntegral i)
 toPoly (Add e1 e2) = polyAdd (toPoly e1) (toPoly e2)
 toPoly (Sub e1 e2) = polySub (toPoly e1) (toPoly e2)
 toPoly (Mul e1 e2) = polyMul (toPoly e1) (toPoly e2)
-toPoly (Div e1 e2)   = 
+toPoly (Div e1 e2)   =
   let simp = simplifyExpr (Div e1 e2)
   in case simp of
-       Div _ _ -> error "Division Error: Division is not supported in polynomial expressions.\nNote: Rational constants like 1/2 are supported, but division of variables is not.\nContext: Attempting to convert Div expression to polynomial."
+       Div _ _ -> error ("Division Error: Division is not supported in polynomial expressions.\nNote: Rational constants like 1/2 are supported, but division of variables is not.\nContext: Attempting to convert Div expression to polynomial: " ++ prettyExpr (Div e1 e2))
        _ -> toPoly simp
 toPoly (Mod e1 e2) =
   let simp = simplifyExpr (Mod e1 e2)
@@ -626,11 +626,10 @@ toPoly (Mod e1 e2) =
        _ -> toPoly simp
 toPoly (Pow e n)   = polyPow (toPoly e) n
 toPoly (Sqrt _)    = error "Sqrt Error: Square roots are not supported in polynomial expressions. Rewrite without sqrt or use a geometric/analytic solver."
-toPoly s@(Sum _ _ _ _) = 
-  let simp = simplifyExpr s
-  in case simp of
-       Sum _ _ _ _ -> polyFromVar (prettyExpr simp)
-       _ -> toPoly simp
+toPoly (Sum i lo hi body) =
+  let lo' = case simplifyExpr lo of { Const r -> numerator r; _ -> error "Sum low bound must be constant" }
+      hi' = case simplifyExpr hi of { Const r -> numerator r; _ -> error "Sum high bound must be constant" }
+  in foldl polyAdd polyZero [ toPoly (substituteExpr i (Const (fromInteger j % 1)) body) | j <- [lo'..hi'] ]
 
 toPoly (Dist2 p1 p2) =
   let x1 = polyFromVar ("x" ++ p1); y1 = polyFromVar ("y" ++ p1); z1 = polyFromVar ("z" ++ p1)

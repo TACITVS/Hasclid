@@ -39,6 +39,7 @@ import TermOrder (TermOrder(..), compareMonomials)
 import F4Lite (f4LiteGroebner, f4ReduceModular, reduceWithF4, reduceWithBasis)
 import Geometry.WLOG (applyWLOG, detectPoints, parsePointVar)
 import Geometry.Barycentric (applyBarycentric)
+import Heuristics
 import Positivity.SOS (checkSOS, checkSOSWithLemmas, SOSCertificate(..), getSOSCertificate)
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD, safeFromRational)
 import Positivity.SDP (checkSOS_SDP)
@@ -114,12 +115,23 @@ autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
 autoSolveInternal :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
 autoSolveInternal pts allowSplit opts pointSubs theoryRaw goalRaw =
   let (theoryG, goalG, _logG) = preprocessGeometry pointSubs theoryRaw goalRaw
-      (theoryS, goalS, varDefsS) = eliminateSqrt theoryG goalG
+      
+      -- Apply Heuristics (Heron, Cotangent, Ravi, Tangent, Symmetry)
+      (theoryH1, goalH1, logH1) = tryHeronSubstitution theoryG goalG
+      (theoryH2, goalH2, logH2) = tryCotangentSubstitution theoryH1 goalH1
+      (theoryH3, goalH3, logH3) = tryRaviSubstitution theoryH2 goalH2
+      (theoryH4, goalH4, logH4) = tryTangentSubstitution theoryH3 goalH3
+      (theoryH5, goalH5, logH5) = trySymmetryBreaking theoryH4 goalH4
+      
+      heuristicLogs = logH1 ++ logH2 ++ logH3 ++ logH4 ++ logH5
+
+      (theoryS, goalS, varDefsS) = eliminateSqrt theoryH5 goalH5
       (theoryP, goalP, varDefsP) = eliminateRational theoryS goalS
       varDefs = M.union varDefsS varDefsP
       preprocessResult = preprocess pointSubs theoryP goalP
       theory' = preprocessedTheory preprocessResult
       goal' = preprocessedGoal preprocessResult
+
       profile = analyzeProblem theory' goal'
       baseResult = case goal' of
           And f1 f2 ->
@@ -162,35 +174,40 @@ autoSolveInternal pts allowSplit opts pointSubs theoryRaw goalRaw =
                 let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
                 in AutoSolveResult { selectedSolver = UseGroebner, solverReason = "Real universal", problemProfile = profile, preprocessedGoalExpr = goal', isProved = proved, proofReason = reason, proofEvidence = Nothing, detailedTrace = Nothing, varDefinitions = varDefs }
           
-          _ | (isInequality goal') && (problemType profile == Geometric || ((problemType profile == PureAlgebraic || problemType profile == Mixed) && numVariables profile > 2)) ->
+          _ | (isInequality goal') && (problemType profile == Geometric || problemType profile == PureInequality || ((problemType profile == PureAlgebraic || problemType profile == Mixed) && numVariables profile > 2)) ->
             let (proved, reason, trace, defs, evidence) = proveInequalitySOS pts opts theory' goal'
-            in if proved then AutoSolveResult UseGroebner "Inequality (Fast Path)" profile goal' True reason evidence trace (M.union varDefs defs)
+            in if proved then AutoSolveResult UseGroebner "Inequality (Fast Path)" profile goal' True reason evidence (mergeWithHeuristic heuristicLogs trace) (M.union varDefs defs)
                else let (proved', reason', trace', defs') = executeSolver pts UseCAD opts profile theory' goal'
                         combinedTrace = case (trace, trace') of
                                           (Just t1, Just t2) -> Just (t1 ++ "\n\n---" ++ " FALLBACK TO CAD ---" ++ "\n\n" ++ t2)
                                           (Just t1, Nothing) -> Just t1
                                           (Nothing, Just t2) -> Just t2
                                           (Nothing, Nothing) -> Nothing
-                    in AutoSolveResult UseCAD "Inequality (Fallback)" profile goal' proved' reason' Nothing combinedTrace (M.unions [varDefs, defs', varDefs])
+                    in AutoSolveResult UseCAD "Inequality (Fallback)" profile goal' proved' reason' Nothing (mergeWithHeuristic heuristicLogs combinedTrace) (M.unions [varDefs, defs', varDefs])
           Ge _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
             let (proved, reason, trace, defs) = executeSolver pts UseCAD opts profile theory' goal'
-            in AutoSolveResult UseCAD "Inequality goal" profile goal' proved reason Nothing trace (M.union varDefs defs)
+            in AutoSolveResult UseCAD "Inequality goal" profile goal' proved reason Nothing (mergeWithHeuristic heuristicLogs trace) (M.union varDefs defs)
           Gt _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
             let (proved, reason, trace, defs) = executeSolver pts UseCAD opts profile theory' goal'
-            in AutoSolveResult UseCAD "Strict inequality goal" profile goal' proved reason Nothing trace (M.union varDefs defs)
+            in AutoSolveResult UseCAD "Strict inequality goal" profile goal' proved reason Nothing (mergeWithHeuristic heuristicLogs trace) (M.union varDefs defs)
           _ | containsQuantifier goal' || any containsQuantifier theory' ->
                 let (proved, reason, trace, defs) = executeSolver pts UseCAD opts profile theory' goal'
-                in AutoSolveResult { selectedSolver = UseCAD, solverReason = "Quantified formula", problemProfile = profile, preprocessedGoalExpr = goal', isProved = proved, proofReason = reason, proofEvidence = Nothing, detailedTrace = trace, varDefinitions = M.union varDefs defs }
+                in AutoSolveResult { selectedSolver = UseCAD, solverReason = "Quantified formula", problemProfile = profile, preprocessedGoalExpr = goal', isProved = proved, proofReason = reason, proofEvidence = Nothing, detailedTrace = mergeWithHeuristic heuristicLogs trace, varDefinitions = M.union varDefs defs }
           _ ->
             case solveGeoWithTrace theory' goal' of
-              GeoProved reason steps -> AutoSolveResult UseGeoSolver "Fast geometric propagation" profile goal' True reason Nothing (Just (unlines steps)) varDefs
-              GeoDisproved reason steps -> AutoSolveResult UseGeoSolver "Fast geometric propagation" profile goal' False reason Nothing (Just (unlines steps)) varDefs
+              GeoProved reason steps -> AutoSolveResult UseGeoSolver "Fast geometric propagation" profile goal' True reason Nothing (Just (unlines (heuristicLogs ++ steps))) varDefs
+              GeoDisproved reason steps -> AutoSolveResult UseGeoSolver "Fast geometric propagation" profile goal' False reason Nothing (Just (unlines (heuristicLogs ++ steps))) varDefs
               GeoUnknown _ ->
                 let isAreaMethodApplicable = isEquality goal' && not (isInequality goalRaw) && isJust (deriveConstruction theory' goal')
                     solver = if isAreaMethodApplicable then UseAreaMethod else selectAlgebraicSolver profile goal'
                     (proved, proofMsg, trace, defs) = executeSolver pts solver opts profile theory' goal'
-                in AutoSolveResult solver ("PHASE 2: " ++ explainSolverChoice solver profile) profile goal' proved proofMsg Nothing trace (M.union varDefs defs)
+                in AutoSolveResult solver ("PHASE 2: " ++ explainSolverChoice solver profile) profile goal' proved proofMsg Nothing (mergeWithHeuristic heuristicLogs trace) (M.union varDefs defs)
   in applyInsideSplit pts allowSplit opts pointSubs theoryRaw goalRaw baseResult
+
+mergeWithHeuristic :: [String] -> Maybe String -> Maybe String
+mergeWithHeuristic [] t = t
+mergeWithHeuristic logs Nothing = Just (unlines logs)
+mergeWithHeuristic logs (Just t) = Just (unlines logs ++ "\n" ++ t)
 
 applyInsideSplit :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult -> AutoSolveResult
 applyInsideSplit pts allowSplit opts pointSubs theoryRaw goalRaw baseResult =
