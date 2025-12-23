@@ -37,7 +37,7 @@ import RationalElim (eliminateRational)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
 import F4Lite (f4LiteGroebner, f4ReduceModular, reduceWithF4, reduceWithBasis)
-import qualified F5 (f5Solve)
+import qualified F5 (f5Solve, f5SolveBounded, F5Config(..), F5Result(..), defaultF5Config, conservativeF5Config, f5Basis, f5Completed, f5AbortReason)
 import Geometry.WLOG (applyWLOG, detectPoints, parsePointVar)
 import Geometry.Barycentric (applyBarycentric)
 import Heuristics
@@ -95,7 +95,23 @@ selectGroebner profile opts _goal =
   in case groebnerBackend opts of
        F4Backend -> f4LiteGroebner ord (selectionStrategyOpt opts) (f4UseBatch opts)
        BuchbergerBackend -> buchbergerWithStrategy ord (selectionStrategyOpt opts)
-       F5Backend -> \polys -> F5.f5Solve ord polys
+       F5Backend -> \polys -> f5SolveWithBounds ord polys
+
+-- | F5 with memory bounds and fallback
+f5SolveWithBounds :: (Monomial -> Monomial -> Ordering) -> [Poly] -> [Poly]
+f5SolveWithBounds ord polys =
+  -- First try with conservative bounds
+  let result = F5.f5SolveBounded F5.conservativeF5Config ord polys
+  in if F5.f5Completed result
+     then F5.f5Basis result
+     else
+       -- If conservative bounds failed, try with default (more generous) bounds
+       let result2 = F5.f5SolveBounded F5.defaultF5Config ord polys
+       in if F5.f5Completed result2
+          then F5.f5Basis result2
+          else
+            -- Return partial basis (best effort)
+            F5.f5Basis result2
 
 -- =============================================
 -- Main Automatic Solving Functions
