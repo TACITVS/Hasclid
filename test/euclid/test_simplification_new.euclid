@@ -1,0 +1,38 @@
+; Test aggressive rational simplification improvements
+; Phase 2: Algebraic Simplification
+
+; TEST 1: x/x = 1 (identity - most critical!)
+:assume (> x 0)
+:prove (= (/ x x) 1)
+
+; TEST 2: x * (1/x) = 1 (multiplicative inverse)
+:assume (> x 1)
+:prove (= (* x (/ 1 x)) 1)
+
+; TEST 3: (1/x) * x = 1 (commutative inverse)
+:assume (< x (- 1))
+:prove (= (* (/ 1 x) x) 1)
+
+; TEST 4: Common factor cancellation (2x)/(2y) = x/y
+:assume (> x 0)
+:assume (> y 0)
+:prove (= (/ (* 2 x) (* 2 y)) (/ x y))
+
+; TEST 5: Division simplification with zero
+:assume (> x 1)
+:prove (= (/ 0 x) 0)
+
+; TEST 6: x - x = 0 (new Sub optimization)
+:assume (> x 0)
+:prove (= (- x x) 0)
+
+; TEST 7: Nested rational like Morley: x/(y + 1/z) simplified
+:assume (> x 1)
+:assume (> y 1)
+:assume (> z 1)
+:prove (> (/ x (+ y (/ 1 z))) 0)
+
+; TEST 8: Complex expression with identity: (x/x) * y = y
+:assume (> x 1)
+:assume (> y 2)
+:prove (= (* (/ x x) y) y)

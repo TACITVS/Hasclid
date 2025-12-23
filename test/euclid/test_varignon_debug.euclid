@@ -1,0 +1,5 @@
+:point A 0 0
+:point P xP yP
+:verbose  
+:auto (= (parallel A P A P) 0)
+:q

@@ -1,6 +1,0 @@
--- Test: n / sqrt(n) = sqrt(n)
--- Identity: n/sqrt(n) = sqrt(n) for n > 0
-
-:verbose
-
-(= (/ n (sqrt n)) (sqrt n))

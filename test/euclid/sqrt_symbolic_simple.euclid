@@ -1,0 +1,16 @@
+-- ============================================================================
+-- SQRT SYMBOLIC SIMPLE TEST
+-- Test sqrt with symbolic variables (but simple)
+-- ============================================================================
+
+:verbose
+
+-- Two points on unit circle
+:assume (= (+ (^ x1 2) (^ y1 2)) 1)
+:assume (= (+ (^ x2 2) (^ y2 2)) 1)
+
+-- Distance squared
+:assume (= d2 (+ (^ (- x2 x1) 2) (^ (- y2 y1) 2)))
+
+-- Test: sqrt(d2) * sqrt(d2) = d2
+(= (* (sqrt d2) (sqrt d2)) d2)

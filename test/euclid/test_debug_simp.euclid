@@ -1,0 +1,4 @@
+; Debug why (x/x) * y = y doesn't prove
+:assume (> x 1)
+:assume (> y 2)
+:prove (= (* (/ x x) y) y)

@@ -1,0 +1,15 @@
+:point A 0 0
+:point B xB 0
+:point C xC yC
+:point D xD yD
+:point P xP yP
+:point Q xQ yQ
+:point R xR yR
+:point S xS yS
+:assume (= (midpoint A B P) 0)
+:assume (= (midpoint B C Q) 0)
+:assume (= (midpoint C D R) 0)
+:assume (= (midpoint D A S) 0)
+:set-timeout 180
+:prove (= (parallel P Q S R) 0)
+:q

@@ -1,7 +1,0 @@
-:point A 0 0
-:point B 1 0
-:point P xP yP
-:assume (= (midpoint A B P) 0)
-:verbose
-:prove (= (* 2 xP) 1)
-:q

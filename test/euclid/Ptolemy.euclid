@@ -1,0 +1,16 @@
+-- ptolemy_cad_optimized.euclid
+-- Proof of Ptolemy's Theorem using CAD Engine
+-- Strategy: Inline all distances to minimize variables (6 vars: bx,by,cx,cy,dx,dy).
+-- WLOG: Unit Circle, A=(1,0).
+
+:reset
+:set-timeout 120
+
+-- Readable Breakdown (Logic Only - Do not uncomment for CAD):
+-- T1 = AB^2 * CD^2
+-- T2 = BC^2 * DA^2
+-- T3 = AC^2 * BD^2
+-- Goal: (T1 + T2 - T3)^2 = 4 * T1 * T2
+
+-- Single-Line Proof Command:
+:prove (forall (bx by cx cy dx dy) (implies (and (= (+ (^ bx 2) (^ by 2)) 1) (= (+ (^ cx 2) (^ cy 2)) 1) (= (+ (^ dx 2) (^ dy 2)) 1)) (= (- (^ (- (+ (* (+ (^ (- 1 bx) 2) (^ (- 0 by) 2)) (+ (^ (- cx dx) 2) (^ (- cy dy) 2))) (* (+ (^ (- bx cx) 2) (^ (- by cy) 2)) (+ (^ (- dx 1) 2) (^ (- dy 0) 2)))) (* (+ (^ (- 1 cx) 2) (^ (- 0 cy) 2)) (+ (^ (- bx dx) 2) (^ (- by dy) 2)))) 2) (* 4 (* (* (+ (^ (- 1 bx) 2) (^ (- 0 by) 2)) (+ (^ (- cx dx) 2) (^ (- cy dy) 2))) (* (+ (^ (- bx cx) 2) (^ (- by cy) 2)) (+ (^ (- dx 1) 2) (^ (- dy 0) 2)))))) 0)))

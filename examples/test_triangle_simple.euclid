@@ -1,4 +1,0 @@
-:point A 0 0
-:point B 1 0
-:point C 2 0
-(>= (+ (dist2 A B) (dist2 B C)) (dist2 A C))

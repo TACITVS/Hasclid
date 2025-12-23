@@ -1,4 +1,0 @@
-; Minimal Orthocenter test - should be instant
-:assume (= a (* c (- 0 b)))
-:prove (= a (* b (- 0 c)))
-:q

@@ -1,9 +1,0 @@
--- Verify Area Method Integration
--- Midpoint Theorem: AM = MB
-
-:construct (A free)
-:construct (B free)
-:construct (M midpoint A B)
-
--- Goal: AM^2 - MB^2 = 0
-:prove-area (- (dist2 A M) (dist2 M B))

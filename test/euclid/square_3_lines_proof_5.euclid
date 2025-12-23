@@ -1,0 +1,21 @@
+-- [square_3_lines_proof_fixed.euclid]
+:set-order grevlex
+
+-- 1. Setup with CONCRETE side length (5 instead of S)
+:point A 0 0
+:point B 5 0    -- Fixed length 5
+:point C 5 5    -- Fixed length 5
+
+-- D is the only unknown
+:point D x y
+
+-- 2. Constraints
+-- Side CD has length 5 (squared = 25)
+:assume (= (dist2 C D) 25)
+
+-- Segment BC perpendicular to CD
+:assume (= (perpendicular B C C D) 0)
+
+-- 3. Theorem: Prove DA must have length 5
+-- This will run instantly and return FALSE
+(= (dist2 D A) 25)

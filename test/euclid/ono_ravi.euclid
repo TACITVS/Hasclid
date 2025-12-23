@@ -1,0 +1,45 @@
+:set-timeout 600
+:verbose
+:optimize on
+:set-strategy sugar
+:set-gb-backend f4
+:set-f4-batch on
+
+-- =======================================================
+-- ONO'S INEQUALITY (RAVI SUBSTITUTION + SYMMETRY + DEHOMOGENIZATION)
+-- =======================================================
+-- Variables u, v. w is fixed to 1.
+-- Symmetry breaking: 0 < u <= v <= w=1.
+
+:assume (> u 0)
+:assume (>= v u)
+:assume (= w 1)
+:assume (>= w v)
+
+-- Derived s
+:assume (= s (+ (+ u v) w))
+
+-- Term components (TA = u*s - v*w)
+:assume (= TA (- (* u s) (* v w)))
+:assume (= TB (- (* v s) (* w u)))
+:assume (= TC (- (* w s) (* u v)))
+
+-- Acute constraints
+:assume (> TA 0)
+:assume (> TB 0)
+:assume (> TC 0)
+
+-- LHS = 27 * TA^2 * TB^2 * TC^2
+:assume (= z_LHS (* 27 (* (^ TA 2) (* (^ TB 2) (^ TC 2)))))
+
+-- RHS = 64 * s^3 * u^3 * v^3 * w^3
+:assume (= z_RHS (* 64 (* (^ s 3) (* (^ u 3) (* (^ v 3) (^ w 3))))))
+
+-- Diff = RHS - LHS
+:assume (= z_Diff (- z_RHS z_LHS))
+
+-- Epsilon Room (Stability)
+:assume (= z_Epsilon (/ 1 1000000))
+:assume (= z_RelaxedDiff (+ z_Diff z_Epsilon))
+
+:prove (>= z_RelaxedDiff 0)

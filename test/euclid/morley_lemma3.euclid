@@ -1,0 +1,17 @@
+; ============================================================================
+; MORLEY LEMMA 3: First Morley Point - y-coordinate
+; ============================================================================
+; Given: x = 1/2 (from Lemma 2)
+;        3*y² = x² (trisector constraint)
+; Prove: 12*y² = 1 (polynomial form of y² = 1/12)
+
+:verbose
+
+; From Lemma 2: xP = 1/2
+:assume (= (* 2 xP) 1)
+
+; Trisector constraint
+:assume (= (* 3 (^ yP 2)) (^ xP 2))
+
+; GOAL: Prove 12*yP² = 1
+:prove (= (* 12 (^ yP 2)) 1)

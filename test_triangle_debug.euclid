@@ -1,9 +1,0 @@
-; Debug: See what polynomial we get after sqrt elimination
-:point A 0 0
-:point B xB yB
-:point C xC 0
-
-; Try simpler version first - just check if we route to SOS
-:set-timeout 5
-:auto (>= (+ xB xC) 0)
-:q

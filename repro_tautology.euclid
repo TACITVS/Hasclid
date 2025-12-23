@@ -1,2 +1,0 @@
-:set-timeout 10
-:auto (>= -5 0)

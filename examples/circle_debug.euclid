@@ -1,5 +1,0 @@
-:set-timeout 60
-:point A xA yA
-:point B xB yB
-:point C xC yC
-:prove (exists ((real xO) (real yO) (real Rsq)) (and (= (dist2 O A) Rsq) (and (= (dist2 O B) Rsq) (= (dist2 O C) Rsq))))

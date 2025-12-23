@@ -1,0 +1,10 @@
+-- "The Very Best" Test: Modular Arithmetic Solver
+-- This brute-force construction was unsolvable (timeout) with symbolic arithmetic.
+-- With Modular Arithmetic (probabilistic check), it should be instant.
+
+:set-timeout 120
+:point A xA yA
+:point B xB yB
+:point C xC yC
+
+:auto (exists ((real xO) (real yO) (real Rsq)) (and (= (dist2 O A) Rsq) (and (= (dist2 O B) Rsq) (= (dist2 O C) Rsq))))

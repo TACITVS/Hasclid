@@ -33,6 +33,7 @@ import IntSolver
 import Sturm (sturmSequence, rootsInInterval, samplePoints, evalPoly)
 import Core.GB (buchbergerOptimized, reduce, sPoly)
 import Positivity (checkPositivityEnhanced, PositivityResult(..), PositivityMethod(..), Confidence(..))
+import Positivity.SDP (checkSOS_Constrained)
 import Cache (GroebnerCache, lookupBasis, insertBasis)
 import CADLift (proveFormulaCAD, satisfiableFormulaCAD, solveQuantifiedFormulaCAD)
 import SqrtElim (eliminateSqrt)
@@ -336,22 +337,28 @@ groebnerFallback customBuchberger maybeCache theory formula =
       in if posResult
          then (True, posMsg)
          else
-           let goalExpr = unsafePerformIO $ do
-                 r <- try (evaluate (polyToExpr poly)) :: IO (Either ArithException Expr)
-                 case r of
-                   Left e -> error ("CATCHED IN POLYTOEXPR: " ++ show e)
-                   Right ex -> return ex
-               vars = S.toList (getVars poly)
-               relevantTheory = filter (\f -> all (`elem` vars) (varsInFormula f)) theory
-               goal = if allowZero then Ge goalExpr (Const 0) else Gt goalExpr (Const 0)
-               res = unsafePerformIO $ do
-                 r <- try (evaluate (proveFormulaCAD relevantTheory goal)) :: IO (Either ArithException Bool)
-                 case r of
-                   Left e -> error ("CATCHED IN PROVER: " ++ show e)
-                   Right b -> return b
-           in if res
-              then (True, "Proved via CAD on Normal Form (Generic).")
-              else (False, posMsg)
+           -- Try Numeric SDP with Constraints
+           let constraints = extractInequalities theory
+               sdpResult = checkSOS_Constrained poly constraints
+           in if sdpResult
+              then (True, "Verified Sum-of-Squares via Numeric SDP (Constrained)")
+              else
+               let goalExpr = unsafePerformIO $ do
+                     r <- try (evaluate (polyToExpr poly)) :: IO (Either ArithException Expr)
+                     case r of
+                       Left e -> error ("CATCHED IN POLYTOEXPR: " ++ show e)
+                       Right ex -> return ex
+                   vars = S.toList (getVars poly)
+                   relevantTheory = filter (\f -> all (`elem` vars) (varsInFormula f)) theory
+                   goal = if allowZero then Ge goalExpr (Const 0) else Gt goalExpr (Const 0)
+                   res = unsafePerformIO $ do
+                     r <- try (evaluate (proveFormulaCAD relevantTheory goal)) :: IO (Either ArithException Bool)
+                     case r of
+                       Left e -> error ("CATCHED IN PROVER: " ++ show e)
+                       Right b -> return b
+               in if res
+                  then (True, "Proved via CAD on Normal Form (Generic).")
+                  else (False, posMsg)
 
   in case formulaPrep of
        Eq _ _ ->
@@ -803,3 +810,16 @@ proveExistentialConstructive _theory _goal = (False, "Not implemented.", emptyTr
 
 proveByInduction :: Theory -> Formula -> (Bool, String, ProofTrace)
 proveByInduction _theory _formula = (False, "Not implemented.", emptyTrace)
+
+
+extractInequalities :: Theory -> [Poly]
+extractInequalities theory = 
+  let subM = buildSubMap theory -- Reuse sub map logic? Or assume reduced?
+      -- Reduced theory has simple forms.
+      -- Convert Ge/Gt/Le/Lt to Poly >= 0
+      toP (Ge l r) = Just (toPolySub M.empty (Sub l r))
+      toP (Gt l r) = Just (toPolySub M.empty (Sub l r))
+      toP (Le l r) = Just (toPolySub M.empty (Sub r l))
+      toP (Lt l r) = Just (toPolySub M.empty (Sub r l))
+      toP _ = Nothing
+  in catMaybes (map toP theory)

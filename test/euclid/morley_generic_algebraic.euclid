@@ -1,0 +1,91 @@
+; ======================================================================
+; Morley's Theorem - Generic Triangle (purely algebraic formulation)
+; ----------------------------------------------------------------------
+; Normalization:
+;   B = (0, 0)
+;   C = (1, 0)
+;   A = (ax, ay), with 0 < ax < 1 and ay > 0
+;
+; Trisector slopes tA, tB, tC satisfy the tangent triple-angle cubic at
+; each vertex. We also constrain each trisector slope to lie between the
+; slopes of the incident sides to pick the interior branch.
+;
+; Morley points P, Q, R are defined purely by parametric intersections of
+; the trisector rays (polynomial equalities only). Distances are written
+; directly from the parameters to avoid extra coordinates.
+; ======================================================================
+
+:verbose
+:set-timeout 120
+; Triangle vertices
+:point B 0 0
+:point C 1 0
+:point A ax ay
+
+; Non-degeneracy / normalization
+:assume (> ay 0)
+:assume (> ax 0)
+:assume (< ax 1)
+
+; ----------------------------------------------------------------------
+; Trisector slopes via triple-angle cubic (tan(3θ) identity)
+; For vertex B: angle ABC with sides BA (slope ay/ax) and BC (slope 0)
+;   ax*tB^3 - 3*ay*tB^2 - 3*ax*tB + ay = 0
+:assume (= (+ (* ax (^ tB 3)) (* -3 ay (^ tB 2)) (* -3 ax tB) ay) 0)
+; Interior branch: 0 < tB < ay/ax
+:assume (> tB 0)
+:assume (< (* ax tB) ay)
+
+; Vertex C: angle BCA with sides CB (slope 0) and CA (slope ay/(ax-1) < 0)
+;   (ax-1)*tC^3 - 3*ay*tC^2 - 3*(ax-1)*tC + ay = 0
+:assume (= (+ (* (- ax 1) (^ tC 3)) (* -3 ay (^ tC 2)) (* -3 (- ax 1) tC) ay) 0)
+; Interior branch: ay/(ax-1) < tC < 0  (both negative)
+:assume (< tC 0)
+; note ax-1 < 0, so this enforces tC > ay/(ax-1)
+:assume (> (* (- ax 1) tC) ay)
+
+; Vertex A: angle CAB with sides AB (slope -ay/ax) and AC (slope -ay/(1-ax))
+;   (1-ax)*tA^3 - 3*ay*tA^2 - 3*(1-ax)*tA + ay = 0
+:assume (= (+ (* (- 1 ax) (^ tA 3)) (* -3 ay (^ tA 2)) (* -3 (- 1 ax) tA) ay) 0)
+; Interior branch: -ay/(1-ax) < tA < -ay/ax  (both negative)
+:assume (< tA 0)
+; tA > -ay/(1-ax)
+:assume (> (* (- 1 ax) tA) (- ay))
+; tA < -ay/ax
+:assume (< (* ax tA) (- ay))
+
+; ----------------------------------------------------------------------
+; Parametric trisector rays (polynomial-only), no explicit coordinates
+; Directions: B-ray (1, tB), C-ray (-1, tC), A-ray (1, tA)
+; Enforce parameters positive to stay on the forward interior rays.
+; ----------------------------------------------------------------------
+
+; P = B + uB*(1,tB) = C + vC*(-1,tC)
+:assume (= (+ uB vC -1) 0)
+:assume (= (+ (* tB uB) (* -1 (* tC vC))) 0)
+:assume (> uB 0)
+:assume (> vC 0)
+
+; Q = C + uC*(-1,tC) = A + vA*(1,tA)
+:assume (= (+ uC vA ax -1) 0)
+:assume (= (+ (* tC uC) (* -1 ay) (* -1 (* tA vA))) 0)
+:assume (> uC 0)
+:assume (> vA 0)
+
+; R = A + uA*(1,tA) = B + vB*(1,tB)
+:assume (= (+ uA (* -1 vB) ax) 0)
+:assume (= (+ (* tA uA) (* -1 (* tB vB)) ay) 0)
+:assume (> uA 0)
+:assume (> vB 0)
+
+; ----------------------------------------------------------------------
+; Equilateral goals using parametric coordinates
+; P = (uB, tB*uB), Q = (1-uC, tC*uC), R = (ax+uA, ay+tA*uA)
+; ----------------------------------------------------------------------
+
+:assume (= dPQ2 (+ (^ (- uB (+ 1 (* -1 uC))) 2) (^ (- (* tB uB) (* tC uC)) 2)))
+:assume (= dQR2 (+ (^ (- (+ 1 (* -1 uC)) (+ ax uA)) 2) (^ (- (* tC uC) (+ ay (* tA uA))) 2)))
+:assume (= dRP2 (+ (^ (- uB (+ ax uA)) 2) (^ (- (* tB uB) (+ ay (* tA uA))) 2)))
+
+:prove (= dPQ2 dQR2)
+:prove (= dQR2 dRP2)

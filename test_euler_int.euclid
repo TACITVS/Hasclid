@@ -1,4 +1,0 @@
-:point O 3 4
-:point I 0 0
-:prove (= (dist2 O I) 25)
-:q

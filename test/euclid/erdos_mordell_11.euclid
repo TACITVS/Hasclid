@@ -1,0 +1,87 @@
+; ============================================================================
+; ERDOS-MORDELL INEQUALITY (Equilateral Case) - DIFFICULTY 11/10
+; ============================================================================
+; Theorem: For any point P inside a triangle, the sum of distances to the
+; vertices is >= 2 * sum of distances to the sides.
+;
+; R_a + R_b + R_c >= 2 * (d_a + d_b + d_c)
+;
+; This tests the CAD solver's ability to handle:
+; 1. Inequalities (>=)
+; 2. Implicit Square Roots (defined as u^2 = poly, u >= 0)
+; 3. Region constraints (P must be inside the triangle)
+
+:set-timeout 300
+:verbose
+
+; ---------------------------------------------------------
+; 1. SETUP: Equilateral Triangle ABC
+; ---------------------------------------------------------
+; Side length 2. Height sqrt(3).
+; B at (-1, 0), C at (1, 0).
+; A at (0, sqrt(3)).
+; We use 's' for sqrt(3).
+
+:assume (= (^ s 2) 3)
+:assume (> s 0)
+
+:point B -1 0
+:point C 1 0
+:point A 0 s
+
+; Point P(x,y)
+:point P x y
+
+; ---------------------------------------------------------
+; 2. REGION CONSTRAINTS (P inside ABC)
+; ---------------------------------------------------------
+; This is critical for CAD. The inequality doesn't hold outside the triangle.
+; 1. Above BC: y > 0
+; 2. Below AB: y < s*(x+1)  =>  s*x - y + s > 0
+; 3. Below AC: y < -s*(x-1) => -s*x - y + s > 0
+
+:assume (> y 0)
+:assume (> (+ (- (* s x) y) s) 0)
+:assume (> (+ (- (* (- 0 s) x) y) s) 0)
+
+; ---------------------------------------------------------
+; 3. DISTANCES TO SIDES (d_a, d_b, d_c)
+; ---------------------------------------------------------
+; These are linear expressions in (x,y).
+; d_a (to BC): y
+; d_b (to AC): Distance to line sx + y - s = 0.
+;    Formula: |Ax+By+C| / sqrt(A^2+B^2).
+;    Norm^2 = s^2 + 1^2 = 3 + 1 = 4. Norm = 2.
+;    Since P is inside, sx+y-s is negative? Let's check A(0,s): 0+s-s=0.
+;    B(-1,0): -s+0-s = -2s. Origin(0,0): -s.
+;    So the expression (s*x + y - s) is negative inside.
+;    We want positive distance, so we take -(s*x + y - s) / 2 = (s - sx - y)/2.
+
+:assume (= da y)
+:assume (= db (/ (- (- s (* s x)) y) 2))
+:assume (= dc (/ (- (+ s (* s x)) y) 2))
+
+; ---------------------------------------------------------
+; 4. DISTANCES TO VERTICES (u, v, w)
+; ---------------------------------------------------------
+; These are the hard part. We cannot write u = sqrt(...).
+; We must define u^2 = ... and u >= 0.
+
+; u = PA
+:assume (= (^ u 2) (+ (^ x 2) (^ (- y s) 2)))
+:assume (>= u 0)
+
+; v = PB
+:assume (= (^ v 2) (+ (^ (+ x 1) 2) (^ y 2)))
+:assume (>= v 0)
+
+; w = PC
+:assume (= (^ w 2) (+ (^ (- x 1) 2) (^ y 2)))
+:assume (>= w 0)
+
+; ---------------------------------------------------------
+; 5. THE PROOF
+; ---------------------------------------------------------
+; Prove: u + v + w >= 2 * (da + db + dc)
+
+:prove (>= (+ u (+ v w)) (* 2 (+ da (+ db dc))))

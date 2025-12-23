@@ -1,3 +1,0 @@
-:verbose
-:load test_geometry.euclid
-:q

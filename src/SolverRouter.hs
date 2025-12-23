@@ -19,7 +19,8 @@ module SolverRouter
   , intSolve
   , intSat
   , proveExistentialConstructive
-  ) where
+  )
+where
 
 import Expr
 import Error
@@ -41,13 +42,17 @@ import Geometry.Barycentric (applyBarycentric)
 import Positivity.SOS (checkSOS, checkSOSWithLemmas, SOSCertificate(..), getSOSCertificate)
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD, safeFromRational)
 import Positivity.SDP (checkSOS_SDP)
+import Positivity.SOSTypes (trySOSHeuristic)
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
-import Data.List (delete, find, isSuffixOf, sort, foldl', isPrefixOf, intercalate, nub)
+import Data.List (delete, find, isSuffixOf, sort, foldl', isPrefixOf, intercalate, nub, partition)
 import Data.Maybe (isJust, mapMaybe)
+import qualified Control.Exception as CE
 import Control.Exception (try, evaluate, ArithException(..))
 import System.IO.Unsafe (unsafePerformIO)
+import Data.Ratio (numerator, denominator)
+import Debug.Trace (trace)
 
 data SolverChoice = UseGeoSolver | UseWu | UseGroebner | UseConstructiveWu | UseCAD | UseAreaMethod | UseSOS | Unsolvable deriving (Show, Eq)
 data ProofEvidence = EvidenceSOS SOSCertificate [String] deriving (Show, Eq)
@@ -62,7 +67,8 @@ data AutoSolveResult = AutoSolveResult
   , proofEvidence :: Maybe ProofEvidence
   , detailedTrace :: Maybe String
   , varDefinitions :: M.Map String Expr
-  } deriving (Show, Eq)
+  }
+  deriving (Show, Eq)
 
 data SolverOptions = SolverOptions
   { intOptions :: IntSolveOptions
@@ -70,7 +76,8 @@ data SolverOptions = SolverOptions
   , selectionStrategyOpt :: SelectionStrategy
   , groebnerBackend :: GroebnerBackend
   , f4UseBatch :: Bool
-  } deriving (Show, Eq)
+  }
+  deriving (Show, Eq)
 
 data GroebnerBackend = BuchbergerBackend | F4Backend deriving (Show, Eq)
 
@@ -224,14 +231,8 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
       (thPrep, goalPrep, varDefsP) = eliminateRational (theoryRaw ++ geomLemmas) goalRaw
       (thPoly, goalPoly, varDefsS) = eliminateSqrt thPrep goalPrep
       varDefs = M.union varDefsP varDefsS
-      -- 1. Iterative Squaring Heuristic (REMOVED: Caused tautology (A-B)^2 >= 0)
-      -- We now rely on Global Square Substitution (v -> v_sq^2) in trySOS.
-      
-      -- goalSquared = doSquaring 3 goalPoly -- REMOVED
-      goalSquared = goalPoly -- Renamed for consistency with rest of function
-      
+      goalSquared = goalPoly 
       profileFinal = analyzeProblem thPoly goalSquared
-      
   in case goalSquared of
     Ge _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
     Gt _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
@@ -242,7 +243,18 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
       let (thWLOG, wlogLog) = applyWLOG theory goalFull
           (thBary, goalBary, baryLog) = applyBarycentric pts thWLOG goalFull
           fullLog = wlogLog ++ baryLog
-          -- subMap = buildSubMap thBary -- Removed unused binding
+          allVarsSet = extractPolyVarsList (formulaToPolysLocal goalBary ++ concatMap formulaToPolysLocal thBary)
+          isCoord v = any (`isPrefixOf` v) ["x", "y", "z", "cx", "ux", "uy"]
+          isSide v  = (v `elem` ["a", "b", "c", "a2", "b2", "c2", "s", "p", "q", "r"]) || 
+                      (any (`isSuffixOf` v) ["2", "s"] && not (isCoord v))
+          groupCoords = S.filter isCoord allVarsSet
+          groupSides  = S.filter (\v -> isSide v && not (S.member v groupCoords)) allVarsSet
+          groupRest   = S.difference allVarsSet (S.union groupCoords groupSides)
+          ordType = Block [ (S.toList groupCoords, Lex)
+                          , (S.toList groupSides,  Lex)
+                          , (S.toList groupRest,   GrevLex)
+                          ]
+          ord = compareMonomials ordType
           
           isDefinition (Eq (Var _) _) = True
           isDefinition _ = False
@@ -255,39 +267,28 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
           theoryTransformed = map (applySubstitutionsFormula sqSub) thBary
           goalTransformed = applySubstitutionsFormula sqSub goalBary
           
-          profileTransformed = analyzeProblem theoryTransformed goalTransformed
           subMapTransformed = buildSubMap theoryTransformed
           targetPoly = toPolySub subMapTransformed (case goalTransformed of Ge l r -> Sub l r; Gt l r -> Sub l r; _ -> Const 0)
           
           eqConstraintsTransformed = [ toPolySub subMapTransformed (Sub l r) 
                                      | eq@(Eq l r) <- theoryTransformed 
-                                     , not (isDefinition eq)
+                                     , not (isDefinition eq) 
                                      ]
           
-          isSumConstraint p =
+          eqConstraintsSOS = filter (not . isSumConstraint) eqConstraintsTransformed
+          isSumConstraint p = 
              let vars = extractPolyVars p
              in S.member "ba_u" vars && S.member "ba_v" vars && S.member "ba_w" vars && polyDegreeIn p "ba_u" == 1
-          
-          eqConstraintsSOS = filter (not . isSumConstraint) eqConstraintsTransformed
 
-          basis = selectGroebner profileTransformed opts goalTransformed eqConstraintsSOS
-          -- Inline getLeadingOrder logic to avoid scope issues
-          ordType = let params = symbolicParams profileTransformed
-                        allVars = variables profileTransformed
-                        activeVars = filter (`notElem` params) allVars
-                    in if null params then GrevLex else Block [(activeVars, GrevLex), (params, GrevLex)]
+          basis = f4LiteGroebner ord SugarStrategy True eqConstraintsSOS
+          reducer = F4Lite.reduceWithBasis ord basis
           
-          reducer p = F4Lite.reduceWithBasis (compareMonomials ordType) basis p
-          numericalSquares = checkSOSNumeric (_buildParamMap theoryTransformed) targetPoly
-          verifiedNumerical = case numericalSquares of Just sqs -> let recSqs = map (reconstructPoly "s" 1.732) sqs in reducer (subPoly targetPoly (foldl' polyAdd polyZero (map (\q -> polyMul q q) recSqs))) == polyZero; Nothing -> False
-          knownLemmas = [ subPoly (toPolySub subMapTransformed l) (toPolySub subMapTransformed r) | Ge l r <- theoryTransformed ]
+          knownLemmas = map (\f -> head (formulaToPolysLocal f)) [Ge (Var v) (Const 0) | v <- posVars]
           maybeCert = getSOSCertificate knownLemmas reducer targetPoly
           
-          -- FINAL FALLBACK: Burer-Monteiro SDP
-          sdpVerified = if isJust maybeCert || verifiedNumerical then False 
-                        else checkSOS_SDP (reducer targetPoly)
+          sdpVerified = if isJust maybeCert then False else checkSOS_SDP (reducer targetPoly)
           
-          success = isJust maybeCert || verifiedNumerical || sdpVerified
+          success = isJust maybeCert || sdpVerified
           evidence = fmap (\c -> EvidenceSOS c fullLog) maybeCert
           intro = "\nALGEBRAIC PROOF DEVELOPMENT:\n" ++ replicate 40 '-' ++ "\n"
           step1 = "[1] Goal: " ++ prettyFormula goalOriginal ++ "\n"
@@ -296,13 +297,10 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
           reductionStep = "[4] Canonical Reduction:\n    Identity: " ++ prettyPolyNice (reducer targetPoly) ++ " >= 0\n"
           step4 = "[5] SOS Decomposition:\n    " ++ (case maybeCert of 
                                Just c -> formatSOSCertificate c
-                               Nothing -> if verifiedNumerical then "Numerical SOS Certificate Verified" 
-                                          else if sdpVerified then "SDP-Based Feasibility Verified"
-                                          else "0") ++ " >= 0\n"
+                               Nothing -> if sdpVerified then "SDP-Based Feasibility Verified" else "0") ++ " >= 0\n"
           fullTrace = intro ++ step1 ++ setup ++ step2 ++ reductionStep ++ step4 ++ (replicate 40 '-' ++ "\nCONCLUSION: IDENTITY VERIFIED.")
       in (success, if success then "Proved via compositional Sum-of-Squares" else "SOS check failed", Just fullTrace, evidence)
 
-    _buildParamMap theory = M.fromList [ (v, sqrt (fromRational c)) | Eq (Pow (Var v) 2) (Const c) <- theory, c > 0 ]
     isAlwaysNonNeg v theory = any (\f -> case f of Ge (Var x) _ -> x == v; Gt (Var x) _ -> x == v; _ -> False) theory
     polyDegreeIn (Poly m) var = if M.null m then 0 else maximum ((0 :: Int) : [ fromIntegral (M.findWithDefault 0 var vars) | (mono, _) <- M.toList m, let Monomial vars = mono ])
 
@@ -341,7 +339,70 @@ extractPolyVars :: Poly -> S.Set String
 extractPolyVars (Poly m) = S.fromList $ concatMap (\(mono, _) -> let Monomial vars = mono in M.keys vars) (M.toList m)
 
 runCadRational :: [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
-runCadRational theory goal = let (th', goal', varDefs) = eliminateSqrt theory goal; proved = proveFormulaCAD th' goal' in (proved, "CAD", Nothing, varDefs)
+runCadRational theory goal = 
+  let (th', goal', varDefs) = eliminateSqrt theory goal
+      (eqs, ineqs) = partition isEquality th'
+      
+      eqPolys = concatMap formulaToPolysLocal eqs
+      
+      allVarsSet = extractPolyVarsList (eqPolys ++ concatMap formulaToPolysLocal ineqs ++ formulaToPolysLocal goal')
+      isCoord v = any (`isPrefixOf` v) ["x", "y", "z", "cx", "ux", "uy"]
+      isSide v  = (v `elem` ["a", "b", "c", "a2", "b2", "c2", "s", "p", "q", "r"]) || 
+                  (any (`isSuffixOf` v) ["2", "s"] && not (isCoord v))
+      groupCoords = S.filter isCoord allVarsSet
+      groupSides  = S.filter (\v -> isSide v && not (S.member v groupCoords)) allVarsSet
+      groupRest   = S.difference allVarsSet (S.union groupCoords groupSides)
+      ord = compareMonomials (Block [ (S.toList groupCoords, Lex)
+                                   , (S.toList groupSides,  Lex)
+                                   , (S.toList groupRest,   GrevLex)
+                                   ])
+      
+      basis = f4LiteGroebner ord SugarStrategy True eqPolys
+      reducer = F4Lite.reduceWithBasis ord basis
+      
+      reducedGoal = case goal' of
+        Ge l r -> Ge (polyToExpr (reducer (toPolySub M.empty (Sub l r)))) (Const 0)
+        Gt l r -> Gt (polyToExpr (reducer (toPolySub M.empty (Sub l r)))) (Const 0)
+        _      -> goal'
+      
+      reduceIneq :: Formula -> Formula
+      reduceIneq f = case f of
+        Ge l r -> Ge (polyToExpr (reducer (toPolySub M.empty (Sub l r)))) (Const 0)
+        Gt l r -> Gt (polyToExpr (reducer (toPolySub M.empty (Sub l r)))) (Const 0)
+        _      -> f
+        
+      reducedIneqs = map reduceIneq ineqs
+      
+      vars = S.toList (extractPolyVarsList (formulaToPolysLocal reducedGoal ++ concatMap formulaToPolysLocal reducedIneqs))
+      traceMsg = unlines
+        ["Hybrid Groebner-CAD Strategy:",
+         "  1. Partitioned theory: " ++ show (length eqs) ++ " equalities, " ++ show (length ineqs) ++ " inequalities.",
+         "  2. Computed Hierarchical Elimination Basis (Block Order).",
+         "  3. Reduced System Variables: " ++ show vars,
+         "  4. Invoking CAD on reduced system..."
+        ]
+      
+      proved = proveFormulaCAD reducedIneqs reducedGoal
+      
+  in (proved, "Hybrid Groebner-CAD", Just traceMsg, varDefs)
+
+formulaToPolysLocal :: Formula -> [Poly]
+formulaToPolysLocal formula =
+  case formula of
+    Eq lhs rhs -> [toPolySub M.empty (Sub lhs rhs)]
+    Ge lhs rhs -> [toPolySub M.empty (Sub lhs rhs)]
+    Gt lhs rhs -> [toPolySub M.empty (Sub lhs rhs)]
+    Le lhs rhs -> [toPolySub M.empty (Sub rhs lhs)]
+    Lt lhs rhs -> [toPolySub M.empty (Sub rhs lhs)]
+    And f1 f2 -> formulaToPolysLocal f1 ++ formulaToPolysLocal f2
+    Or f1 f2 -> formulaToPolysLocal f1 ++ formulaToPolysLocal f2
+    Not f -> formulaToPolysLocal f
+    Forall _ f -> formulaToPolysLocal f
+    Exists _ f -> formulaToPolysLocal f
+    _ -> []
+
+extractPolyVarsList :: [Poly] -> S.Set String
+extractPolyVarsList = foldr (S.union . extractPolyVars) S.empty
 
 explainSolverChoice :: SolverChoice -> ProblemProfile -> String
 explainSolverChoice _ _ = "Automatic Solver"

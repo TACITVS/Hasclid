@@ -1,0 +1,37 @@
+:set-timeout 180
+:optimize on
+:set-strategy normal
+:verbose on
+
+; ==========================================================
+; Erdős-Mordell Lemma (Manual Variable Reduction)
+; ----------------------------------------------------------
+; Proves: Ra >= (b/a)*dc + (c/a)*db
+; 
+; After manual simplification:
+; Ra2 = beta^2*c^2 + gamma^2*b^2 + beta*gamma*(b^2 + c^2 - 1)
+; MordellTerm^2 = (beta + gamma)^2 * S16 / 4
+;
+; Variables: beta, gamma, b, c (Total: 4)
+; ==========================================================
+
+; Domain constraints: Sides form a triangle (a=1)
+:assume (> b 0)
+:assume (> c 0)
+:assume (> (+ b c) 1)
+:assume (> (+ 1 b) c)
+:assume (> (+ 1 c) b)
+
+; Point P inside (Barycentric)
+:assume (> beta 0)
+:assume (> gamma 0)
+:assume (< (+ beta gamma) 1)
+
+; Heron's S16
+:assume (= S16 (* (+ 1 (+ b c)) (* (+ 1 (- b c)) (* (+ 1 (- c b)) (+ (+ b c) -1)))) )
+
+; Ra2 from Law of Cosines
+:assume (= Ra2 (+ (* (^ beta 2) (^ c 2)) (+ (* (^ gamma 2) (^ b 2)) (* (* beta gamma) (+ (^ b 2) (+ (^ c 2) -1))))))
+
+; Prove Ra2 >= (beta + gamma)^2 * S16 / 4
+:auto (>= Ra2 (/ (* (^ (+ beta gamma) 2) S16) 4))

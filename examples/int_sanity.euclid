@@ -1,8 +1,0 @@
-:reset
-(= (int x) (int-const 3))
-
-:reset
-(= (+ (int-const 1) (int-const 2)) (int-const 3))
-
-:reset
-(>= (int-const 5) (int-const 4))

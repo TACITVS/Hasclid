@@ -1,0 +1,609 @@
+==================================================
+   Hasclid v9.0 - Multi-Solver System
+   Intelligent routing: Wu/Grobner/CAD + Router
+   Type :help for commands.
+==================================================
+> -- ============================================================================
+
+> -- HASCLID v9.1 - CAD CRITICAL TESTS (Fixed - No <= or <)
+
+> -- ============================================================================
+
+> -- Focus: The most important CAD tests, especially Section 6 (timeout tests)
+
+> -- ============================================================================
+
+> 
+
+> :verbose
+Verbose mode ON: Will show detailed proof explanations
+
+> 
+
+> -- ============================================================================
+
+> -- SECTION 1: CORE CAD FUNCTIONALITY (Multivariate Inequalities)
+
+> -- ============================================================================
+
+> 
+
+> -- Test 1.1: Trivial Sum of Squares
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 2) (^ y 2)) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+> 
+
+> -- Test 1.2: Sum of Squares (3 variables)  
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 2) (+ (^ y 2) (^ z 2))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 3
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected Gr”bner Basis: General-purpose method for this problem type
+
+Result: NOT PROVED
+  Gr”bner basis method only supports equality goals
+
+
+> 
+
+> -- Test 1.3: Weighted Sum of Squares
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (* 2 (^ x 2)) (* 3 (^ y 2))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+> 
+
+> -- Test 1.4: Non-trivial Positive Polynomial
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 2) (+ (* x y) (^ y 2))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+> 
+
+> -- ============================================================================
+
+> -- SECTION 2: GEOMETRIC INEQUALITIES
+
+> -- ============================================================================
+
+> 
+
+> -- Test 2.1: Triangle Inequality
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :point A 0 0
+Defined 2D Point A at (0, 0)
+
+> :point B 3 4
+Defined 2D Point B at (3, 4)
+
+> :point C 6 0
+Defined 2D Point C at (6, 0)
+
+> (>= (+ (dist2 A B) (dist2 B C)) (dist2 A C))
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 15
+  Constraints: 9
+  Max Degree: 2
+  Complexity: High
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Real algebraic geometry with inequalities
+
+Result: PROVED
+  Constant >= 0
+
+
+> 
+
+> -- Test 2.2: Distance Always Non-negative
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :point P x1 y1
+Defined 2D Point P at (x1, y1)
+
+> :point Q x2 y2
+Defined 2D Point Q at (x2, y2)
+
+> (>= (dist2 P Q) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 14
+  Constraints: 6
+  Max Degree: 2
+  Complexity: High
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Real algebraic geometry with inequalities
+
+Result: PROVED
+  CAD check (4D) succeeded
+
+
+> 
+
+> -- ============================================================================
+
+> -- SECTION 6: THE CRITICAL TIMEOUT TESTS (Most Important!)
+
+> -- ============================================================================
+
+> 
+
+> -- Test 6.1: Square_3_Lines Concrete (S=1) - Should be INSTANT
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :set-timeout 5
+Solver timeout set to: 5 seconds
+
+> :point A 0 0
+Defined 2D Point A at (0, 0)
+
+> :point B 1 0
+Defined 2D Point B at (1, 0)
+
+> :point C 1 1
+Defined 2D Point C at (1, 1)
+
+> :point D x y
+Defined 2D Point D at (x, y)
+
+> :assume (= (dist2 C D) 1)
+Assumed: (= (dist2 C D) 1)
+
+> :assume (= (perpendicular B C C D) 0)
+Assumed: (= (perpendicular B C C D) 0)
+
+> (= (dist2 D A) 1)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 22
+  Constraints: 14
+  Max Degree: 2
+  Complexity: High
+
+Solver Selection:
+  Fast geometric constraint propagation (PHASE 1)
+
+Result: NOT PROVED
+  Constants not equal
+
+Detailed Trace:
+Line BC vertical => CD horizontal
+Solved distance for x (branches: 2)
+Found counter-example in branch: Constants not equal
+
+
+
+> 
+
+> -- Test 6.2: Square_3_Lines Symbolic (THE KEY TEST!)
+
+> -- THIS WAS TIMING OUT IN v9.0
+
+> -- Expected: Should complete with Week 1 optimizations
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :set-timeout 15
+Solver timeout set to: 15 seconds
+
+> :point A 0 0
+Defined 2D Point A at (0, 0)
+
+> :point B S 0
+Defined 2D Point B at (S, 0)
+
+> :point C S S
+Defined 2D Point C at (S, S)
+
+> :point D x y
+Defined 2D Point D at (x, y)
+
+> :assume (= (dist2 C D) (^ S 2))
+Assumed: (= (dist2 C D) (^ S 2))
+
+> :assume (= (perpendicular B C C D) 0)
+Assumed: (= (perpendicular B C C D) 0)
+
+> (= (dist2 D A) (^ S 2))
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 23
+  Constraints: 14
+  Max Degree: 2
+  Complexity: High
+  Symbolic Parameters: S
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected Gr”bner Basis: General-purpose method for this problem type
+
+Result: NOT PROVED
+  LHS /= RHS (Normal Form: 2S*x)
+
+Detailed Trace:
+==========================================
+PROOF EXPLANATION:
+==========================================
+
+Used Assumptions (14):
+  * (perpendicular B C C D) = 0
+  * (dist2 C D) = (^ S 2)
+  * xD = x
+  * yD = y
+  * zD = 0
+  * xC = S
+  * yC = S
+  * zC = 0
+  * xB = S
+  * yB = 0
+  * zB = 0
+  * xA = 0
+  * yA = 0
+  * zA = 0
+
+Proof Steps:
+  1. Used substitution: xD -> x
+  2. Used substitution: yD -> y
+  3. Used substitution: zD -> 0
+  4. Used substitution: xC -> S
+  5. Used substitution: yC -> S
+  6. Used substitution: zC -> 0
+  7. Used substitution: xB -> S
+  8. Used substitution: yB -> 0
+  9. Used substitution: zB -> 0
+  10. Used substitution: xA -> 0
+  11. Used substitution: yA -> 0
+  12. Used substitution: zA -> 0
+  13. Applied constraint: (= (perpendicular B C C D) 0)
+  14. Applied constraint: (= (dist2 C D) (^ S 2))
+  15. Computed Groebner basis (3 polynomials)
+  16. Reduced to normal form: 2S*x
+
+Groebner Basis Size: 3
+==========================================
+
+
+
+> 
+
+> -- Test 6.3: Square_3_Lines Symbolic (Extended timeout)
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :set-timeout 30
+Solver timeout set to: 30 seconds
+
+> :point A 0 0
+Defined 2D Point A at (0, 0)
+
+> :point B S 0
+Defined 2D Point B at (S, 0)
+
+> :point C S S
+Defined 2D Point C at (S, S)
+
+> :point D x y
+Defined 2D Point D at (x, y)
+
+> :assume (= (dist2 C D) (^ S 2))
+Assumed: (= (dist2 C D) (^ S 2))
+
+> :assume (= (perpendicular B C C D) 0)
+Assumed: (= (perpendicular B C C D) 0)
+
+> (= (dist2 D A) (^ S 2))
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: Geometric
+  Variables: 23
+  Constraints: 14
+  Max Degree: 2
+  Complexity: High
+  Symbolic Parameters: S
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected Gr”bner Basis: General-purpose method for this problem type
+
+Result: NOT PROVED
+  LHS /= RHS (Normal Form: 2S*x)
+
+Detailed Trace:
+==========================================
+PROOF EXPLANATION:
+==========================================
+
+Used Assumptions (14):
+  * (perpendicular B C C D) = 0
+  * (dist2 C D) = (^ S 2)
+  * xD = x
+  * yD = y
+  * zD = 0
+  * xC = S
+  * yC = S
+  * zC = 0
+  * xB = S
+  * yB = 0
+  * zB = 0
+  * xA = 0
+  * yA = 0
+  * zA = 0
+
+Proof Steps:
+  1. Used substitution: xD -> x
+  2. Used substitution: yD -> y
+  3. Used substitution: zD -> 0
+  4. Used substitution: xC -> S
+  5. Used substitution: yC -> S
+  6. Used substitution: zC -> 0
+  7. Used substitution: xB -> S
+  8. Used substitution: yB -> 0
+  9. Used substitution: zB -> 0
+  10. Used substitution: xA -> 0
+  11. Used substitution: yA -> 0
+  12. Used substitution: zA -> 0
+  13. Applied constraint: (= (perpendicular B C C D) 0)
+  14. Applied constraint: (= (dist2 C D) (^ S 2))
+  15. Computed Groebner basis (3 polynomials)
+  16. Reduced to normal form: 2S*x
+
+Groebner Basis Size: 3
+==========================================
+
+
+
+> 
+
+> -- ============================================================================
+
+> -- SECTION 7: PERFORMANCE SCALING
+
+> -- ============================================================================
+
+> 
+
+> -- Test 7.1: 2D Inequality
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 2) (^ y 2)) (+ x y))
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: NOT PROVED
+  CAD check (2D) found countercell
+
+
+> 
+
+> -- Test 7.2: 3D Inequality
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 2) (+ (^ y 2) (^ z 2))) (+ x (+ y z)))
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 3
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected Gr”bner Basis: General-purpose method for this problem type
+
+Result: NOT PROVED
+  Gr”bner basis method only supports equality goals
+
+
+> 
+
+> -- Test 7.3: 4D Inequality
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> :set-timeout 30
+Solver timeout set to: 30 seconds
+
+> (>= (+ (^ a 2) (+ (^ b 2) (+ (^ c 2) (^ d 2)))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 4
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected Gr”bner Basis: General-purpose method for this problem type
+
+Result: NOT PROVED
+  Gr”bner basis method only supports equality goals
+
+
+> 
+
+> -- ============================================================================
+
+> -- SECTION 8: CUMULATIVE OPTIMIZATIONS
+
+> -- ============================================================================
+
+> 
+
+> -- Test 8.1: Complex Positivity
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 4) (+ (* 2 (^ x 2) (^ y 2)) (^ y 4))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 4
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+> 
+
+> -- Test 8.2: Quartic with 4 variables
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ a 4) (+ (^ b 4) (+ (^ c 2) d))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 4
+  Constraints: 0
+  Max Degree: 4
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected Gr”bner Basis: General-purpose method for this problem type
+
+Result: NOT PROVED
+  Gr”bner basis method only supports equality goals
+
+
+> 
+
+> -- Test 8.3: Mixed Terms
+
+> :reset
+Active Theory reset (Lemmas preserved, Cache cleared).
+
+> (>= (+ (^ x 2) (+ (* x y) (+ (^ y 2) 1))) 0)
+=== AUTOMATIC SOLVER ===
+
+Problem Analysis:
+  Type: SinglePositivity
+  Variables: 2
+  Constraints: 0
+  Max Degree: 2
+  Complexity: Trivial
+
+Solver Selection:
+  Geometric propagation insufficient. Fallback to PHASE 2: Selected CAD: Positivity check for polynomial
+
+Result: PROVED
+  CAD check (2D) succeeded
+
+
+> 
+
+> -- ============================================================================
+
+> -- END OF CRITICAL TESTS
+
+> -- ============================================================================
+
+
+[End of input]

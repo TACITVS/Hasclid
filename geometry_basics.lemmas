@@ -1,7 +1,0 @@
--- Lemma Library
--- Saved: 3 lemmas
--- File: geometry_basics.lemmas
-
-(= (perpendicular A B A C) 0)
-(= (dist2 A B) 9)
-(= (dist2 A C) 16)

@@ -1,0 +1,5 @@
+:optimize on
+:verbose
+:assume (= LHS (* 1/4 (* (^ n 2) (^ (+ n 1) 2))))
+:assume (= RHS (^ (* 1/2 (* n (+ n 1))) 2))
+(= LHS RHS)

@@ -1,0 +1,44 @@
+-- Test script for Lemma Library functionality
+-- This demonstrates saving, loading, and reusing proven lemmas
+
+-- Part 1: Prove some basic geometry lemmas
+
+-- Define a right triangle
+:point A 0 0
+:point B 3 0
+:point C 0 4
+
+-- Lemma 1: Perpendicularity of right triangle sides
+:lemma (= (perpendicular A B A C) 0)
+
+-- Lemma 2: Distance from A to B
+:lemma (= (dist2 A B) 9)
+
+-- Lemma 3: Distance from A to C
+:lemma (= (dist2 A C) 16)
+
+-- List all proven lemmas
+:list
+
+-- Part 2: Save lemmas to file
+:save-lemmas geometry_basics.lemmas
+
+-- Part 3: Clear lemmas and verify they're gone
+:clear-lemmas
+:list
+
+-- Part 4: Load lemmas back from file
+:load-lemmas geometry_basics.lemmas
+:list
+
+-- Part 5: Verify loaded lemmas can be used
+-- Define a congruent triangle
+:point D 0 0
+:point E 3 0
+:point F 0 4
+
+-- This should be provable using loaded lemmas
+(= (dist2 D E) (dist2 A B))
+(= (dist2 D F) (dist2 A C))
+
+:list

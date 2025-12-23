@@ -1,0 +1,37 @@
+-- Counterexample / Construct command stress tests
+-- Run from REPL with: :load examples/counterexample_construct_stress.euclid
+
+:reset
+
+-- Simple false equality: should find a counterexample quickly (e.g., x = 0)
+:counterexample (= (+ x 1) x)
+
+-- Same formula: should NOT find a satisfying assignment
+:construct (= (+ x 1) x)
+
+-- Simple satisfiable equality: x == y has many witnesses
+:construct (= x y)
+
+-- Dependent satisfiable equality: x+1 == y+1 (should find x = y)
+:construct (= (+ x 1) (+ y 1))
+
+-- Inequality that is false for all reals: x > x+1 (should find counterexample)
+:counterexample (> x (+ x 1))
+
+-- Inequality that is satisfiable: x+1 >= x (should find witness)
+:construct (>= (+ x 1) x)
+
+-- With theory bindings: substitution should be honored
+:reset
+:assume (= x 2)
+:construct (= x 2)
+:counterexample (= x 3)
+
+-- Mixed free vars: try to satisfy a simple system
+:reset
+:construct (and (= (+ x y) 5) (= (- x y) 1))
+
+-- Counterexample search with multiple vars (should find x=0,y=0 fails equality)
+:counterexample (= (+ x y 1) (+ x y))
+
+-- Note: counterexample/construct skip formulas with sqrt; this is intentional.

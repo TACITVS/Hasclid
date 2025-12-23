@@ -1,4 +1,0 @@
-:point O 3/2 2
-:point I 1 1
-:prove (= (dist2 O I) 5/4)
-:q

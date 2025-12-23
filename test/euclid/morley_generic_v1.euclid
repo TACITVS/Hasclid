@@ -1,0 +1,118 @@
+; ========================================
+; Morley's Theorem - Generic Triangle (v1)
+; ========================================
+;
+; GOAL: Prove Morley for a NORMALIZED generic triangle
+; - A = (0, 0)
+; - B = (1, 0)
+; - C = (cx, cy) with cy > 0
+;
+; This proves the theorem for ANY triangle (up to similarity)
+
+; ========================================
+; 1. Triangle Vertices
+; ========================================
+
+:point A 0 0
+:point B 1 0
+:point C cx cy
+
+; Constraint: C is above the x-axis (non-degenerate triangle)
+:assume (> cy 0)
+
+; ========================================
+; 2. Angle Trisection - Algebraic Approach
+; ========================================
+
+; For angle BAC at vertex A:
+; - Vector AB = (1, 0)
+; - Vector AC = (cx, cy)
+; - Angle θ_A satisfies: tan(θ_A) = cy / cx
+;
+; The first trisector from A makes angle θ_A/3 with AB
+; If the trisector has slope m_A1, then:
+;   tan(θ_A/3) = m_A1
+;
+; Using the triple angle formula:
+;   tan(3α) = (3tan(α) - tan³(α)) / (1 - 3tan²(α))
+;
+; So if t = tan(θ_A/3), then:
+;   tan(θ_A) = (3t - t³) / (1 - 3t²)
+;   cy/cx = (3t - t³) / (1 - 3t²)
+;
+; Rearranging:
+;   cy(1 - 3t²) = cx(3t - t³)
+;   cy - 3cy·t² = 3cx·t - cx·t³
+;   cx·t³ - 3cy·t² - 3cx·t + cy = 0
+;
+; This is a CUBIC in t, but we can work with it polynomially!
+
+; Let t_A = tan(θ_A/3) = slope of first trisector from A
+; Constraint: cx·t_A³ - 3cy·t_A² - 3cx·t_A + cy = 0
+
+:assume (= (+ (* cx (^ tA 3))
+              (* -3 cy (^ tA 2))
+              (* -3 cx tA)
+              cy)
+           0)
+
+; ========================================
+; 3. Similarly for Other Vertices
+; ========================================
+
+; At vertex B:
+; - Vector BA = (-1, 0)
+; - Vector BC = (cx-1, cy)
+; - Angle θ_B has tan(θ_B) = cy / (cx-1)  [may be negative!]
+;
+; Trisector from B has slope t_B where:
+;   (cx-1)·t_B³ - 3cy·t_B² - 3(cx-1)·t_B + cy = 0
+
+:assume (= (+ (* (- cx 1) (^ tB 3))
+              (* -3 cy (^ tB 2))
+              (* -3 (- cx 1) tB)
+              cy)
+           0)
+
+; At vertex C:
+; - Vector CA = (-cx, -cy)
+; - Vector CB = (1-cx, -cy)
+; - This is more complex...
+;
+; For now, let's focus on just TWO trisectors to find ONE Morley point
+
+; ========================================
+; 4. Morley Point P - Intersection of Trisectors from A and B
+; ========================================
+
+; Trisector from A: passes through A=(0,0) with slope t_A
+;   Equation: y = t_A · x
+;
+; Trisector from B: passes through B=(1,0) with slope t_B
+;   Equation: y = t_B · (x - 1)
+;
+; Intersection: t_A · x = t_B · (x - 1)
+;   t_A · x = t_B · x - t_B
+;   (t_A - t_B) · x = -t_B
+;   x = -t_B / (t_A - t_B) = t_B / (t_B - t_A)
+;
+; Polynomial form (avoid division):
+;   (t_B - t_A) · xP = t_B
+;   OR: (t_A - t_B) · xP + t_B = 0
+
+:point P xP yP
+
+:assume (= (+ (* (- tA tB) xP) tB) 0)
+:assume (= yP (* tA xP))
+
+; ========================================
+; 5. PROBLEM: We need 3 Morley points
+; ========================================
+
+; This approach is getting too complex for a first attempt.
+; Let me use a HYBRID approach:
+; - Fix the triangle to something concrete but non-special
+; - Verify Morley's theorem holds
+
+; Let's try: C = (2/3, 3/4) [arbitrary non-special]
+

@@ -1,0 +1,5 @@
+:reset
+:point O 0 0
+:point X 1 0
+:point Y 0 1
+(= (perpendicular O X O Y) 0)

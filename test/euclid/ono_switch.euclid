@@ -1,0 +1,39 @@
+-- =======================================================
+-- ONO'S INEQUALITY (The "Logic" Boss)
+-- =======================================================
+-- 1. Setup Standard Triangle
+:point A 0 0
+:point B cx 0
+:point C ux uy
+:assume (> cx 0)
+:assume (> uy 0)
+
+-- 2. Define Sides
+:assume (= c2 (^ cx 2))
+:assume (= b2 (+ (^ ux 2) (^ uy 2)))
+:assume (= a2 (+ (^ (- cx ux) 2) (^ uy 2)))
+
+-- 3. Define Area (16 * Area^2 to stay polynomial)
+-- Heron's formula structure: 16S^2 = 4a^2b^2 - (a^2+b^2-c^2)^2
+-- Or simply via coordinates: 2*Area = cx*uy => 16*Area^2 = 4 * cx^2 * uy^2
+:assume (= S16 (* 4 (* c2 (^ uy 2))))
+
+-- 4. Define the Cosine Terms (scaled)
+-- TermA = b^2 + c^2 - a^2
+:assume (= TermA (- (+ b2 c2) a2))
+:assume (= TermB (- (+ a2 c2) b2))
+:assume (= TermC (- (+ a2 b2) c2))
+
+-- =======================================================
+-- THE TRAP: ACUTE CONSTRAINTS
+-- Un-comment these lines to make the theorem TRUE.
+-- Leave them commented to see Hasclid correctly FAIL.
+-- =======================================================
+:assume (> TermA 0)
+:assume (> TermB 0)
+:assume (> TermC 0)
+
+-- 5. The Goal
+-- 27 * (TermA^2 * TermB^2 * TermC^2) <= (4S)^6
+-- Note: (4S)^6 = (16S^2)^3 = S16^3
+:prove (>= (- (^ S16 3) (* 27 (* (^ TermA 2) (* (^ TermB 2) (^ TermC 2))))) 0)

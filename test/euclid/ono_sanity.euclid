@@ -1,0 +1,38 @@
+-- =======================================================
+-- ONO'S INEQUALITY (SANITY CHECK - NO CONSTRAINTS)
+-- =======================================================
+
+-- 1. Setup Coordinates
+:point A 0 0
+:point B z_cx 0
+:point C ux uy
+
+:assume (= z_cx 1)
+:assume (> uy 0)
+
+-- 2. Define Squared Sides
+:assume (= z_c2 (^ z_cx 2))
+:assume (= z_b2 (+ (^ ux 2) (^ uy 2)))
+:assume (= z_a2 (+ (^ (- z_cx ux) 2) (^ uy 2)))
+
+-- 3. Define Cosine Terms (2bc cos A)
+:assume (= z_TermA (- (+ z_b2 z_c2) z_a2))
+:assume (= z_TermB (- (+ z_a2 z_c2) z_b2))
+:assume (= z_TermC (- (+ z_a2 z_b2) z_c2))
+
+-- 4. Define Area Term (4S)^2
+:assume (= z_S4_sq (* 4 (* z_c2 (^ uy 2))))
+
+-- 5. ACUTE CONSTRAINTS (The Logic Switch)
+-- COMMENTED OUT FOR SANITY CHECK
+-- :assume (> z_TermA 0)
+-- :assume (> z_TermB 0)
+-- :assume (> z_TermC 0)
+
+-- 6. Intermediate Variables
+:assume (= z_LHS (^ z_S4_sq 3))
+:assume (= z_RHS (* 27 (* (^ z_TermA 2) (* (^ z_TermB 2) (^ z_TermC 2)))))
+:assume (= z_Diff (- z_LHS z_RHS))
+
+-- 7. The Goal
+:prove (>= z_Diff 0)

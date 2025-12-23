@@ -1,7 +1,0 @@
-:point A 0 0
-:point B 1 0
-(= (dist2 A B) 2)
-:find-counterexample (= (dist2 A B) 5)
-:point C x y
-(= (+ (* x x) (* y y)) 10)
-:q

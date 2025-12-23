@@ -1,5 +1,0 @@
-:macro sum_pow n x = (if (= n 0) 0 (+ (^ x n) (sum_pow (- n 1) x)))
-:point A 0 0
-:point B 2 0
--- x = 4. sum_pow 2 4 = 4^2 + 4^1 + 0 = 20
-(= (sum_pow 2 (dist2 A B)) 20)

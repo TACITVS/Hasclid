@@ -1,0 +1,62 @@
+; ======================================================================
+; Morley's Theorem - Generic Triangle (algebraic, root-bounded trisectors)
+; ----------------------------------------------------------------------
+; Normalization:
+;   B = (0, 0), C = (1, 0), A = (ax, ay) with 0 < ax < 1, ay > 0.
+; Trisector slopes are constrained to the interior branch via root-between.
+; Intersections defined with u*/v* parameters (forward rays enforced by > 0).
+; Goal: dist2(P,Q) = dist2(Q,R) = dist2(R,P).
+; ======================================================================
+
+:verbose
+
+:macro tanB = (/ ay ax)
+:macro tanC = (/ ay (- ax 1))
+:macro tanA = (/ ay (+ (* ax (- 1 ax)) (* -1 (^ ay 2))))
+
+; Points
+:point B 0 0
+:point C 1 0
+:point A ax ay
+
+:assume (> ay 0)
+:assume (> ax 0)
+:assume (< ax 1)
+
+; Trisector slopes (root with interval)
+:assume (root-between tB (+ (^ tB 3) (* -3 tanB (^ tB 2)) (* -3 tB) tanB) 0 tanB)
+:assume (root-between tC (+ (^ tC 3) (* -3 tanC (^ tC 2)) (* -3 tC) tanC) tanC 0)
+:assume (root-between tA (+ (^ tA 3) (* -3 tanA (^ tA 2)) (* -3 tA) tanA) (/ ay (- ax 1)) (/ ay (* -1 ax)))
+
+; Points P, Q, R with parameters
+:point P px py
+:assume (= px uB)
+:assume (= py (* tB uB))
+:assume (= px (+ 1 (* -1 vC)))
+:assume (= py (* tC vC))
+:assume (> uB 0)
+:assume (> vC 0)
+
+:point Q qx qy
+:assume (= qx (+ 1 (* -1 uC)))
+:assume (= qy (* tC uC))
+:assume (= qx (+ ax vA))
+:assume (= qy (+ ay (* tA vA)))
+:assume (> uC 0)
+:assume (> vA 0)
+
+:point R rx ry
+:assume (= rx (+ ax uA))
+:assume (= ry (+ ay (* tA uA)))
+:assume (= rx vB)
+:assume (= ry (* tB vB))
+:assume (> uA 0)
+:assume (> vB 0)
+
+; Distances squared
+:assume (= dPQ2 (+ (^ (- px qx) 2) (^ (- py qy) 2)))
+:assume (= dQR2 (+ (^ (- qx rx) 2) (^ (- qy ry) 2)))
+:assume (= dRP2 (+ (^ (- rx px) 2) (^ (- ry py) 2)))
+
+:prove (= dPQ2 dQR2)
+:prove (= dQR2 dRP2)

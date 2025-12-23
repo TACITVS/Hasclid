@@ -1,0 +1,100 @@
+-- ============================================================================
+-- MORLEY'S THEOREM - Rational Parametrization Strategy
+-- ============================================================================
+-- Strategy: Avoid solving cubic equations (which triggers slow CAD).
+-- Instead, parametrise the proof by the tangents of the trisected angles.
+-- Let u = tan(alpha), v = tan(beta), w = tan(gamma).
+-- This makes every geometric entity a rational function of u, v, w.
+-- ============================================================================
+
+:verbose
+
+-- 1. DEFINE PARAMETERS & CONSTANTS
+-- ============================================================================
+-- s represents sqrt(3)
+:assume (= (^ s 2) 3)
+
+-- u, v, w are tan(alpha), tan(beta), tan(gamma)
+-- Constraint: alpha + beta + gamma = 60 degrees
+-- tan(a+b+c) = (sum t - prod t) / (1 - sum t_i t_j) = sqrt(3)
+:assume (= (- (+ u v w) (* u v w)) (* s (- 1 (+ (* u v) (* v w) (* w u)))))
+
+-- 2. SETUP COORDINATE SYSTEM
+-- ============================================================================
+-- Vertex B at (0,0), C at (1,0)
+:point B 0 0
+:point C 1 0
+
+-- 3. CALCULATE SLOPES (RATIONAL FUNCTIONS)
+-- ============================================================================
+-- We use macros to avoid solving equations. 
+-- We calculate the exact slope for every line in the figure.
+
+-- Trisector slopes from B (Angles: beta, 2*beta)
+-- mB1 = tan(beta) = v
+-- mB2 = tan(2*beta) = 2v / (1-v^2)
+:macro mB1 = v
+:macro mB2 = (/ (* 2 v) (- 1 (^ v 2)))
+
+-- Trisector slopes from C (Angles: 180-gamma, 180-2*gamma)
+-- mC1 = tan(180-gamma) = -w
+-- mC2 = tan(180-2*gamma) = -2w / (1-w^2)
+:macro mC1 = (* -1 w)
+:macro mC2 = (/ (* -2 w) (- 1 (^ w 2)))
+
+-- Side Slopes (Angles: 3*beta, 180-3*gamma)
+-- tan(3x) = (3t - t^3) / (1 - 3t^2)
+:macro mBA = (/ (- (* 3 v) (^ v 3)) (- 1 (* 3 (^ v 2))))
+:macro mCA = (* -1 (/ (- (* 3 w) (^ w 3)) (- 1 (* 3 (^ w 2)))))
+
+-- 4. CONSTRUCT VERTICES A AND MORLEY POINTS
+-- ============================================================================
+
+-- Point P (Intersection of internal trisectors B1 and C1)
+-- Line B1: y = v*x
+-- Line C1: y = -w*(x-1)
+-- Intersection: v*x = -w*x + w  => x(v+w) = w => x = w/(v+w)
+:point P (/ w (+ v w)) (/ (* v w) (+ v w))
+
+-- Point A (Intersection of sides BA and CA)
+-- Line BA: y = mBA * x
+-- Line CA: y = mCA * (x - 1)
+:point A xA yA
+:assume (= yA (* (mBA) xA))
+:assume (= yA (* (mCA) (- xA 1)))
+
+-- Point R (Intersection of trisector B2 and trisector A_near_B)
+-- This is the hardest part: Slope of trisector from A.
+-- Angle of AB = 3*beta. Trisector adds alpha. Angle = 3*beta + alpha.
+-- We need tan(3*beta + alpha).
+-- tan(A+B) = (tanA + tanB) / (1 - tanA*tanB)
+:macro tan3beta = (mBA)
+:macro mAR = (/ (+ (tan3beta) u) (- 1 (* (tan3beta) u)))
+
+-- Line B2: y = mB2 * x
+-- Line AR: y - yA = mAR * (x - xA)
+:point R xR yR
+:assume (= yR (* (mB2) xR))
+:assume (= (- yR yA) (* (mAR) (- xR xA)))
+
+-- Point Q (Intersection of trisector C2 and trisector A_near_C)
+-- Angle of AC = 180 - 3*gamma. Trisector subtracts alpha. 
+-- Angle = 180 - 3*gamma - alpha = 180 - (3*gamma + alpha).
+-- tan(180 - x) = -tan(x).
+-- We need -tan(3*gamma + alpha).
+:macro tan3gamma = (/ (- (* 3 w) (^ w 3)) (- 1 (* 3 (^ w 2))))
+:macro tan3gamma_plus_alpha = (/ (+ (tan3gamma) u) (- 1 (* (tan3gamma) u)))
+:macro mAQ = (* -1 (tan3gamma_plus_alpha))
+
+-- Line C2: y = mC2 * (x - 1)
+-- Line AQ: y - yA = mAQ * (x - xA)
+:point Q xQ yQ
+:assume (= yQ (* (mC2) (- xQ 1)))
+:assume (= (- yQ yA) (* (mAQ) (- xQ xA)))
+
+-- 5. THE PROOF
+-- ============================================================================
+-- We prove that the squared distances PR^2 and PQ^2 are equal.
+-- By symmetry (swapping coordinates/variables), this implies equilateral.
+
+:prove (= (dist2 P R) (dist2 P Q))

@@ -1,0 +1,15 @@
+-- ============================================================================
+-- SQRT PRODUCT TEST
+-- Test how sqrt elimination handles products of square roots
+-- ============================================================================
+--
+-- Goal: Understand if sqrt(a) * sqrt(b) gets properly handled
+-- ============================================================================
+
+:verbose
+
+-- Simple case: sqrt(4) * sqrt(9) = 6
+:assume (= a 4)
+:assume (= b 9)
+
+(= (* (sqrt a) (sqrt b)) 6)

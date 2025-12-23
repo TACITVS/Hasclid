@@ -1,0 +1,37 @@
+; ============================================================================
+; MORLEY'S THEOREM - FINAL PROOF
+; ============================================================================
+; Prove the Morley triangle is equilateral
+
+:verbose
+
+; Point P: xP = 1/2, 12*yP² = 1
+:assume (= (* 2 xP) 1)
+:assume (= (* 12 (^ yP 2)) 1)
+
+; Point Q: yQ = 1/2, xQ + yP = 1 (by symmetry)
+:assume (= (* 2 yQ) 1)
+:assume (= (+ xQ yP) 1)
+
+; Point R: By symmetry R = (yP, xQ)
+:assume (= xR yP)
+:assume (= yR xQ)
+
+; Trisector constraints
+:assume (= (* 3 (^ yP 2)) (^ xP 2))
+:assume (= (^ yQ 2) (* 3 (^ xQ 2)))
+:assume (= (^ yR 2) (* 3 (^ xR 2)))
+
+; Squared distances
+:assume (= dPQ2 (+ (^ (- xQ xP) 2) (^ (- yQ yP) 2)))
+:assume (= dQR2 (+ (^ (- xR xQ) 2) (^ (- yR yQ) 2)))
+:assume (= dRP2 (+ (^ (- xP xR) 2) (^ (- yP yR) 2)))
+
+; GOAL 1: Prove PQ² = QR² (already proved above)
+:prove (= dPQ2 dQR2)
+
+; GOAL 2: Prove QR² = RP² (completes equilateral triangle proof!)
+:prove (= dQR2 dRP2)
+
+; GOAL 3: Therefore PQ² = RP² (by transitivity)
+:prove (= dPQ2 dRP2)

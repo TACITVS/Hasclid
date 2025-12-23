@@ -1,0 +1,6 @@
+:macro sq x = (^ x 2)
+:macro dist_sq p1 p2 = (+ (sq (- (x p1) (x p2))) (sq (- (y p1) (y p2))))
+:point A 0 0
+:point B 3 4
+(= (dist_sq A B) 25)
+:list

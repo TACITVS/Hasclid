@@ -1,0 +1,17 @@
+-- [square_3_lines_auto.euclid]
+-- Same problem, but using :auto router instead of default Gröbner
+:set-order grevlex
+-- Proposition: A square can be defined using constraints on only three line segments
+
+-- Setup vertices
+:point A 0 0
+:point B S 0
+:point C S S
+:point D x y
+
+-- Constraints on three sides only
+:assume (= (dist2 C D) (^ S 2))
+:assume (= (perpendicular B C C D) 0)
+
+-- Try to prove fourth side (should be FALSE)
+:auto (= (dist2 D A) (^ S 2))

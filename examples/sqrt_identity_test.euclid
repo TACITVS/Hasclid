@@ -1,4 +1,0 @@
--- Test: sqrt(x) * sqrt(x) = x identity
-:verbose
-
-(= (* (sqrt x) (sqrt x)) x)

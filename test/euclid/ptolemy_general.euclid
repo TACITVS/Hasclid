@@ -1,0 +1,45 @@
+-- ============================================================================
+-- PTOLEMY'S THEOREM - GENERAL CASE
+-- Universal proof for ALL cyclic quadrilaterals
+-- ============================================================================
+--
+-- THEOREM: For ANY cyclic quadrilateral (inscribed in a circle):
+-- |AC| · |BD| = |AB| · |CD| + |BC| · |DA|
+--
+-- ALGEBRAIC APPROACH: Prove the equivalent polynomial identity
+-- (p²q² - a²c² - b²d²)² = 4·a²·b²·c²·d²
+--
+-- where p² = |AC|², q² = |BD|², a² = |AB|², b² = |BC|², c² = |CD|², d² = |DA|²
+--
+-- This avoids square roots entirely and is purely polynomial!
+-- ============================================================================
+
+:verbose
+
+-- Four points on unit circle (general case)
+:assume (= (+ (^ xA 2) (^ yA 2)) 1)
+:assume (= (+ (^ xB 2) (^ yB 2)) 1)
+:assume (= (+ (^ xC 2) (^ yC 2)) 1)
+:assume (= (+ (^ xD 2) (^ yD 2)) 1)
+
+-- Define squared distances (polynomial expressions)
+:assume (= a2 (+ (^ (- xB xA) 2) (^ (- yB yA) 2)))
+:assume (= b2 (+ (^ (- xC xB) 2) (^ (- yC yB) 2)))
+:assume (= c2 (+ (^ (- xD xC) 2) (^ (- yD yC) 2)))
+:assume (= d2 (+ (^ (- xA xD) 2) (^ (- yA yD) 2)))
+:assume (= p2 (+ (^ (- xC xA) 2) (^ (- yC yA) 2)))
+:assume (= q2 (+ (^ (- xD xB) 2) (^ (- yD yB) 2)))
+
+-- KEY INSIGHT: Ptolemy's theorem states pq = ac + bd
+-- Squaring: p²q² = (ac + bd)² = a²c² + 2ac·bd + b²d²
+-- Rearranging: p²q² - a²c² - b²d² = 2ac·bd
+-- Squaring again: (p²q² - a²c² - b²d²)² = 4a²c²b²d²
+
+-- Define the LHS of the squared-squared identity
+:assume (= LHS (^ (- (- (* p2 q2) (* a2 c2)) (* b2 d2)) 2))
+
+-- Define the RHS of the squared-squared identity
+:assume (= RHS (* (* 4 a2) (* (* b2 c2) d2)))
+
+-- THE PROOF: The fully polynomial form of Ptolemy's Theorem
+(= LHS RHS)

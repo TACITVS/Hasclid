@@ -1,7 +1,0 @@
-; Test constant division optimization
-:verbose
-
-; This should be INSTANT now that 1/3 evaluates to a constant
-:assume (= x1 (/ 1 3))
-:assume (= d (^ x1 2))
-:prove (= d (^ (/ 1 3) 2))
