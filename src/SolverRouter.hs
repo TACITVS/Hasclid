@@ -37,6 +37,7 @@ import RationalElim (eliminateRational)
 import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
 import F4Lite (f4LiteGroebner, f4ReduceModular, reduceWithF4, reduceWithBasis)
+import qualified F5 (f5Solve)
 import Geometry.WLOG (applyWLOG, detectPoints, parsePointVar)
 import Geometry.Barycentric (applyBarycentric)
 import Heuristics
@@ -80,10 +81,10 @@ data SolverOptions = SolverOptions
   }
   deriving (Show, Eq)
 
-data GroebnerBackend = BuchbergerBackend | F4Backend deriving (Show, Eq)
+data GroebnerBackend = BuchbergerBackend | F4Backend | F5Backend deriving (Show, Eq)
 
 defaultSolverOptions :: SolverOptions
-defaultSolverOptions = SolverOptions defaultIntSolveOptions True SugarStrategy F4Backend True
+defaultSolverOptions = SolverOptions defaultIntSolveOptions True SugarStrategy F5Backend True
 
 selectGroebner :: ProblemProfile -> SolverOptions -> Formula -> [Poly] -> [Poly]
 selectGroebner profile opts _goal =
@@ -94,6 +95,7 @@ selectGroebner profile opts _goal =
   in case groebnerBackend opts of
        F4Backend -> f4LiteGroebner ord (selectionStrategyOpt opts) (f4UseBatch opts)
        BuchbergerBackend -> buchbergerWithStrategy ord (selectionStrategyOpt opts)
+       F5Backend -> \polys -> F5.f5Solve ord polys
 
 -- =============================================
 -- Main Automatic Solving Functions

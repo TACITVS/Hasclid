@@ -52,6 +52,7 @@ executable prover-int
         Validation
         ReplSupport
         F4Lite
+        F5
         Wu
         Geometry.WLOG
         Geometry.Barycentric
@@ -106,6 +107,7 @@ test-suite prover-test
         Validation
         ReplSupport
         F4Lite
+        F5
         Wu
         Geometry.WLOG
         Geometry.Barycentric
