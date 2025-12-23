@@ -1,0 +1,7 @@
+Preprocessing library for containers-0.6.8...
+Building library for containers-0.6.8...
+[ 1 of 37] Compiling Utils.Containers.Internal.BitUtil ( src\Utils\Containers\Internal\BitUtil.hs, dist\build\Utils\Containers\Internal\BitUtil.o )
+[ 2 of 37] Compiling Utils.Containers.Internal.BitQueue ( src\Utils\Containers\Internal\BitQueue.hs, dist\build\Utils\Containers\Internal\BitQueue.o )
+[ 3 of 37] Compiling Utils.Containers.Internal.Coercions ( src\Utils\Containers\Internal\Coercions.hs, dist\build\Utils\Containers\Internal\Coercions.o )
+[ 4 of 37] Compiling Utils.Containers.Internal.Prelude ( src\Utils\Containers\Internal\Prelude.hs, dist\build\Utils\Containers\Internal\Prelude.o )
+[ 5 of 37] Compiling Utils.Containers.Internal.PtrEquality ( src\Utils\Containers\Internal\PtrEquality.hs, dist\build\Utils\Containers\Internal\PtrEquality.o )

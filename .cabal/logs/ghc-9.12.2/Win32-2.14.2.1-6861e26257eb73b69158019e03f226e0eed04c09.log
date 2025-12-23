@@ -1,0 +1,220 @@
+Installing library in C:\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\incoming\new-14556\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\Win32-2.14.2.1-6861e26257eb73b69158019e03f226e0eed04c09\lib
+nsupported.o )
+System\Win32\Exception\Unsupported.hs:29:27: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the data declaration for ‘Unsupported’
+   |
+29 |                  deriving Typeable
+   |                           ^^^^^^^^
+
+[ 2 of 93] Compiling System.Win32.Types ( dist\build\System\Win32\Types.hs, dist\build\System\Win32\Types.o )
+[ 3 of 93] Compiling System.Win32.Time.Internal ( dist\build\System\Win32\Time\Internal.hs, dist\build\System\Win32\Time\Internal.o )
+[ 4 of 93] Compiling System.Win32.SymbolicLink.Internal ( dist\build\System\Win32\SymbolicLink\Internal.hs, dist\build\System\Win32\SymbolicLink\Internal.o )
+[ 5 of 93] Compiling System.Win32.String ( System\Win32\String.hs, dist\build\System\Win32\String.o )
+[ 6 of 93] Compiling System.Win32.Security ( dist\build\System\Win32\Security.hs, dist\build\System\Win32\Security.o )
+[ 7 of 93] Compiling System.Win32.Path.Internal ( dist\build\System\Win32\Path\Internal.hs, dist\build\System\Win32\Path\Internal.o )
+[ 8 of 93] Compiling System.Win32.Mem ( dist\build\System\Win32\Mem.hs, dist\build\System\Win32\Mem.o )
+[ 9 of 93] Compiling System.Win32.Info.Internal ( dist\build\System\Win32\Info\Internal.hs, dist\build\System\Win32\Info\Internal.o )
+[10 of 93] Compiling System.Win32.Info ( dist\build\System\Win32\Info.hs, dist\build\System\Win32\Info.o )
+[11 of 93] Compiling System.Win32.FileMapping.Internal ( dist\build\System\Win32\FileMapping\Internal.hs, dist\build\System\Win32\FileMapping\Internal.o )
+[12 of 93] Compiling System.Win32.DebugApi.Internal ( dist\build\System\Win32\DebugApi\Internal.hs, dist\build\System\Win32\DebugApi\Internal.o )
+[13 of 93] Compiling System.Win32.DebugApi ( dist\build\System\Win32\DebugApi.hs, dist\build\System\Win32\DebugApi.o )
+[14 of 93] Compiling System.Win32.Thread ( System\Win32\Thread.hs, dist\build\System\Win32\Thread.o )
+[15 of 93] Compiling System.Win32.DLL.Internal ( dist\build\System\Win32\DLL\Internal.hs, dist\build\System\Win32\DLL\Internal.o )
+[16 of 93] Compiling System.Win32.DLL ( dist\build\System\Win32\DLL.hs, dist\build\System\Win32\DLL.o )
+[17 of 93] Compiling Graphics.Win32.Resource ( dist\build\Graphics\Win32\Resource.hs, dist\build\Graphics\Win32\Resource.o )
+[18 of 93] Compiling Graphics.Win32.Message ( dist\build\Graphics\Win32\Message.hs, dist\build\Graphics\Win32\Message.o )
+[19 of 93] Compiling Graphics.Win32.GDI.Types ( dist\build\Graphics\Win32\GDI\Types.hs, dist\build\Graphics\Win32\GDI\Types.o )
+[20 of 93] Compiling System.Win32.SimpleMAPI ( dist\build\System\Win32\SimpleMAPI.hs, dist\build\System\Win32\SimpleMAPI.o )
+[21 of 93] Compiling System.Win32.Shell.Internal ( dist\build\System\Win32\Shell\Internal.hs, dist\build\System\Win32\Shell\Internal.o )
+[22 of 93] Compiling System.Win32.Shell ( dist\build\System\Win32\Shell.hs, dist\build\System\Win32\Shell.o )
+[23 of 93] Compiling System.Win32.Console.Internal ( dist\build\System\Win32\Console\Internal.hs, dist\build\System\Win32\Console\Internal.o )
+[24 of 93] Compiling Graphics.Win32.Window.PostMessage ( dist\build\Graphics\Win32\Window\PostMessage.hs, dist\build\Graphics\Win32\Window\PostMessage.o )
+[25 of 93] Compiling Graphics.Win32.Window.AnimateWindow ( dist\build\Graphics\Win32\Window\AnimateWindow.hs, dist\build\Graphics\Win32\Window\AnimateWindow.o )
+[26 of 93] Compiling Graphics.Win32.Window ( dist\build\Graphics\Win32\Window.hs, dist\build\Graphics\Win32\Window.o )
+[27 of 93] Compiling Graphics.Win32.Misc ( dist\build\Graphics\Win32\Misc.hs, dist\build\Graphics\Win32\Misc.o )
+[28 of 93] Compiling System.Win32.Console ( dist\build\System\Win32\Console.hs, dist\build\System\Win32\Console.o )
+[29 of 93] Compiling System.Win32.Console.CtrlHandler ( System\Win32\Console\CtrlHandler.hs, dist\build\System\Win32\Console\CtrlHandler.o )
+[30 of 93] Compiling Graphics.Win32.Menu ( dist\build\Graphics\Win32\Menu.hs, dist\build\Graphics\Win32\Menu.o )
+[31 of 93] Compiling Graphics.Win32.Key ( dist\build\Graphics\Win32\Key.hs, dist\build\Graphics\Win32\Key.o )
+[32 of 93] Compiling Graphics.Win32.Window.IMM ( dist\build\Graphics\Win32\Window\IMM.hs, dist\build\Graphics\Win32\Window\IMM.o )
+[33 of 93] Compiling Graphics.Win32.Icon ( Graphics\Win32\Icon.hs, dist\build\Graphics\Win32\Icon.o )
+[34 of 93] Compiling Graphics.Win32.GDI.Region ( Graphics\Win32\GDI\Region.hs, dist\build\Graphics\Win32\GDI\Region.o )
+[35 of 93] Compiling Graphics.Win32.GDI.Pen ( dist\build\Graphics\Win32\GDI\Pen.hs, dist\build\Graphics\Win32\GDI\Pen.o )
+[36 of 93] Compiling Graphics.Win32.GDI.Path ( Graphics\Win32\GDI\Path.hs, dist\build\Graphics\Win32\GDI\Path.o )
+[37 of 93] Compiling Graphics.Win32.GDI.Palette ( dist\build\Graphics\Win32\GDI\Palette.hs, dist\build\Graphics\Win32\GDI\Palette.o )
+[38 of 93] Compiling Graphics.Win32.GDI.HDC ( Graphics\Win32\GDI\HDC.hs, dist\build\Graphics\Win32\GDI\HDC.o )
+[39 of 93] Compiling Graphics.Win32.GDI.Graphics2D ( Graphics\Win32\GDI\Graphics2D.hs, dist\build\Graphics\Win32\GDI\Graphics2D.o )
+[40 of 93] Compiling Graphics.Win32.GDI.Font ( dist\build\Graphics\Win32\GDI\Font.hs, dist\build\Graphics\Win32\GDI\Font.o )
+[41 of 93] Compiling Graphics.Win32.GDI.Clip ( dist\build\Graphics\Win32\GDI\Clip.hs, dist\build\Graphics\Win32\GDI\Clip.o )
+[42 of 93] Compiling Graphics.Win32.GDI.Brush ( dist\build\Graphics\Win32\GDI\Brush.hs, dist\build\Graphics\Win32\GDI\Brush.o )
+[43 of 93] Compiling Graphics.Win32.GDI.Bitmap ( dist\build\Graphics\Win32\GDI\Bitmap.hs, dist\build\Graphics\Win32\GDI\Bitmap.o )
+[44 of 93] Compiling Graphics.Win32.GDI ( Graphics\Win32\GDI.hs, dist\build\Graphics\Win32\GDI.o )
+[45 of 93] Compiling Graphics.Win32.GDI.AlphaBlend ( dist\build\Graphics\Win32\GDI\AlphaBlend.hs, dist\build\Graphics\Win32\GDI\AlphaBlend.o )
+[46 of 93] Compiling Graphics.Win32.LayeredWindow ( dist\build\Graphics\Win32\LayeredWindow.hs, dist\build\Graphics\Win32\LayeredWindow.o )
+[47 of 93] Compiling Graphics.Win32.Control ( dist\build\Graphics\Win32\Control.hs, dist\build\Graphics\Win32\Control.o )
+[48 of 93] Compiling Graphics.Win32.Dialogue ( dist\build\Graphics\Win32\Dialogue.hs, dist\build\Graphics\Win32\Dialogue.o )
+[49 of 93] Compiling System.Win32.WindowsString.Types ( dist\build\System\Win32\WindowsString\Types.hs, dist\build\System\Win32\WindowsString\Types.o )
+System\Win32\WindowsString\Types.hsc:50:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Windows’ is deprecated:
+      "Use System.OsString.Posix from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+50 | import System.OsString.Windows (decodeWith, encodeWith)
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+System\Win32\WindowsString\Types.hsc:51:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Internal.Types’ is deprecated:
+      "Use System.OsString.Internal.Types from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+51 | import System.OsString.Internal.Types
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+System\Win32\WindowsString\Types.hsc:57:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsPath.Encoding.Internal’ is deprecated:
+      "Use System.OsString.Encoding.Internal from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+57 | import "filepath" System.OsPath.Encoding.Internal (decodeWithBaseWindows)
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+System\Win32\WindowsString\Types.hsc:58:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsPath.Data.ByteString.Short.Word16’ is deprecated:
+      "Use System.OsString.Data.ByteString.Short.Word16 from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+58 | import qualified "filepath" System.OsPath.Data.ByteString.Short.Word16 as SBS
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+System\Win32\WindowsString\Types.hsc:59:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsPath.Data.ByteString.Short.Word16’ is deprecated:
+      "Use System.OsString.Data.ByteString.Short.Word16 from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+59 | import "filepath" System.OsPath.Data.ByteString.Short.Word16 (
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...
+
+[50 of 93] Compiling System.Win32.WindowsString.String ( System\Win32\WindowsString\String.hs, dist\build\System\Win32\WindowsString\String.o )
+System\Win32\WindowsString\String.hs:32:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Internal.Types’ is deprecated:
+      "Use System.OsString.Internal.Types from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+32 | import System.OsString.Internal.Types
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+System\Win32\WindowsString\String.hs:36:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsPath.Data.ByteString.Short’ is deprecated:
+      "Use System.OsString.Data.ByteString.Short from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+36 | import qualified "filepath" System.OsPath.Data.ByteString.Short as SBS
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[51 of 93] Compiling System.Win32.WindowsString.Shell ( dist\build\System\Win32\WindowsString\Shell.hs, dist\build\System\Win32\WindowsString\Shell.o )
+System\Win32\WindowsString\Shell.hsc:31:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Windows’ is deprecated:
+      "Use System.OsString.Posix from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+31 | import System.OsString.Windows (WindowsString)
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[52 of 93] Compiling System.Win32.WindowsString.Info ( dist\build\System\Win32\WindowsString\Info.hs, dist\build\System\Win32\WindowsString\Info.o )
+[53 of 93] Compiling System.Win32.WindowsString.DebugApi ( dist\build\System\Win32\WindowsString\DebugApi.hs, dist\build\System\Win32\WindowsString\DebugApi.o )
+System\Win32\WindowsString\DebugApi.hsc:22:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Windows’ is deprecated:
+      "Use System.OsString.Posix from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+22 | import System.OsString.Windows
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[54 of 93] Compiling System.Win32.WindowsString.DLL ( dist\build\System\Win32\WindowsString\DLL.hs, dist\build\System\Win32\WindowsString\DLL.o )
+System\Win32\WindowsString\DLL.hsc:37:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Windows’ is deprecated:
+      "Use System.OsString.Posix from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+37 | import System.OsString.Windows
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[55 of 93] Compiling System.Win32.WindowsString.Console ( dist\build\System\Win32\WindowsString\Console.hs, dist\build\System\Win32\WindowsString\Console.o )
+System\Win32\WindowsString\Console.hsc:89:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsPath.Data.ByteString.Short.Word16’ is deprecated:
+      "Use System.OsString.Data.ByteString.Short.Word16 from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+89 | import qualified "filepath" System.OsPath.Data.ByteString.Short.Word16 as BC
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+dist\build\System\Win32\WindowsString\Console.hs:73:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Windows’ is deprecated:
+      "Use System.OsString.Posix from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+73 | import System.OsString.Windows
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+dist\build\System\Win32\WindowsString\Console.hs:74:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Internal.Types’ is deprecated:
+      "Use System.OsString.Internal.Types from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+74 | import System.OsString.Internal.Types
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[56 of 93] Compiling System.Win32.Word ( System\Win32\Word.hs, dist\build\System\Win32\Word.o )
+[57 of 93] Compiling System.Win32.Utils ( System\Win32\Utils.hs, dist\build\System\Win32\Utils.o )
+[58 of 93] Compiling System.Win32.WindowsString.Utils ( System\Win32\WindowsString\Utils.hs, dist\build\System\Win32\WindowsString\Utils.o )
+System\Win32\WindowsString\Utils.hs:32:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Windows’ is deprecated:
+      "Use System.OsString.Posix from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+32 | import System.OsString.Windows
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[59 of 93] Compiling System.Win32.Time ( dist\build\System\Win32\Time.hs, dist\build\System\Win32\Time.o )
+[60 of 93] Compiling System.Win32.WindowsString.Time ( dist\build\System\Win32\WindowsString\Time.hs, dist\build\System\Win32\WindowsString\Time.o )
+System\Win32\WindowsString\Time.hsc:32:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Windows’ is deprecated:
+      "Use System.OsString.Posix from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+32 | import System.OsString.Windows
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[61 of 93] Compiling System.Win32.File.Internal ( dist\build\System\Win32\File\Internal.hs, dist\build\System\Win32\File\Internal.o )
+[62 of 93] Compiling System.Win32.File ( dist\build\System\Win32\File.hs, dist\build\System\Win32\File.o )
+[63 of 93] Compiling System.Win32.WindowsString.File ( dist\build\System\Win32\WindowsString\File.hs, dist\build\System\Win32\WindowsString\File.o )
+System\Win32\WindowsString\File.hsc:69:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Windows’ is deprecated:
+      "Use System.OsString.Posix from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+69 | import System.OsString.Windows
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[64 of 93] Compiling System.Win32.WindowsString.SymbolicLink ( dist\build\System\Win32\WindowsString\SymbolicLink.hs, dist\build\System\Win32\WindowsString\SymbolicLink.o )
+[65 of 93] Compiling System.Win32.WindowsString.Path ( dist\build\System\Win32\WindowsString\Path.hs, dist\build\System\Win32\WindowsString\Path.o )
+[66 of 93] Compiling System.Win32.SymbolicLink ( dist\build\System\Win32\SymbolicLink.hs, dist\build\System\Win32\SymbolicLink.o )
+[67 of 93] Compiling System.Win32.Semaphore ( dist\build\System\Win32\Semaphore.hs, dist\build\System\Win32\Semaphore.o )
+[68 of 93] Compiling System.Win32.Registry ( dist\build\System\Win32\Registry.hs, dist\build\System\Win32\Registry.o )
+[69 of 93] Compiling System.Win32.Process ( dist\build\System\Win32\Process.hs, dist\build\System\Win32\Process.o )
+[70 of 93] Compiling Graphics.Win32.Window.ForegroundWindow ( Graphics\Win32\Window\ForegroundWindow.hs, dist\build\Graphics\Win32\Window\ForegroundWindow.o )
+[71 of 93] Compiling Graphics.Win32   ( Graphics\Win32.hs, dist\build\Graphics\Win32.o )
+[72 of 93] Compiling System.Win32.Path ( dist\build\System\Win32\Path.hs, dist\build\System\Win32\Path.o )
+[73 of 93] Compiling System.Win32.NamedPipes ( dist\build\System\Win32\NamedPipes.hs, dist\build\System\Win32\NamedPipes.o )
+[74 of 93] Compiling System.Win32.MinTTY ( dist\build\System\Win32\MinTTY.hs, dist\build\System\Win32\MinTTY.o )
+[75 of 93] Compiling System.Win32.HardLink.Internal ( System\Win32\HardLink\Internal.hs, dist\build\System\Win32\HardLink\Internal.o )
+[76 of 93] Compiling System.Win32.WindowsString.HardLink ( System\Win32\WindowsString\HardLink.hs, dist\build\System\Win32\WindowsString\HardLink.o )
+[77 of 93] Compiling System.Win32.HardLink ( System\Win32\HardLink.hs, dist\build\System\Win32\HardLink.o )
+[78 of 93] Compiling System.Win32.FileMapping ( dist\build\System\Win32\FileMapping.hs, dist\build\System\Win32\FileMapping.o )
+[79 of 93] Compiling System.Win32.WindowsString.FileMapping ( dist\build\System\Win32\WindowsString\FileMapping.hs, dist\build\System\Win32\WindowsString\FileMapping.o )
+System\Win32\WindowsString\FileMapping.hsc:33:1: warning: [GHC-15328] [-Wdeprecations]
+    Module ‘System.OsString.Windows’ is deprecated:
+      "Use System.OsString.Posix from os-string >= 2.0.0 package instead. This module will be removed in filepath >= 1.5."
+   |
+33 | import System.OsString.Windows
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[80 of 93] Compiling System.Win32.NLS ( dist\build\System\Win32\NLS.hs, dist\build\System\Win32\NLS.o )
+[81 of 93] Compiling System.Win32.Encoding ( System\Win32\Encoding.hs, dist\build\System\Win32\Encoding.o )
+[82 of 93] Compiling Media.Win32      ( Media\Win32.hs, dist\build\Media\Win32.o )
+[83 of 93] Compiling System.Win32.Info.Version ( dist\build\System\Win32\Info\Version.hs, dist\build\System\Win32\Info\Version.o )
+[84 of 93] Compiling Graphics.Win32.Window.HotKey ( dist\build\Graphics\Win32\Window\HotKey.hs, dist\build\Graphics\Win32\Window\HotKey.o )
+[85 of 93] Compiling System.Win32.Info.Computer ( dist\build\System\Win32\Info\Computer.hs, dist\build\System\Win32\Info\Computer.o )
+[86 of 93] Compiling System.Win32.Event ( dist\build\System\Win32\Event.hs, dist\build\System\Win32\Event.o )
+[87 of 93] Compiling System.Win32.Console.Title ( dist\build\System\Win32\Console\Title.hs, dist\build\System\Win32\Console\Title.o )
+[88 of 93] Compiling System.Win32.Console.HWND ( System\Win32\Console\HWND.hs, dist\build\System\Win32\Console\HWND.o )
+[89 of 93] Compiling System.Win32.Automation.Input.Mouse ( dist\build\System\Win32\Automation\Input\Mouse.hs, dist\build\System\Win32\Automation\Input\Mouse.o )
+[90 of 93] Compiling System.Win32.Automation.Input.Key ( dist\build\System\Win32\Automation\Input\Key.hs, dist\build\System\Win32\Automation\Input\Key.o )
+[91 of 93] Compiling System.Win32.Automation.Input ( dist\build\System\Win32\Automation\Input.hs, dist\build\System\Win32\Automation\Input.o )
+[92 of 93] Compiling System.Win32.Automation ( System\Win32\Automation.hs, dist\build\System\Win32\Automation.o )
+[93 of 93] Compiling System.Win32     ( System\Win32.hs, dist\build\System\Win32.o )

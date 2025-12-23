@@ -1,179 +1,498 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Positivity.SDP
   ( checkSOS_SDP
+  , checkSOS_Constrained
+  , solveSDP
+  , SDPResult(..)
   ) where
 
+import Expr (Poly(..), Monomial(..), getVars)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import Data.List (nub, sort, sortBy, transpose, foldl')
-import Data.Ord (comparing)
-import Data.Ratio (denominator)
+import Data.Number.BigFloat
 import Data.Array.IO
-import Data.Array.MArray -- Need MArray interface
-import Control.Monad (forM_, foldM, when)
-import Control.Monad.ST
+import Data.List (foldl')
+import Control.Monad (forM, forM_, when, foldM)
 import System.IO.Unsafe (unsafePerformIO)
-import Control.Exception (try, evaluate)
-import Expr (Monomial(..), Poly(..), monomialMul, getVars, polyFromVar, polyMul, polyAdd)
+import Data.Maybe (fromMaybe, isJust)
 
--- ============================================================================
--- Burer-Monteiro SDP Solver (Low-Rank Factorization)
--- Solves: Find L such that sum (Tr(A_k L L^T) - b_k)^2 is minimized.
--- Returns: Just [L_col1, L_col2, ...] (coefficients of squares) or Nothing.
--- ============================================================================
+-- =============================================
+-- 1. Numeric Types & Linear Algebra
+-- =============================================
+
+type Scalar = BigFloat Prec50
+type Matrix = IOArray (Int, Int) Scalar
+type Vector = IOArray Int Scalar
+
+epsilon :: Scalar
+epsilon = 1e-20
+
+-- | Create new matrix initialized to 0
+newMatrix :: Int -> Int -> IO Matrix
+newMatrix r c = newArray ((0,0), (r-1, c-1)) 0
+
+-- | Create identity matrix
+identityMatrix :: Int -> IO Matrix
+identityMatrix n = do
+  mat <- newMatrix n n
+  forM_ [0..n-1] $ \i -> writeArray mat (i,i) 1
+  return mat
+
+-- | Create new vector initialized to 0
+newVector :: Int -> IO Vector
+newVector n = newArray (0, n-1) 0
+
+-- | Matrix multiplication C = A * B
+matMul :: Matrix -> Matrix -> IO Matrix
+matMul a b = do
+  ((r0, c0), (r1, c1)) <- getBounds a
+  ((r0', c0'), (r1', c1')) <- getBounds b
+  let rowsA = r1 - r0 + 1
+      colsA = c1 - c0 + 1
+      rowsB = r1' - r0' + 1
+      colsB = c1' - c0' + 1
+  
+  if colsA /= rowsB 
+    then error $ "Matrix dimension mismatch: " ++ show (colsA, rowsB)
+    else do
+      c <- newMatrix rowsA colsB
+      forM_ [0..rowsA-1] $ \i ->
+        forM_ [0..colsB-1] $ \j -> do
+          let loop k acc | k >= colsA = return acc
+                         | otherwise = do
+                             v1 <- readArray a (i, k)
+                             v2 <- readArray b (k, j)
+                             loop (k+1) (acc + v1 * v2)
+          sumVal <- loop 0 0
+          writeArray c (i, j) sumVal
+      return c
+
+-- | Matrix addition
+matAdd :: Matrix -> Matrix -> IO Matrix
+matAdd a b = do
+  bnds <- getBounds a
+  c <- newArray bnds 0
+  let range = getRange bnds
+  forM_ range $ \idx -> do
+    v1 <- readArray a idx
+    v2 <- readArray b idx
+    writeArray c idx (v1 + v2)
+  return c
+
+-- | Matrix subtraction
+matSub :: Matrix -> Matrix -> IO Matrix
+matSub a b = do
+  bnds <- getBounds a
+  c <- newArray bnds 0
+  let range = getRange bnds
+  forM_ range $ \idx -> do
+    v1 <- readArray a idx
+    v2 <- readArray b idx
+    writeArray c idx (v1 - v2)
+  return c
+
+-- | Scalar multiplication
+matScale :: Scalar -> Matrix -> IO Matrix
+matScale s a = do
+  bnds <- getBounds a
+  c <- newArray bnds 0
+  let range = getRange bnds
+  forM_ range $ \idx -> do
+    v <- readArray a idx
+    writeArray c idx (s * v)
+  return c
+
+-- | Trace of product Tr(A^T B) = sum(A_ij * B_ij)
+matDot :: Matrix -> Matrix -> IO Scalar
+matDot a b = do
+  bnds <- getBounds a
+  let range = getRange bnds
+  let loop [] acc = return acc
+      loop (idx:idxs) acc = do
+        v1 <- readArray a idx
+        v2 <- readArray b idx
+        loop idxs (acc + v1 * v2)
+  loop range 0
+
+-- | Transpose
+transpose :: Matrix -> IO Matrix
+transpose a = do
+  ((r0, c0), (r1, c1)) <- getBounds a
+  let rows = r1 - r0 + 1
+      cols = c1 - c0 + 1
+  b <- newMatrix cols rows
+  forM_ [0..rows-1] $ \i ->
+    forM_ [0..cols-1] $ \j -> do
+      v <- readArray a (i, j)
+      writeArray b (j, i) v
+  return b
+
+-- | Cholesky Decomposition L L^T = A
+cholesky :: Matrix -> IO (Maybe Matrix)
+cholesky a = do
+  ((0,0), (nMinus1, _)) <- getBounds a
+  let n = nMinus1 + 1
+  l <- newMatrix n n
+  
+  let iter i | i == n = return (Just l)
+             | otherwise = do
+                 let colLoop j | j == i = do
+                                 let sumLoop k acc | k >= i = return acc
+                                                   | otherwise = do
+                                                       lik <- readArray l (i, k)
+                                                       sumLoop (k+1) (acc + lik*lik)
+                                 sumSq <- sumLoop 0 0
+                                 aii <- readArray a (i, i)
+                                 let val = aii - sumSq
+                                 if val <= 0 
+                                   then return False
+                                   else do
+                                     writeArray l (i, i) (sqrt val)
+                                     return True
+                                     
+                               | otherwise = do
+                                 let sumLoop k acc | k >= j = return acc
+                                                   | otherwise = do
+                                                       lik <- readArray l (i, k)
+                                                       ljk <- readArray l (j, k)
+                                                       sumLoop (k+1) (acc + lik*ljk)
+                                 sumVal <- sumLoop 0 0
+                                 aij <- readArray a (i, j)
+                                 ljj <- readArray l (j, j)
+                                 if ljj == 0 then return False else do
+                                     writeArray l (i, j) ((aij - sumVal) / ljj)
+                                     colLoop (j+1)
+                 
+                 success <- colLoop 0
+                 if success then iter (i+1) else return Nothing
+
+  iter 0
+
+-- | Forward substitution Lx = b
+forwardSub :: Matrix -> Vector -> IO Vector
+forwardSub l b = do
+  (_, (nMinus1, _)) <- getBounds l
+  let n = nMinus1 + 1
+  x <- newVector n
+  
+  forM_ [0..n-1] $ \i -> do
+    bi <- readArray b i
+    let sumLoop k acc | k >= i = return acc
+                      | otherwise = do
+                          lik <- readArray l (i, k)
+                          xk <- readArray x k
+                          sumLoop (k+1) (acc + lik * xk)
+    sumVal <- sumLoop 0 0
+    lii <- readArray l (i, i)
+    writeArray x i ((bi - sumVal) / lii)
+  return x
+
+-- | Backward substitution L^T x = b
+backwardSub :: Matrix -> Vector -> IO Vector
+backwardSub l b = do
+  (_, (nMinus1, _)) <- getBounds l
+  let n = nMinus1 + 1
+  x <- newVector n
+  
+  let loop i | i < 0 = return ()
+             | otherwise = do
+                 bi <- readArray b i
+                 let sumLoop k acc | k >= n = return acc
+                                   | otherwise = do
+                                       lki <- readArray l (k, i)
+                                       xk <- readArray x k
+                                       sumLoop (k+1) (acc + lki * xk)
+                 sumVal <- sumLoop (i+1) 0
+                 lii <- readArray l (i, i)
+                 writeArray x i ((bi - sumVal) / lii)
+                 loop (i-1)
+  loop (n-1)
+  return x
+
+-- | Solve Ax = b given Cholesky L (A = LL^T)
+solveCholesky :: Matrix -> Vector -> IO Vector
+solveCholesky l b = do
+  y <- forwardSub l b
+  backwardSub l y
+
+-- | Invert Matrix using Cholesky
+invertCholesky :: Matrix -> IO Matrix
+invertCholesky l = do
+  ((0,0), (nMinus1, _)) <- getBounds l
+  let n = nMinus1 + 1
+  res <- newMatrix n n
+  forM_ [0..n-1] $ \j -> do
+    b <- newVector n
+    writeArray b j 1 -- e_j
+    col <- solveCholesky l b
+    forM_ [0..n-1] $ \i -> do
+      val <- readArray col i
+      writeArray res (i, j) val
+  return res
+
+-- Helpers for ranges
+getRange :: ((Int, Int), (Int, Int)) -> [ (Int, Int) ]
+getRange ((r0, c0), (r1, c1)) = [ (i, j) | i <- [r0..r1], j <- [c0..c1] ]
+
+-- =============================================
+-- 2. SDP Solver (Primal-Dual)
+-- =============================================
+
+data SDPResult = SDPFeasible Matrix | SDPInfeasible | SDPError String
+
+solveSDP :: [[Matrix]] -> Vector -> [Matrix] -> Int -> IO SDPResult
+solveSDP constraints b cList maxIter = do
+  let numBlocks = length cList
+  dims <- mapM (\m -> do ((0,0),(r,_)) <- getBounds m; return (r+1)) cList
+  let m = length constraints
+  
+  x <- mapM identityMatrix dims
+  s <- mapM identityMatrix dims
+  y <- newVector m
+  
+  let loop iter = do
+        if iter > maxIter 
+          then return (SDPError "Max iterations reached")
+          else do
+            rp <- newVector m
+            forM_ [0..m-1] $ \i -> do
+               bi <- readArray b i
+               trAX <- foldM (\acc k -> do
+                                d <- matDot ((constraints !! i) !! k) (x !! k)
+                                return (acc + d)
+                             ) 0 [0..numBlocks-1]
+               writeArray rp i (bi - trAX)
+            
+            rd <- forM [0..numBlocks-1] $ \k -> do
+                    sumAy <- newMatrix (dims!!k) (dims!!k)
+                    forM_ [0..m-1] $ \i -> do
+                      yi <- readArray y i
+                      scaledA <- matScale yi ((constraints !! i) !! k)
+                      bnds <- getBounds sumAy
+                      let range = getRange bnds
+                      forM_ range $ \idx -> do
+                         v <- readArray sumAy idx
+                         av <- readArray scaledA idx
+                         writeArray sumAy idx (v + av)
+                    
+                    tmp1 <- matSub (cList !! k) (s !! k)
+                    matSub tmp1 sumAy
+            
+            trXS <- foldM (\acc k -> do
+                             d <- matDot (x !! k) (s !! k)
+                             return (acc + d)
+                          ) 0 [0..numBlocks-1]
+            let nTotal = sum dims
+                mu = trXS / fromIntegral nTotal
+            
+            normRp <- foldM (\acc i -> do v <- readArray rp i; return (acc + abs v)) 0 [0..m-1]
+            normRd <- foldM (\acc k -> do
+                               bnds <- getBounds (rd !! k)
+                               let range = getRange bnds
+                               sumAbs <- foldM (\a idx -> do v <- readArray (rd !! k) idx; return (a + abs v)) 0 range
+                               return (acc + sumAbs)
+                            ) 0 [0..numBlocks-1]
+            
+            if mu < epsilon && normRp < epsilon && normRd < epsilon 
+              then return (SDPFeasible (head x))
+              else do
+                invS_res <- mapM cholesky s
+                if any isNothing invS_res
+                  then return (SDPError "S not PD")
+                  else do
+                    let invS = map fromJust invS_res
+                    
+                    matM <- newMatrix m m
+                    forM_ [0..m-1] $ \i ->
+                      forM_ [0..m-1] $ \j -> do
+                        val <- foldM (\acc k -> do
+                                   tmp1 <- matMul (x !! k) ((constraints !! j) !! k)
+                                   z <- matMul tmp1 (invS !! k)
+                                   d <- matDot ((constraints !! i) !! k) z
+                                   return (acc + d)
+                                 ) 0 [0..numBlocks-1]
+                        writeArray matM (i, j) val
+                    
+                    rXS <- forM [0..numBlocks-1] $ \k -> do
+                             prod <- matMul (x !! k) (s !! k)
+                             idM <- identityMatrix (dims!!k)
+                             scaledId <- matScale (0.1 * mu) idM
+                             matSub scaledId prod
+                    
+                    rhsVec <- newVector m
+                    forM_ [0..m-1] $ \i -> do
+                       rpi <- readArray rp i
+                       sumTerm <- foldM (\acc k -> do
+                                      tmp1 <- matMul (x !! k) (rd !! k)
+                                      tmp2 <- matSub (rXS !! k) tmp1
+                                      term <- matMul tmp2 (invS !! k)
+                                      d <- matDot ((constraints !! i) !! k) term
+                                      return (acc + d)
+                                    ) 0 [0..numBlocks-1]
+                       writeArray rhsVec i (rpi - sumTerm)
+                    
+                    cholM <- cholesky matM
+                    case cholM of
+                      Nothing -> return (SDPError "Schur Complement Singular")
+                      Just lM -> do
+                        dy <- solveCholesky lM rhsVec
+                        
+                        ds <- forM [0..numBlocks-1] $ \k -> do
+                                sumAdy <- newMatrix (dims!!k) (dims!!k)
+                                forM_ [0..m-1] $ \i -> do
+                                  dyi <- readArray dy i
+                                  scaled <- matScale dyi ((constraints !! i) !! k)
+                                  bnds <- getBounds sumAdy
+                                  forM_ (getRange bnds) $ \idx -> do
+                                    v <- readArray sumAdy idx
+                                    av <- readArray scaled idx
+                                    writeArray sumAdy idx (v + av)
+                                matSub (rd !! k) sumAdy
+                        
+                        dx <- forM [0..numBlocks-1] $ \k -> do
+                                tmp1 <- matMul (x !! k) (ds !! k)
+                                tmp2 <- matSub (rXS !! k) tmp1
+                                matMul tmp2 (invS !! k)
+                        
+                        dxSym <- mapM symmetrize dx
+                        dsSym <- mapM symmetrize ds
+                        
+                        let findAlpha d curr = do
+                              let tryStep a | a < 1e-10 = return 0
+                                            | otherwise = do
+                                                ok <- checkPos a d curr
+                                                if ok then return a else tryStep (a * 0.5)
+                              tryStep 1.0
+                            
+                            checkPos a d curr = do
+                                scaled <- matScale a d
+                                cand <- matAdd curr scaled
+                                res <- cholesky cand
+                                return (isJust res)
+                        
+                        alphaP <- foldM (\acc (d, c) -> do a <- findAlpha d c; return (min acc a)) 1.0 (zip dxSym x)
+                        alphaD <- foldM (\acc (d, c) -> do a <- findAlpha d c; return (min acc a)) 1.0 (zip dsSym s)
+                        let alpha = min alphaP alphaD * 0.95
+                        
+                        xNew <- zipWithM (\c d -> do s <- matScale alpha d; matAdd c s) x dxSym
+                        sNew <- zipWithM (\c d -> do s <- matScale alpha d; matAdd c s) s dsSym
+                        yNew <- do
+                           newY <- newVector m
+                           forM_ [0..m-1] $ \i -> do
+                             yi <- readArray y i
+                             dyi <- readArray dy i
+                             writeArray newY i (yi + alpha * dyi)
+                           return newY
+                        
+                        loop (iter + 1)
+  
+  loop 0
+
+  where
+    isNothing Nothing = True
+    isNothing _ = False
+    fromJust (Just x) = x
+    
+    zipWithM f xs ys = sequence (zipWith f xs ys)
+    
+    symmetrize m = do
+      t <- transpose m
+      s <- matAdd m t
+      matScale 0.5 s
+
+-- =============================================
+-- 3. SOS Construction
+-- =============================================
 
 checkSOS_SDP :: Poly -> Bool
-checkSOS_SDP p = unsafePerformIO $ do
-  let 
-      vars = S.toList (getVars p)
-      deg = polyDegree p
-      halfDeg = (deg + 1) `div` 2
-      basis = generateBasis vars halfDeg
-      n = length basis
-      
-      targetCoeffs = case p of Poly m -> m
-      constraintMap = M.fromListWith (++) 
-        [ (monomialMul (basis !! i) (basis !! j), [(i,j)]) 
-        | i <- [0..n-1], j <- [0..n-1] 
-        ]
-      
-      maxMag = foldl' (\acc (_, val) -> max acc (abs (safeFromRational val))) 0.0 (M.toList targetCoeffs)
-      scale = if maxMag == 0 then 1.0 else 1.0 / maxMag
+checkSOS_SDP p = checkSOS_Constrained p []
 
-      constraints = 
-        [ (val * (doubleToRational scale), indices)
-        | (m_k, val) <- M.toList targetCoeffs
-        , let indices = M.findWithDefault [] m_k constraintMap
-        ]
-        
-      unmatched = any (\(_, idxs) -> null idxs) constraints
+checkSOS_Constrained :: Poly -> [Poly] -> Bool
+checkSOS_Constrained p gList = unsafePerformIO $ do
+  let vars = S.toList $ S.unions (getVars p : map getVars gList)
+      degP = polyDegree p
+      degGs = map polyDegree gList
+      maxDeg = maximum (degP : map (+0) degGs)
+      halfD = (maxDeg + 1) `div` 2
       
-  if unmatched || n > 60 then return False
-  else do
-      -- Solve for L (n x n, full rank approximation)
-      -- We use a dense array for L
-      maybeL <- _solveBM n constraints
-      return (maybeL)
+      genMons :: [String] -> Int -> [Monomial]
+      genMons _ 0 = [Monomial M.empty]
+      genMons [] _ = []
+      genMons (v:vs) k = 
+        [ Monomial (M.insert v (fromIntegral i) m) | i <- [0..k], mon <- genMons vs (k-i), let Monomial m = mon ]
 
--- | Burer-Monteiro Solver
--- Returns True if converged to valid decomposition
-_solveBM :: Int -> [(Rational, [(Int, Int)])] -> IO Bool
-_solveBM n constrs = do
-  -- L is n x n lower triangular (or full for simplicity)
-  -- Initialize L = Identity * small factor
-  lMat <- newArray ((0,0), (n-1,n-1)) 0.0 :: IO (IOUArray (Int,Int) Double)
-  forM_ [0..n-1] $ \i -> writeArray lMat (i,i) 0.1 -- Initial guess
+      basis0 = genMons vars halfD
+      basesG = [ genMons vars (halfD - (d + 1) `div` 2) | d <- degGs ]
+      
+      bases = basis0 : basesG
+      dims = map length bases
+      numBlocks = length dims
+      
+      termMap = genTermMap basis0 basesG gList
+      
+      Poly targetMap = p
+      allMons = S.toList $ S.fromList (M.keys termMap ++ M.keys targetMap)
+      
+      m = length allMons
+      
+  constraints <- forM allMons $ \mon -> do
+     buildConstraintRow mon termMap dims
   
-  -- Pre-convert constraints to Double for speed
-  let fastConstrs = [ (safeFromRational val, idxs) | (val, idxs) <- constrs ]
+  bVector <- newVector m
+  forM_ (zip [0..] allMons) $ \(i, mon) -> do
+     let val = fromRational (M.findWithDefault 0 mon targetMap)
+     writeArray bVector i val
   
-  -- Gradient Descent Loop
-  let lr = 0.001 -- Learning rate
-      maxIter = 2000
+  cMatrixZero <- mapM (\d -> newMatrix d d) dims
   
-  finalErr <- _optimizeLoop 0 maxIter lr n lMat fastConstrs
-  return (finalErr < 1e-4)
+  res <- solveSDP constraints bVector cMatrixZero 100
+  case res of
+    SDPFeasible _ -> return True
+    _ -> return False
 
-_optimizeLoop :: Int -> Int -> Double -> Int -> IOUArray (Int,Int) Double -> [(Double, [(Int,Int)])] -> IO Double
-_optimizeLoop iter maxIter lr n lMat constrs
-  | iter >= maxIter = _computeTotalError n lMat constrs
-  | otherwise = do
-      -- Compute Gradient: G = 4 * sum (error_k * A_k * L)
-      -- A_k is sparse (indices). A_k * L adds rows of L.
-      -- grad[u,v] = sum_k 4 * err_k * sum_{(i,j) in A_k} (delta_iu L_jv + delta_ju L_iv)
+genTermMap :: [Monomial] -> [[Monomial]] -> [Poly] -> M.Map Monomial [(Int, Int, Int, Rational)]
+genTermMap basis0 basesG gList = 
+  let k0 = [ (mon, [(0, i, j, 1)])
+           | (i, b1) <- zip [0..] basis0
+           , (j, b2) <- zip [0..] basis0
+           , j >= i
+           , let mon = monomialMul b1 b2
+           ]
       
-      -- 1. Compute Errors e_k = Tr(A_k X) - b_k
-      -- X = L L^T. X_ij = sum_r L_ir L_jr
-      errors <- mapM (computeError n lMat) constrs
-      
-      let totalErr = sum (map abs errors)
-      if totalErr < 1e-5 then return totalErr -- Converged
-      else do
-        -- 2. Update L <- L - lr * Gradient
-        -- We process constraints one by one to update L
-        -- To be efficient, we accumulate updates or update in place?
-        -- Stochastic GD: Update after each constraint? No, full batch.
-        
-        -- Accumulate gradient
-        grad <- newArray ((0,0), (n-1,n-1)) 0.0 :: IO (IOUArray (Int,Int) Double)
-        
-        forM_ (zip errors constrs) $ \(err, (_, idxs)) -> do
-           let factor = 4.0 * err
-           forM_ idxs $ \(i,j) -> do
-             -- Contribution from A_k element (i,j)
-             -- A_k has 1 at (i,j).
-             -- Grad_L += A_k L + A_k^T L (since symmetric A)
-             -- If i==j, coeff is 1. If i!=j, coeff is 1 for (i,j) and 1 for (j,i) effectively?
-             -- Our indices [(i,j)] represent the sum.
-             -- If monomial x*y comes from x*y and y*x, we might have both or one?
-             -- generateBasis/constraintMap generates ALL pairs i,j.
-             -- So we just treat (i,j) as an entry 1 in A_k.
-             -- Term in trace is L_i. * L_j.
-             -- Derivative w.r.t L_uv:
-             -- d/dL_uv (sum_r L_ir L_jr) = delta_iu L_jv + delta_ju L_iv
-             
-             -- Update row u=i: add factor * row j
-             _addRowScaled n grad i j factor lMat
-             -- Update row u=j: add factor * row i (if i!=j)
-             when (i /= j) $ _addRowScaled n grad j i factor lMat
+      kRest = concat 
+              [ [ (mon, [(k, i, j, c)])
+                | (i, b1) <- zip [0..] bk
+                , (j, b2) <- zip [0..] bk
+                , j >= i
+                , let baseProd = monomialMul b1 b2
+                , (gm, c) <- M.toList (let Poly m = gk in m)
+                , let mon = monomialMul baseProd gm
+                ]
+              | (k, bk, gk) <- zip3 [1..] basesG gList
+              ]
+  in M.fromListWith (++) (k0 ++ kRest)
 
-        -- Apply Gradient
-        forM_ [0..n-1] $ \i ->
-          forM_ [0..n-1] $ \j -> do
-            g <- readArray grad (i,j)
-            lVal <- readArray lMat (i,j)
-            writeArray lMat (i,j) (lVal - lr * g)
-            
-        _optimizeLoop (iter+1) maxIter lr n lMat constrs
+buildConstraintRow :: Monomial -> M.Map Monomial [(Int, Int, Int, Rational)] -> [Int] -> IO [Matrix]
+buildConstraintRow m termMap dims = do
+  let contributions = M.findWithDefault [] m termMap
+  forM [0..length dims - 1] $ \k -> do
+     let dim = dims !! k
+         kContribs = filter (\(bk,_,_,_) -> bk == k) contributions
+     mat <- newMatrix dim dim
+     forM_ kContribs $ \(_, i, j, c) -> do
+        let cVal = fromRational c
+        v1 <- readArray mat (i, j)
+        writeArray mat (i, j) (v1 + cVal)
+        if i /= j then do
+           v2 <- readArray mat (j, i)
+           writeArray mat (j, i) (v2 + cVal)
+        else return ()
+     return mat
 
-_addRowScaled :: Int -> IOUArray (Int,Int) Double -> Int -> Int -> Double -> IOUArray (Int,Int) Double -> IO ()
-_addRowScaled n targetMat targetRow srcRow scale sourceMat = do
-  forM_ [0..n-1] $ \col -> do
-    srcVal <- readArray sourceMat (srcRow, col)
-    curr <- readArray targetMat (targetRow, col)
-    writeArray targetMat (targetRow, col) (curr + scale * srcVal)
-
-computeError :: Int -> IOUArray (Int,Int) Double -> (Double, [(Int,Int)]) -> IO Double
-computeError n lMat (b_k, idxs) = do
-  -- Tr(A_k L L^T) = sum_{(i,j) in A_k} (L L^T)_ij
-  -- (L L^T)_ij = dot(row i, row j)
-  val <- foldM (\acc (i,j) -> do
-                   dot <- _rowDot n lMat i j
-                   return (acc + dot)
-               ) 0.0 idxs
-  return (val - b_k)
-
-_rowDot :: Int -> IOUArray (Int,Int) Double -> Int -> Int -> IO Double
-_rowDot n lMat i j = do
-  -- Optimization: L is dense.
-  let go k acc | k >= n = return acc
-               | otherwise = do
-                   v1 <- readArray lMat (i,k)
-                   v2 <- readArray lMat (j,k)
-                   go (k+1) (acc + v1*v2)
-  go 0 0.0
-
-_computeTotalError :: Int -> IOUArray (Int,Int) Double -> [(Double, [(Int,Int)])] -> IO Double
-_computeTotalError n lMat constrs = do
-  errs <- mapM (computeError n lMat) constrs
-  return (sum (map abs errs))
-
--- Helpers
-safeFromRational :: Rational -> Double
-safeFromRational r = if d == 0 then 0.0 else fromRational r
-  where d = denominator r
-
-doubleToRational :: Double -> Rational
-doubleToRational x = toRational (round (x * 1e10) :: Integer) / 1e10
-
-generateBasis :: [String] -> Int -> [Monomial]
-generateBasis vars d =
-  let go 0 _ = [Monomial M.empty]
-      go _ [] = [Monomial M.empty]
-      go k (v:vs) = [ monomialMul (Monomial (M.singleton v (fromIntegral p))) rest | p <- [0..k], rest <- go (k-p) vs ]
-  in sort $ go d vars
+monomialMul :: Monomial -> Monomial -> Monomial
+monomialMul (Monomial m1) (Monomial m2) = Monomial (M.unionWith (+) m1 m2)
 
 polyDegree :: Poly -> Int
-polyDegree (Poly m) = fromIntegral $ maximum (0 : map (\(Monomial vm, _) -> sum (M.elems vm)) (M.toList m))
+polyDegree (Poly m) = if M.null m then 0 else fromIntegral $ maximum [ sum (M.elems v) | (Monomial v, _) <- M.toList m ]

@@ -1,0 +1,4 @@
+Installing library in C:\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\incoming\new-14556\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\random-1.2.1.3-e445a4c1c0f760ac224853bf42980d2de9d29155\lib
+stem.Random.Internal ( src\System\Random\Internal.hs, dist\build\System\Random\Internal.o )
+[3 of 4] Compiling System.Random    ( src\System\Random.hs, dist\build\System\Random.o )
+[4 of 4] Compiling System.Random.Stateful ( src\System\Random\Stateful.hs, dist\build\System\Random\Stateful.o )

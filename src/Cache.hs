@@ -101,13 +101,12 @@ normalizeKey = sort
 formatCacheStats :: CacheStats -> String
 formatCacheStats s =
   let total = hits s + misses s
-      hitRate = if total == 0
-                then 0.0
-                else (fromIntegral (hits s) / fromIntegral total * 100.0) :: Double
+      hitRate = if total > 0 then fromIntegral (hits s) / fromIntegral total * 100.0 else 0.0 :: Double
   in unlines
        [ "=== Cache Statistics ==="
        , "Total lookups:  " ++ show total
-       , "Cache hits:     " ++ show (hits s) ++ " (" ++ show (round hitRate :: Int) ++ "%)"
+       , "Hit rate:       " ++ show hitRate ++ "%"
+       , "Cache hits:     " ++ show (hits s)
        , "Cache misses:   " ++ show (misses s)
        , "Insertions:     " ++ show (inserts s)
        , "Cache clears:   " ++ show (clears s)

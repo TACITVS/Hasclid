@@ -1,0 +1,7 @@
+Preprocessing library for haskell-lexer-1.2.1...
+Building library for haskell-lexer-1.2.1...
+[1 of 6] Compiling Language.Haskell.Lexer.Position ( Language\Haskell\Lexer\Position.hs, dist\build\Language\Haskell\Lexer\Position.o )
+[2 of 6] Compiling Language.Haskell.Lexer.Tokens ( Language\Haskell\Lexer\Tokens.hs, dist\build\Language\Haskell\Lexer\Tokens.o )
+[3 of 6] Compiling Language.Haskell.Lexer.Layout ( Language\Haskell\Lexer\Layout.hs, dist\build\Language\Haskell\Lexer\Layout.o )
+[4 of 6] Compiling Language.Haskell.Lexer.Utils ( Language\Haskell\Lexer\Utils.hs, dist\build\Language\Haskell\Lexer\Utils.o )
+[5 of 6] Compiling Language.Haskell.Lexer.Lex ( Language\Haskell\Lexer\Lex.hs, dist\build\Language\Haskell\Lexer\Lex.o )

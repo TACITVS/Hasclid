@@ -29,3 +29,11 @@ tmp_prover_cmds.txt
 tmp_prover_out.txt
 nul
 test_div_detection.hs
+
+# Test results and temporary files
+ono_*_results*.txt
+TestPrecision*
+TestSDP*
+*.log
+*.exe
+

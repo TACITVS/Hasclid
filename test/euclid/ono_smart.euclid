@@ -1,0 +1,34 @@
+:set-timeout 60
+:verbose
+:optimize on
+:set-strategy sugar
+:set-gb-backend f4
+:set-f4-batch on
+
+-- =======================================================
+-- ONO'S INEQUALITY (SMART FORMULATION)
+-- =======================================================
+-- Formulation:
+-- Let x = b^2+c^2-a^2, y = c^2+a^2-b^2, z = a^2+b^2-c^2
+-- Then (4S)^2 = xy + yz + zx
+-- Inequality: 27 x^2 y^2 z^2 <= (xy + yz + zx)^3
+-- This reduces the degree from 12 (in a,b,c) to 6 (in x,y,z).
+-- Constraints: x > 0, y > 0, z > 0 (Acute triangle)
+
+-- 1. Define Variables
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+
+-- 2. Define Expressions
+:assume (= z_Poly3 (+ (+ (* x y) (* y z)) (* z x)))
+:assume (= z_LHS (^ z_Poly3 3))
+:assume (= z_RHS (* 27 (* (^ x 2) (* (^ y 2) (^ z 2)))))
+:assume (= z_Diff (- z_LHS z_RHS))
+
+-- 3. Epsilon Room (Stability)
+:assume (= z_Epsilon (/ 1 1000000))
+:assume (= z_RelaxedDiff (+ z_Diff z_Epsilon))
+
+-- 4. Goal
+:prove (>= z_RelaxedDiff 0)

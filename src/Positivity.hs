@@ -11,6 +11,7 @@ import Expr
 import Sturm (countRealRoots, isolateRoots)
 import qualified Data.Map.Strict as M
 import Data.List (nub)
+import Positivity.SDP (checkSOS_SDP)
 
 -- =============================================
 -- Positivity Result Types
@@ -22,6 +23,7 @@ data PositivityMethod
   | RootIsolation       -- Exact (univariate with bounds)
   | TrivialSOS          -- Exact (x² + y² type)
   | AdvancedSOS         -- Heuristic (more complex SOS)
+  | SDPSolver           -- Numeric SDP (Sum of Squares)
   | IntervalArithmetic  -- Sound approximation
   | SamplingHeuristic   -- Unsound (with warning)
   deriving (Eq, Show)
@@ -55,9 +57,21 @@ checkPositivityEnhanced p allowZero =
         Just result -> result
         Nothing -> case tryAdvancedSOS p of
           Just result -> result
-          Nothing -> case tryIntervalArithmetic p allowZero of
+          Nothing -> case trySDP p of
             Just result -> result
-            Nothing -> trySamplingHeuristic p allowZero
+            Nothing -> case tryIntervalArithmetic p allowZero of
+              Just result -> result
+              Nothing -> trySamplingHeuristic p allowZero
+
+-- =============================================
+-- Method 4.5: SDP Sum of Squares
+-- =============================================
+
+trySDP :: Poly -> Maybe PositivityResult
+trySDP p = 
+  if checkSOS_SDP p
+  then Just $ PositivityResult True Proven SDPSolver "Verified Sum-of-Squares via Numeric SDP"
+  else Nothing
 
 -- =============================================
 -- Method 1: Univariate with Sturm & Root Isolation

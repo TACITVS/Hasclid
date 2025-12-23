@@ -24,6 +24,11 @@ import Expr
 import CAD (completeProjection, mcCallumProjection)
 import Sturm (isolateRoots)
 import Timeout
+import Debug.Trace (trace)
+import GHC.Stack (HasCallStack, renderStack, callStack)
+import qualified Control.Exception as CE
+import Control.Exception (try, evaluate, ArithException(..))
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Map.Strict as M
 import Data.List (nub, sort, sortBy, partition)
 import Data.Ord (comparing)
@@ -166,20 +171,24 @@ cadDecomposeTree polys vars =
 --   Expected speedup: 2-10x for provable theorems (stops early)
 cadDecomposeEarlyStop :: [Poly] -> [String] -> Theory -> Formula -> Maybe Bool
 cadDecomposeEarlyStop polys vars theory goal =
-  case vars of
+  let _ = trace ("CAD: EarlyStop with " ++ show vars) ()
+  in case vars of
     [] -> Nothing  -- No variables, fall back to full decomposition
     [v] ->
-      let cells = cad1D polys v
+      let _ = trace ("CAD: EarlyStop Base Case 1D: " ++ v) ()
+          cells = cad1D polys v
       in checkCellsEarly theory goal cells
     (v:vs) ->
-      let projectedPolys = projectPolynomials polys v
+      let _ = trace ("CAD: EarlyStop Recursive: " ++ v) ()
+          projectedPolys = projectPolynomials polys v
           -- Recursively check lower dimension first
           lowerResult = cadDecomposeEarlyStop projectedPolys vs theory goal
       in case lowerResult of
            Just result -> Just result  -- Early termination from lower level
            Nothing ->
              -- Need to lift and continue checking
-             let lowerCells = cadDecompose projectedPolys vs
+             let _ = trace ("CAD: EarlyStop Lifting: " ++ v) ()
+                 lowerCells = cadDecompose projectedPolys vs
              in checkLiftedCellsEarly polys v theory goal lowerCells
 
 -- | Check cells incrementally, returning early if possible.
@@ -459,11 +468,11 @@ refineToExactRoot coeffs (lo, hi) =
 -- | Numerically refine a root interval
 refineRootNumerically :: [Rational] -> (Rational, Rational) -> Rational
 refineRootNumerically coeffs (lo, hi)
-  | hi - lo < 1/100000 = (lo + hi) / 2  -- Close enough
+  | hi - lo < (1 % 100000) = (lo + hi) / 2  -- Close enough
   | otherwise =
       let mid = (lo + hi) / 2
           valMid = evalPolyAt coeffs mid
-      in if abs valMid < 1/1000000000
+      in if abs valMid < (1 % 1000000000)
          then mid  -- Found it!
          else
            let valLo = evalPolyAt coeffs lo
@@ -473,11 +482,14 @@ refineRootNumerically coeffs (lo, hi)
 
 -- | Test if a value is a root of the polynomial
 isRoot :: [Rational] -> Rational -> Bool
-isRoot coeffs x = abs (evalPolyAt coeffs x) < 1/1000000000
+isRoot coeffs x = abs (evalPolyAt coeffs x) < (1 % 1000000000)
 
 -- | Evaluate polynomial at a point (for refinement)
 evalPolyAt :: [Rational] -> Rational -> Rational
-evalPolyAt coeffs x = sum [ c * (x ^ i) | (i, c) <- zip [0 :: Int ..] coeffs ]
+evalPolyAt coeffs x = 
+  let _ = trace "CAD: evalPolyAt START" ()
+      res = sum [ c * (x ^ i) | (i, c) <- zip [0 :: Int ..] coeffs ]
+  in trace "CAD: evalPolyAt END" res
 
 -- | Generate samples classified as sections (on roots) and sectors (between roots)
 generateSamplesClassified :: [Rational] -> ([Rational], [Rational])
@@ -661,21 +673,25 @@ proveWithCAD formula vars =
 --   1. Variable ordering: Heuristic-based ordering (1.5-2x speedup)
 --   2. Early termination: Stops when counterexample found (2-10x speedup)
 proveFormulaCAD :: Theory -> Formula -> Bool
-proveFormulaCAD theory goal =
-  let polys = concatMap formulaToPolys (goal : theory)
-      vars = S.toList (extractPolyVarsList polys)
-      -- OPTIMIZATION 1: Use heuristic variable ordering
-      optimizedVars = optimizeVariableOrder polys vars
-      -- OPTIMIZATION 2: Try early termination first
-      earlyResult = cadDecomposeEarlyStop polys optimizedVars theory goal
-  in case earlyResult of
-       Just False -> False  -- Early refutation (found counterexample)
-       Just True -> True    -- Early proof (all cells so far satisfy)
-       Nothing ->
-         -- Fall back to full decomposition (need all cells)
-         let cells = cadDecompose polys optimizedVars
-             validCells = filter (\c -> all (`evaluateFormula` c) theory) cells
-         in not (null validCells) && all (evaluateFormula goal) validCells
+proveFormulaCAD theory goal = unsafePerformIO $ do
+  res <- try $ evaluate $ 
+    let polys = trace "CAD: Step 1 - Extracting polys" $ concatMap formulaToPolys (goal : theory)
+        vars = trace "CAD: Step 2 - Extracting vars" $ S.toList (extractPolyVarsList polys)
+        optimizedVars = trace "CAD: Step 3 - Optimizing variable order" $ optimizeVariableOrder polys vars
+        earlyResult = Nothing :: Maybe Bool -- trace ("CAD: Step 4 - Decomposing with " ++ show (length optimizedVars) ++ " variables") $ cadDecomposeEarlyStop polys optimizedVars theory goal
+    in case earlyResult of
+         Just False -> trace "CAD: Early refutation" False
+         Just True -> trace "CAD: Early proof" True
+         Nothing ->
+           let cells = trace "CAD: Step 5 - Full decomposition" $ cadDecompose polys optimizedVars
+               validCells = trace ("CAD: Step 6 - Checking " ++ show (length cells) ++ " cells") $ filter (\c -> all (`evaluateFormula` c) theory) cells
+               resVal = trace ("CAD: Step 7 - Found " ++ show (length validCells) ++ " valid cells") $ not (null validCells) && all (evaluateFormula goal) validCells
+           in trace ("CAD: Result = " ++ show resVal) resVal
+  case res of
+    Left e -> 
+      let msg = show (e :: CE.SomeException)
+      in error ("CRITICAL CAD ERROR: " ++ msg ++ "\nStack Trace: " ++ show callStack)
+    Right b -> return b
 
 -- | Check satisfiability of a goal with supporting theory using CAD.
 --   WITH VARIABLE ORDERING: Heuristic-based ordering (1.5-2x speedup)
@@ -743,7 +759,7 @@ evaluatePolyRational assignment (Poly m) =
             newCoeff = coeff * assignedValue
             newVars = M.fromList unassignedVars
         in
-            (Monomial newVars, newCoeff)
+            trace ("CAD: coeff=" ++ show coeff ++ " value=" ++ show assignedValue) (Monomial newVars, newCoeff)
       evaluated = [ evalMonomial mono coeff | (mono, coeff) <- M.toList m ]
   in
       Poly (M.fromListWith (+) evaluated)

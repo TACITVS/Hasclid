@@ -21,7 +21,8 @@ eliminateRational theory goal =
 
 type DivMemo = Map.Map Expr Formula
 type VarMemo = Map.Map String Expr
-type ElimM = State ([Formula], DivMemo, VarMemo, Int)
+type ElimState = ([Formula], DivMemo, VarMemo, Int)
+type ElimM = State ElimState
 
 simplifyRationalArithmetic :: Formula -> Formula
 simplifyRationalArithmetic (Eq l r) = Eq (simpExprArith l) (simpExprArith r)
@@ -62,6 +63,7 @@ simpExprArith (Determinant rows) = Determinant (map (map simpExprArith) rows)
 simpExprArith (Circle p c r) = Circle p c (simpExprArith r)
 simpExprArith e = e
 
+elimFormula :: Formula -> ElimM Formula
 elimFormula (Eq (Div f g) (Const 0)) = do { f' <- elimExpr' f; g' <- elimExpr' g; addDenominatorNonzero g'; return (Eq f' (Const 0)) }
 elimFormula (Eq (Const 0) (Div f g)) = elimFormula (Eq (Div f g) (Const 0))
 elimFormula (Eq (Div f1 g1) (Div f2 g2)) = do { f1' <- elimExpr' f1; g1' <- elimExpr' g1; f2' <- elimExpr' f2; g2' <- elimExpr' g2; addDenominatorNonzero g1'; addDenominatorNonzero g2'; return (Eq (Mul f1' g2') (Mul f2' g1')) }
@@ -86,6 +88,7 @@ elimFormula (Not f) = Not <$> elimFormula f
 elimFormula (Forall vars f) = Forall vars <$> elimFormula f
 elimFormula (Exists vars f) = Exists vars <$> elimFormula f
 
+elimExpr' :: Expr -> ElimM Expr
 elimExpr' (Add a b) = Add <$> elimExpr' a <*> elimExpr' b
 elimExpr' (Sub a b) = Sub <$> elimExpr' a <*> elimExpr' b
 elimExpr' (Mul a b) = Mul <$> elimExpr' a <*> elimExpr' b
@@ -101,19 +104,27 @@ elimExpr' (Determinant rows) = Determinant <$> mapM (mapM elimExpr') rows
 elimExpr' (Circle p c r) = Circle p c <$> elimExpr' r
 elimExpr' e = return e
 
+freshDivVar :: ElimM String
 freshDivVar = do
   (cs, dm, vm, n) <- get
   let next = n + 1
   put (cs, dm, vm, next)
   return ("zz_div_aux" ++ show next)
+
+addConstraint :: Formula -> ElimM ()
 addConstraint f = modify (\(cs, dm, vm, n) -> (f : cs, dm, vm, n))
+
+addVarDef :: String -> Expr -> ElimM ()
 addVarDef v e = modify (\(cs, dm, vm, n) -> (cs, dm, Map.insert v e vm, n))
+
+addDenominatorNonzero :: Expr -> ElimM ()
 addDenominatorNonzero den = do
   (cs, dm, vm, n) <- get
   case Map.lookup den dm of
     Just _ -> return ()
     Nothing -> let constraint = if isGeomPositive den then Gt den (Const 0) else Or (Gt den (Const 0)) (Lt den (Const 0)) in put (constraint : cs, Map.insert den constraint dm, vm, n)
 
+isGeomPositive :: Expr -> Bool
 isGeomPositive (Dist2 _ _) = True
 isGeomPositive (Pow _ 2) = True
 isGeomPositive (Sqrt _) = True

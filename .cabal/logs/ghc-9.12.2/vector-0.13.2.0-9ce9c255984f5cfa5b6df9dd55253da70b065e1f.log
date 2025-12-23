@@ -1,0 +1,94 @@
+Installing library in C:\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\incoming\new-14556\Users\baian\Haskell\Prover\.cabal\store\ghc-9.12.2-4764\vector-0.13.2.0-9ce9c255984f5cfa5b6df9dd55253da70b065e1f\lib
+ream\Monadic.o )
+[ 2 of 23] Compiling Data.Vector.Fusion.Util ( src\Data\Vector\Fusion\Util.hs, dist\build\Data\Vector\Fusion\Util.o )
+[ 3 of 23] Compiling Data.Vector.Fusion.Bundle.Size ( src\Data\Vector\Fusion\Bundle\Size.hs, dist\build\Data\Vector\Fusion\Bundle\Size.o )
+[ 4 of 23] Compiling Data.Vector.Generic.Mutable.Base ( src\Data\Vector\Generic\Mutable\Base.hs, dist\build\Data\Vector\Generic\Mutable\Base.o )
+[ 5 of 23] Compiling Data.Vector.Generic.Base ( src\Data\Vector\Generic\Base.hs, dist\build\Data\Vector\Generic\Base.o )
+[ 6 of 23] Compiling Data.Vector.Internal.Check ( src\Data\Vector\Internal\Check.hs, dist\build\Data\Vector\Internal\Check.o )
+[ 7 of 23] Compiling Data.Vector.Fusion.Bundle.Monadic ( src\Data\Vector\Fusion\Bundle\Monadic.hs, dist\build\Data\Vector\Fusion\Bundle\Monadic.o )
+[ 8 of 23] Compiling Data.Vector.Fusion.Bundle ( src\Data\Vector\Fusion\Bundle.hs, dist\build\Data\Vector\Fusion\Bundle.o )
+[ 9 of 23] Compiling Data.Vector.Generic.Mutable ( src\Data\Vector\Generic\Mutable.hs, dist\build\Data\Vector\Generic\Mutable.o )
+[10 of 23] Compiling Data.Vector.Generic.New ( src\Data\Vector\Generic\New.hs, dist\build\Data\Vector\Generic\New.o )
+[11 of 23] Compiling Data.Vector.Generic ( src\Data\Vector\Generic.hs, dist\build\Data\Vector\Generic.o )
+[12 of 23] Compiling Data.Vector.Mutable ( src\Data\Vector\Mutable.hs, dist\build\Data\Vector\Mutable.o )
+src\Data\Vector\Mutable.hs:99:20: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the data declaration for ‘MVector’
+   |
+99 |         deriving ( Typeable )
+   |                    ^^^^^^^^
+
+[13 of 23] Compiling Data.Vector      ( src\Data\Vector.hs, dist\build\Data\Vector.o )
+src\Data\Vector.hs:222:20: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the data declaration for ‘Vector’
+    |
+222 |         deriving ( Typeable )
+    |                    ^^^^^^^^
+
+[14 of 23] Compiling Data.Vector.Primitive.Mutable ( src\Data\Vector\Primitive\Mutable.hs, dist\build\Data\Vector\Primitive\Mutable.o )
+src\Data\Vector\Primitive\Mutable.hs:115:20: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the data declaration for ‘MVector’
+    |
+115 |         deriving ( Typeable )
+    |                    ^^^^^^^^
+
+[15 of 23] Compiling Data.Vector.Primitive ( src\Data\Vector\Primitive.hs, dist\build\Data\Vector\Primitive.o )
+src\Data\Vector\Primitive.hs:209:14: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the data declaration for ‘Vector’
+    |
+209 |   deriving ( Typeable )
+    |              ^^^^^^^^
+
+[16 of 23] Compiling Data.Vector.Storable.Internal ( src\Data\Vector\Storable\Internal.hs, dist\build\Data\Vector\Storable\Internal.o )
+[17 of 23] Compiling Data.Vector.Storable.Mutable ( src\Data\Vector\Storable\Mutable.hs, dist\build\Data\Vector\Storable\Mutable.o )
+src\Data\Vector\Storable\Mutable.hs:134:20: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the data declaration for ‘MVector’
+    |
+134 |         deriving ( Typeable )
+    |                    ^^^^^^^^
+
+[18 of 23] Compiling Data.Vector.Storable ( src\Data\Vector\Storable.hs, dist\build\Data\Vector\Storable.o )
+src\Data\Vector\Storable.hs:219:20: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the data declaration for ‘Vector’
+    |
+219 |         deriving ( Typeable )
+    |                    ^^^^^^^^
+
+[19 of 23] Compiling Data.Vector.Strict.Mutable ( src\Data\Vector\Strict\Mutable.hs, dist\build\Data\Vector\Strict\Mutable.o )
+src\Data\Vector\Strict\Mutable.hs:97:20: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the newtype declaration for ‘MVector’
+   |
+97 |         deriving ( Typeable )
+   |                    ^^^^^^^^
+
+[20 of 23] Compiling Data.Vector.Strict ( src\Data\Vector\Strict.hs, dist\build\Data\Vector\Strict.o )
+src\Data\Vector\Strict.hs:221:13: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the newtype declaration for ‘Vector’
+    |
+221 |   deriving (Typeable, Foldable.Foldable, Semigroup, Monoid)
+    |             ^^^^^^^^
+
+[21 of 23] Compiling Data.Vector.Unboxed.Base ( src\Data\Vector\Unboxed\Base.hs, dist\build\Data\Vector\Unboxed\Base.o )
+src\Data\Vector\Unboxed\Base.hs:97:1: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the stand-alone deriving instance for ‘Typeable Vector’
+   |
+97 | deriving instance Typeable Vector
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src\Data\Vector\Unboxed\Base.hs:98:1: warning: [GHC-90584] [-Wderiving-typeable]
+    • Deriving ‘Typeable’ has no effect: all types now auto-derive Typeable
+    • In the stand-alone deriving instance for ‘Typeable MVector’
+   |
+98 | deriving instance Typeable MVector
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+[22 of 23] Compiling Data.Vector.Unboxed ( src\Data\Vector\Unboxed.hs, dist\build\Data\Vector\Unboxed.o )
+[23 of 23] Compiling Data.Vector.Unboxed.Mutable ( src\Data\Vector\Unboxed\Mutable.hs, dist\build\Data\Vector\Unboxed\Mutable.o )

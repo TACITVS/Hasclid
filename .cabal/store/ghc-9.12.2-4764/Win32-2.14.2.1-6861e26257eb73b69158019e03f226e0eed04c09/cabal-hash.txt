@@ -1,0 +1,11 @@
+pkgid: Win32-2.14.2.1
+component: ComponentLib
+src: 69d15a9fb4ef718353aaf8700a64c5885743d4f34a94f7da273fa12584df0315
+pkg-config-deps: 
+deps: base-4.21.0.0-55e3, filepath-1.4.301_-f8a8d63f99e1263bb37599b91ee60599227a71cf, hsc2hs-0.68.10-a91d86cf9fcd86cdfab8730e6f5c479e33c61964
+compilerid: ghc-9.12.2
+compilerabi: 4764
+platform: x86_64-windows
+flags: -os-string
+stripped-exe: False
+debug-info: 0

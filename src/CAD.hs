@@ -13,51 +13,37 @@ import Expr
 import Data.List (dropWhileEnd)
 import qualified Data.Map.Strict as M
 import Data.Maybe (mapMaybe)
+import Debug.Trace (trace)
 
 -- | Recursive Polynomial: Coefficients are themselves Polys
---   Represents P(x) = c_n * x^n + ... + c_0
---   where c_i are polynomials in other variables.
 type RecPoly = [Poly] 
 
 -- =============================================
 -- 1. Recursive Structure (Flat -> Recursive)
 -- =============================================
 
--- | Extract coefficients of a polynomial with respect to a specific variable
---   e.g. toRecursive (x^2 + xy + y^2) "x" -> [y^2, y, 1]
---   (Returns coefficients in increasing order of degree: c0, c1, c2...)
 toRecursive :: Poly -> String -> RecPoly
 toRecursive (Poly m) var = 
     let maxDeg = maximum (0 : [ M.findWithDefault 0 var vars | (Monomial vars, _) <- M.toList m ])
-        
-        -- Helper: Check if a monomial contains 'var' to exact power 'k'
-        -- If so, return the monomial *without* 'var'
-        extractTerm :: Int -> (Monomial, Rational) -> Maybe (Monomial, Rational)
         extractTerm k (Monomial vars, coeff) =
             if M.findWithDefault 0 var vars == fromIntegral k
             then Just (Monomial (M.delete var vars), coeff)
             else Nothing
-
-        -- Build coefficient for x^k
         getCoeff k = 
             let terms = mapMaybe (extractTerm k) (M.toList m)
             in if null terms then polyZero else Poly (M.fromList terms)
-
     in [ getCoeff k | k <- [0..fromIntegral maxDeg] ]
 
 -- =============================================
 -- 2. Polynomial Arithmetic on Poly Coefficients
 -- =============================================
 
--- Degree of recursive poly
 degRec :: RecPoly -> Int
 degRec p = length (normalizeRec p) - 1
 
--- Normalize (remove trailing zero polynomials)
 normalizeRec :: RecPoly -> RecPoly
 normalizeRec = dropWhileEnd (== polyZero)
 
--- Leading Coefficient (which is a Poly!)
 lcRec :: RecPoly -> Poly
 lcRec p = case normalizeRec p of
     [] -> polyZero
@@ -81,29 +67,21 @@ subRec :: RecPoly -> RecPoly -> RecPoly
 subRec xs ys = addRec xs (negRec ys)
 
 -- =============================================
--- 3. Pseudo-Division (The Heart of CAD)
+-- 3. Pseudo-Division
 -- =============================================
 
--- | Pseudo-Remainder: prem(F, G)
---   Computes R such that: LC(G)^(deg(F)-deg(G)+1) * F = Q * G + R
---   This works even if we can't divide fractions (integral domain).
 pseudoRem :: RecPoly -> RecPoly -> RecPoly
 pseudoRem f g = normalizeRec (go f)
   where
     gNorm = normalizeRec g
-    _df = degRec f
     dg = degRec gNorm
     l = lcRec gNorm
-    _delta = _df - dg + 1
-    
     go currentF
       | degRec currentF < dg = currentF
       | otherwise = 
           let degCurr = degRec currentF
               lcCurr  = lcRec currentF
-              -- Multiply entire F by LC(G) to avoid fractions
               fScaled = scaleRec l currentF
-              -- Subtract term: LC(F) * x^(degF-degG) * G
               term    = shiftRec (degCurr - dg) (scaleRec lcCurr gNorm)
               nextF   = subRec fScaled term
           in go (normalizeRec nextF)
@@ -112,27 +90,24 @@ pseudoRem f g = normalizeRec (go f)
 -- 4. Resultant Algorithm (Subresultant)
 -- =============================================
 
--- | Compute Resultant of two polynomials w.r.t a variable.
---   Resultant eliminates the variable. Res(P(x,y), Q(x,y), x) -> R(y)
 resultant :: Poly -> Poly -> String -> Poly
 resultant f g var = 
-    let rf = toRecursive f var
+    let _ = trace ("CAD: Resultant w.r.t " ++ var) ()
+        rf = toRecursive f var
         rg = toRecursive g var
     in subresultantPRS rf rg
 
--- | Subresultant PRS Algorithm (Algorithm 3.3.1)
---   Keeps coefficients small using the precise Collins/Brown scaling factors.
 subresultantPRS :: RecPoly -> RecPoly -> Poly
 subresultantPRS f g = 
   let f' = normalizeRec f
       g' = normalizeRec g
+      _ = trace ("CAD: subresultantPRS degrees " ++ show (degRec f') ++ ", " ++ show (degRec g')) ()
   in if length f' < length g' then subresultantPRS g' f'
      else go f' g' (polyFromConst 1) (polyFromConst 1)
   where
     go r0 r1 g h
       | normalizeRec r1 == [] = polyZero
       | degRec r1 == 0 = 
-          -- Final resultant calculation
           let d0 = degRec r0
               l1 = lcRec r1
           in polyPow l1 (fromIntegral d0)
@@ -141,22 +116,14 @@ subresultantPRS f g =
               d1 = degRec r1
               l1 = lcRec r1
               delta = fromIntegral (d0 - d1)
-
-              -- 1. Compute pseudo-remainder
               r_prem = pseudoRem r0 r1
-              
-              -- 2. Divide by scaling factor: divisor = g * h^delta
               divisor = polyMul g (polyPow h delta)
               r2 = map (\c -> polyDivExact c divisor) r_prem
-              
-              -- 3. Update g and h for next step
               g_next = l1
-              -- h_next = l1^delta * h^(1-delta)
               h_next = if delta == 1 then polyDivExact (polyPow g_next delta) (polyFromConst 1)
                        else polyDivExact (polyPow g_next delta) (polyPow h (fromIntegral (delta - 1)))
           in go r1 r2 g_next h_next
 
--- | Exact polynomial division (falls back to the dividend if not exact).
 polyDivExact :: Poly -> Poly -> Poly
 polyDivExact p1 p2
   | p1 == polyZero = polyZero
@@ -185,19 +152,14 @@ polyDivExact p1 p2
 polyFromMonomial :: Monomial -> Rational -> Poly
 polyFromMonomial m c = Poly (M.singleton m c)
 
--- | Discriminant: Resultant(f, f')
---   Disc(f) = 0 implies f has a double root (turning point or singularity).
 discriminant :: Poly -> String -> Poly
 discriminant f var = 
-    let fRec = toRecursive f var
+    let _ = trace ("CAD: Discriminant w.r.t " ++ var) ()
+        fRec = toRecursive f var
         fPrime = derivRec fRec
-        -- Correction factor for discriminant sign/scaling:
-        -- Disc(f) = (-1)^(n(n-1)/2) / lc(f) * Res(f, f')
-        -- For projection purposes, Res(f, f') contains the critical geometry.
         res = subresultantPRS fRec fPrime
     in res
 
--- Derivative of recursive poly
 derivRec :: RecPoly -> RecPoly
 derivRec [] = []
 derivRec (_:xs) = zipWith (\pow coeff -> polyMul (polyFromConst (fromIntegral pow)) coeff) [1 :: Int ..] xs
@@ -206,12 +168,6 @@ derivRec (_:xs) = zipWith (\pow coeff -> polyMul (polyFromConst (fromIntegral po
 -- 5. Principal Subresultant Coefficients (PSC)
 -- =============================================
 
--- | Compute Principal Subresultant Coefficients (PSC) of two polynomials.
---   PSC are the leading coefficients of the polynomial subresultant sequence.
---   These are CRITICAL for Collins' complete projection - they ensure sign-invariance.
---
---   The PSC sequence includes all intermediate polynomials in the subresultant PRS.
---   For polynomials f, g of degrees m, n, we get PSC_m, PSC_{m-1}, ..., PSC_0
 psc :: Poly -> Poly -> String -> [Poly]
 psc f g var =
   let rf = toRecursive f var
@@ -219,8 +175,6 @@ psc f g var =
       prsSequence = subresultantPRSSequence rf rg
   in filter (/= polyZero) prsSequence
 
--- | Compute the full Polynomial Remainder Sequence (PRS), not just the final resultant.
---   This is the subresultant chain needed for PSC.
 subresultantPRSSequence :: RecPoly -> RecPoly -> [Poly]
 subresultantPRSSequence f g = go f g []
   where
@@ -230,26 +184,18 @@ subresultantPRSSequence f g = go f g []
       | degRec g' == 0 = reverse (polyPow (lcRec g') (fromIntegral (degRec f')) : acc)
       | otherwise =
           let r = pseudoRem f' g'
-              -- Extract the leading coefficient of the current remainder
-              -- This is a principal subresultant coefficient
               lc_r = if normalizeRec r == [] then polyZero else lcRec r
           in go g' r (lc_r : acc)
 
 -- =============================================
--- 6. Coefficient Projection (Complete CAD)
+-- 6. Coefficient Projection
 -- =============================================
 
--- | Extract the leading coefficient of a polynomial w.r.t. a variable.
---   For f(x,y) = a_n(y) * x^n + ..., this returns a_n(y).
---   Leading coefficients must be in the projection set to ensure well-definedness.
 leadingCoeff :: Poly -> String -> Poly
 leadingCoeff f var =
   let coeffs = toRecursive f var
   in if null coeffs then polyZero else last coeffs
 
--- | Extract ALL coefficients of a polynomial w.r.t. a variable.
---   For f(x,y) = a_n(y)*x^n + ... + a_0(y), returns [a_0(y), a_1(y), ..., a_n(y)].
---   All coefficients are needed for complete sign-invariance guarantees.
 allCoeffs :: Poly -> String -> [Poly]
 allCoeffs f var = filter (/= polyZero) (toRecursive f var)
 
@@ -257,111 +203,44 @@ allCoeffs f var = filter (/= polyZero) (toRecursive f var)
 -- 7. Collins' Complete Projection
 -- =============================================
 
--- | Complete projection operator for CAD.
---   This is THE correct projection for Collins' CAD algorithm.
---
---   Given polynomials and a variable to eliminate, returns ALL polynomials needed
---   to guarantee sign-invariance in the lifted cells.
---
---   Components (as per Collins 1975):
---   1. Discriminants: disc(f) for each f
---   2. Resultants: res(f, g) for all pairs f, g
---   3. PSC: Principal subresultant coefficients for all pairs
---   4. Leading coefficients: lc(f) for each f
---   5. All coefficients: coeff_i(f) for each f
---
---   This is expensive but mathematically correct!
 completeProjection :: [Poly] -> String -> [Poly]
 completeProjection polys var =
-  let
-      -- Only project non-constant polynomials that depend on var
-      relevantPolys = filter (dependsOn var) polys
-
-      -- 1. Discriminants
+  let relevantPolys = filter (dependsOn var) polys
       discriminants = [ discriminant p var | p <- relevantPolys, polyDegreeIn p var >= 2 ]
-
-      -- 2. Resultants
       resultants = [ resultant p q var | p <- relevantPolys, q <- relevantPolys, p /= q ]
-
-      -- 3. Principal Subresultant Coefficients (PSC) - THE CRITICAL MISSING PIECE!
       pscPolys = concat [ psc p q var | p <- relevantPolys, q <- relevantPolys, p /= q ]
-
-      -- 4. Leading Coefficients
       leadingCoeffs = [ leadingCoeff p var | p <- relevantPolys ]
-
-      -- 5. All Coefficients (for complete invariance)
       allCoeffPolys = concat [ allCoeffs p var | p <- relevantPolys ]
-
-      -- Combine and remove duplicates/zeros
       allProjected = discriminants ++ resultants ++ pscPolys ++
                      leadingCoeffs ++ allCoeffPolys
-
   in nub (filter (/= polyZero) allProjected)
 
 -- =============================================
--- 8. McCallum's Optimized Projection (1985)
+-- 8. McCallum's Optimized Projection
 -- =============================================
 
--- | McCallum's optimized projection operator for CAD.
---   This is a MORE EFFICIENT projection than Collins' complete projection.
---
---   McCallum (1985) showed that for "well-oriented" polynomials (leading coefficients
---   don't vanish in the region of interest), we can use a MUCH smaller projection set:
---
---   Components:
---   1. Leading coefficients: lc(f) for each f
---   2. Discriminants: disc(f) for each f (degree >= 2)
---   3. Resultants: res(f, g) for DISTINCT ORDERED pairs only
---
---   Key optimization: Instead of computing res(f,g) AND res(g,f), we only compute
---   one resultant per pair. For n polynomials:
---   - Collins: n(n-1) resultants (both directions)
---   - McCallum: n(n-1)/2 resultants (one direction only)
---
---   This gives **50-70% fewer projection polynomials** in practice!
---
---   WHEN TO USE:
---   - McCallum: Default choice for most problems (faster)
---   - Collins: Use when leading coefficients vanish (rare edge cases)
---
---   Reference: McCallum, S. (1985). "An Improved Projection Operation for CAD"
 mcCallumProjection :: [Poly] -> String -> [Poly]
 mcCallumProjection polys var =
-  let
-      -- Only project non-constant polynomials that depend on var
+  let _ = trace ("CAD: mcCallumProjection on " ++ show (length polys) ++ " polys, var: " ++ var) ()
       relevantPolys = filter (dependsOn var) polys
-
-      -- 1. Leading Coefficients (CRITICAL for well-orientedness)
       leadingCoeffs = [ leadingCoeff p var | p <- relevantPolys ]
-
-      -- 2. Discriminants (for double roots / singularities)
       discriminants = [ discriminant p var | p <- relevantPolys, polyDegreeIn p var >= 2 ]
-
-      -- 3. Resultants for DISTINCT ORDERED pairs only
-      --    Use list comprehension with ordering constraint
-      --    This computes only res(p,q) where p comes before q in the list
       resultants = [ resultant p q var
                    | (i, p) <- zip [0 :: Int ..] relevantPolys
                    , (j, q) <- zip [0 :: Int ..] relevantPolys
-                   , i < j  -- Only compute one direction!
+                   , i < j  
                    ]
-
-      -- Combine and remove duplicates/zeros
       allProjected = leadingCoeffs ++ discriminants ++ resultants
-
   in nub (filter (/= polyZero) allProjected)
 
--- Helper: Check if polynomial depends on a variable
 dependsOn :: String -> Poly -> Bool
 dependsOn var p = polyDegreeIn p var > 0
 
--- Helper: Degree of polynomial in a specific variable
 polyDegreeIn :: Poly -> String -> Int
 polyDegreeIn (Poly m) var =
   maximum (0 : [ fromIntegral (M.findWithDefault 0 var vars)
                | (Monomial vars, _) <- M.toList m ])
 
--- Helper: Remove duplicates
 nub :: Eq a => [a] -> [a]
 nub [] = []
 nub (x:xs) = x : nub (filter (/= x) xs)

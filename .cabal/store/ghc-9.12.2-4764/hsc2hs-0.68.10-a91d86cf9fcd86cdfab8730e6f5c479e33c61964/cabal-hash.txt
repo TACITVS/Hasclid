@@ -1,0 +1,11 @@
+pkgid: hsc2hs-0.68.10
+component: ComponentExe (UnqualComponentName "hsc2hs")
+src: 6f4e34d788fe2ca7091ee0a10307ee8a7c060a1ba890f2bffad16a7d4d5cef76
+pkg-config-deps: 
+deps: base-4.21.0.0-55e3, containers-0.6.8-a5259fec9cfbf0db6696346134dacb70656cc638, directory-1.3.9.0-7a24, filepath-1.5.4.0-d7bc, process-1.6.25.0-4f52
+compilerid: ghc-9.12.2
+compilerabi: 4764
+platform: x86_64-windows
+flags: -in-ghc-tree
+stripped-exe: False
+debug-info: 0

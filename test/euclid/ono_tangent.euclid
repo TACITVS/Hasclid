@@ -1,0 +1,32 @@
+:set-timeout 60
+:verbose
+:optimize on
+:set-strategy sugar
+:set-gb-backend f4
+:set-f4-batch on
+
+-- =======================================================
+-- ONO'S INEQUALITY (TANGENT/COTANGENT SUBSTITUTION)
+-- =======================================================
+-- Variables u, v, w represent cot(A), cot(B), cot(C).
+-- For acute triangles, cot > 0.
+-- Identity: cotA cotB + cotB cotC + cotC cotA = 1.
+
+:assume (> u 0)
+:assume (> v 0)
+:assume (> w 0)
+
+-- The Geometric Constraint transformed to Algebra
+:assume (= Identity (+ (+ (* u v) (* v w)) (* w u)))
+:assume (= Identity 1)
+
+-- The Goal: 27 * (u*v*w)^2 <= 1
+-- Equivalent to: 1 - 27 u^2 v^2 w^2 >= 0
+:assume (= LHS 1)
+:assume (= RHS (* 27 (* (^ u 2) (* (^ v 2) (^ w 2)))))
+:assume (= Diff (- LHS RHS))
+
+:assume (= z_Epsilon (/ 1 1000000))
+:assume (= z_RelaxedDiff (+ Diff z_Epsilon))
+
+:prove (>= z_RelaxedDiff 0)

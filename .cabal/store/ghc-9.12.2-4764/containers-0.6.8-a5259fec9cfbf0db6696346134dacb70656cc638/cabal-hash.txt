@@ -1,0 +1,10 @@
+pkgid: containers-0.6.8
+component: ComponentLib
+src: 2247af69fab1c9c48d3b7e184f18b63d12d273572a7f55319c0d6fae896de1e1
+pkg-config-deps: 
+deps: array-0.5.8.0-a1b2, base-4.21.0.0-55e3, deepseq-1.5.1.0-ee5d, template-haskell-2.23.0.0-2522
+compilerid: ghc-9.12.2
+compilerabi: 4764
+platform: x86_64-windows
+stripped-exe: False
+debug-info: 0

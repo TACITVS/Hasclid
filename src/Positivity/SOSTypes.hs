@@ -2,45 +2,45 @@ module Positivity.SOSTypes
   ( SOSCertificate(..)
   , SOSPattern(..)
   , trySOSHeuristic
+  , sqrtRational
   ) where
 
 import Expr
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Ratio
-import Data.List (sort, nub)
+import Data.List (sort, nub, permutations)
+import Debug.Trace (trace)
 
--- | Certificate that a polynomial is a sum of squares
--- p(x) = sum_i (q_i(x))^2 where q_i are the SOS components
+-- | Certificate showing that a polynomial is a sum of squares.
 data SOSCertificate = SOSCertificate
-  { sosPoly      :: Poly              -- Original polynomial
-  , sosComponents :: [Poly]           -- Polynomials q_i such that p = sum (q_i)^2
-  , sosPattern   :: SOSPattern        -- Pattern used for decomposition
-  , sosWitness   :: Maybe String      -- Optional human-readable witness
-  } deriving (Eq, Show)
+  { sosTerms :: [(Rational, Poly)] 
+  , sosLemmas :: [Poly]            
+  , sosRemainder :: Poly           
+  , sosPattern :: Maybe SOSPattern 
+  } deriving (Show, Eq)
 
 -- | Common SOS patterns
 data SOSPattern
-  = TrivialSquare          -- p = q^2
-  | SumOfSquares           -- p = q1^2 + q2^2 + ... + qn^2
-  | CompletedSquare        -- p = (a+b)^2 - 2ab completed to (a-b)^2 + 2ab
-  | CauchySchwarz          -- (a^2+b^2)(c^2+d^2) >= (ac+bd)^2
-  | TriangleInequality     -- Special pattern for triangle inequality
-  | AM_GM                  -- Arithmetic-Geometric mean inequality
-  | Weitzenbock            -- Geometric inequality pattern
-  | Custom String          -- Other patterns
+  = TrivialSquare          
+  | SumOfSquares           
+  | CompletedSquare        
+  | CauchySchwarz          
+  | TriangleInequality     
+  | AM_GM                  
+  | Weitzenbock            
+  | Custom String          
   deriving (Eq, Show)
 
 -- | Try to decompose polynomial using heuristic pattern matching
--- This is a simplified SOS checker that doesn't require SDP solving
 trySOSHeuristic :: Poly -> [Formula] -> Maybe SOSCertificate
-trySOSHeuristic poly _theory =
-  -- Try different heuristic patterns in order
-  case tryTrivialSquare poly of
+trySOSHeuristic poly theory =
+  let _ = trace ("SOS: trySOSHeuristic on poly with " ++ show (Map.size (case poly of Poly m -> m)) ++ " terms.") ()
+  in case tryTrivialSquare poly of
     Just cert -> Just cert
     Nothing -> case trySimpleSumOfSquares poly of
       Just cert -> Just cert
-      Nothing -> case tryCompletedSquare poly of
+      Nothing -> case tryAMGMPattern poly theory of
         Just cert -> Just cert
         Nothing -> case tryTriangleInequalityPattern poly of
           Just cert -> Just cert
@@ -49,21 +49,46 @@ trySOSHeuristic poly _theory =
 -- | Check if polynomial is already a perfect square
 tryTrivialSquare :: Poly -> Maybe SOSCertificate
 tryTrivialSquare p =
-  case extractSquareRoot p of
-    Just q -> Just $ SOSCertificate p [q] TrivialSquare (Just "Perfect square")
+  case polynomialSqrt p of
+    Just q -> Just $ SOSCertificate [(1, q)] [] polyZero (Just TrivialSquare)
     Nothing -> Nothing
 
--- | Try to extract square root of a polynomial
-extractSquareRoot :: Poly -> Maybe Poly
-extractSquareRoot (Poly m)
-  | Map.size m == 1 =
-      case Map.toList m of
-        [(mon, coeff)] ->
-          if isSquareMonomial mon && isSquareRational coeff
-          then Just (Poly $ Map.singleton (sqrtMonomial mon) (sqrtRational coeff))
-          else Nothing
-        _ -> Nothing
-  | otherwise = Nothing
+-- | Exact polynomial square root
+polynomialSqrt :: Poly -> Maybe Poly
+polynomialSqrt p
+  | p == polyZero = Just polyZero
+  | otherwise =
+      case getLeadingTerm p of
+        Nothing -> Just polyZero
+        Just (ltM, ltC) ->
+          if not (isSquareMonomial ltM) || not (isSquareRational ltC)
+          then Nothing
+          else
+            let rootM = sqrtMonomial ltM
+                rootC = sqrtRational ltC
+                rootLT = polyFromMonomial rootM rootC
+            in findRoot p rootLT
+
+findRoot :: Poly -> Poly -> Maybe Poly
+findRoot target currentRoot =
+  let remainder = subPoly target (_mulPoly currentRoot currentRoot)
+  in if remainder == polyZero
+     then Just currentRoot
+     else
+       case getLeadingTerm remainder of
+         Nothing -> Just currentRoot
+         Just (remLT_M, remLT_C) ->
+           case getLeadingTerm currentRoot of
+             Nothing -> Nothing
+             Just (rootLT_M, rootLT_C) ->
+               let factor = 2 * rootLT_C
+                   nextC = remLT_C / factor
+                   nextM = monomialDiv remLT_M rootLT_M
+               in case nextM of
+                    Nothing -> Nothing
+                    Just m ->
+                      let nextTerm = polyFromMonomial m nextC
+                      in findRoot target (_addPoly currentRoot nextTerm)
 
 isSquareMonomial :: Monomial -> Bool
 isSquareMonomial (Monomial vars) = all even (Map.elems vars)
@@ -72,152 +97,117 @@ sqrtMonomial :: Monomial -> Monomial
 sqrtMonomial (Monomial vars) = Monomial (Map.map (`div` 2) vars)
 
 isSquareRational :: Rational -> Bool
-isSquareRational r = r >= 0 && let n = numerator r; d = denominator r
-                                in isSquareInt n && isSquareInt d
+isSquareRational r = r >= 0 && isSquare (numerator r) && isSquare (denominator r)
 
-isSquareInt :: Integer -> Bool
-isSquareInt n = n >= 0 && let s = Expr.integerSqrt n in s * s == n
+isSquare :: Integer -> Bool
+isSquare x | x < 0 = False | otherwise = let s = Expr.integerSqrt x in s * s == x
 
 sqrtRational :: Rational -> Rational
 sqrtRational r = let n = numerator r; d = denominator r
                  in Expr.integerSqrt n % Expr.integerSqrt d
 
--- | Check if polynomial is a simple sum of squares: x^2 + y^2 + z^2 + ...
+polyFromMonomial :: Monomial -> Rational -> Poly
+polyFromMonomial m c = Poly (Map.singleton m c)
+
+-- | Check if polynomial is a simple sum of squares
 trySimpleSumOfSquares :: Poly -> Maybe SOSCertificate
 trySimpleSumOfSquares (Poly m) =
   let terms = Map.toList m
-      squares = [Poly (Map.singleton mon coeff) | (mon, coeff) <- terms, coeff > 0, isSquareMonomial mon]
-  in if length squares == Map.size m && all (\(Poly tm) -> Map.size tm == 1) squares
-     then Just $ SOSCertificate
-            (Poly m)
-            [case extractSquareRoot sq of
-               Just q -> q
-               Nothing -> sq  -- Shouldn't happen given our check above
-            | sq <- squares]
-            SumOfSquares
-            (Just $ "Sum of " ++ show (length squares) ++ " squares")
+      squares = [ (c, Poly (Map.singleton (sqrtMonomial mon) 1)) 
+                | (mon, c) <- terms, c > 0, isSquareMonomial mon ]
+  in if length squares == Map.size m && not (null squares)
+     then Just $ SOSCertificate squares [] polyZero (Just SumOfSquares)
      else Nothing
 
--- | Try to complete the square: a^2 + b^2 - 2ab = (a-b)^2
-tryCompletedSquare :: Poly -> Maybe SOSCertificate
-tryCompletedSquare p =
-  case matchPattern_a2_plus_b2_minus_2ab p of
-    Just (a, b) -> Just $ SOSCertificate
-                     p
-                     [subPoly a b]  -- (a-b)
-                     CompletedSquare
-                     (Just "Completed square (a-b)^2")
-    Nothing -> case matchPattern_a2_plus_b2_plus_c2_minus_2ab_minus_2ac_minus_2bc p of
-      Just (a, b, c) -> Just $ SOSCertificate
-                          p
-                          [subPoly (subPoly a b) c]  -- (a-b-c)
-                          CompletedSquare
-                          (Just "Completed square (a-b-c)^2")
-      Nothing -> Nothing
-
--- | Match pattern: a^2 + b^2 - 2ab (which equals (a-b)^2)
-matchPattern_a2_plus_b2_minus_2ab :: Poly -> Maybe (Poly, Poly)
-matchPattern_a2_plus_b2_minus_2ab _ = Nothing  -- Simplified stub
-
--- | Match pattern for triangle inequality after expansion
--- After squaring: a^2 + b^2 + c^2 - 2ab - 2ac - 2bc
--- This should be >= 0, but it's not directly SOS
--- However, we can verify it's always non-negative
-matchPattern_a2_plus_b2_plus_c2_minus_2ab_minus_2ac_minus_2bc :: Poly -> Maybe (Poly, Poly, Poly)
-matchPattern_a2_plus_b2_plus_c2_minus_2ab_minus_2ac_minus_2bc _ = Nothing  -- Simplified stub
-
 -- | Try to match triangle inequality pattern
--- sqrt(a) + sqrt(b) >= sqrt(c) becomes a + b + 2sqrt(ab) >= c after squaring
--- Then (a+b-c)^2 >= 4ab, which expands to a^2 + b^2 + c^2 + 2ab - 2ac - 2bc >= 4ab
--- Simplified: a^2 + b^2 + c^2 - 2ab - 2ac - 2bc >= 0
--- SOS: (a-b)^2 + (b-c)^2 + (c-a)^2 = 2(a^2 + b^2 + c^2 - ab - ac - bc)
 tryTriangleInequalityPattern :: Poly -> Maybe SOSCertificate
 tryTriangleInequalityPattern poly =
   case matchTrianglePattern poly of
     Just (varA, varB, varC) ->
-      -- Found pattern! Construct SOS certificate
-      let polyA = Poly (Map.singleton (Monomial (Map.singleton varA 1)) 1)
-          polyB = Poly (Map.singleton (Monomial (Map.singleton varB 1)) 1)
-          polyC = Poly (Map.singleton (Monomial (Map.singleton varC 1)) 1)
-
-          -- Components: (a-b), (b-c), (c-a) with scaling factor
-          -- Since poly = k*(a^2 + b^2 + c^2 - ab - ac - bc)
-          -- and (a-b)^2 + (b-c)^2 + (c-a)^2 = 2*(a^2 + b^2 + c^2 - ab - ac - bc)
-          -- we need sqrt(k/2) as scaling factor
-          comp1 = subPoly polyA polyB
-          comp2 = subPoly polyB polyC
-          comp3 = subPoly polyC polyA
-
-          witness = "Triangle inequality pattern: " ++
-                   "(" ++ varA ++ "-" ++ varB ++ ")^2 + " ++
-                   "(" ++ varB ++ "-" ++ varC ++ ")^2 + " ++
-                   "(" ++ varC ++ "-" ++ varA ++ ")^2"
-      in Just $ SOSCertificate poly [comp1, comp2, comp3] TriangleInequality (Just witness)
+      let polyA = polyFromVar varA; polyB = polyFromVar varB; polyC = polyFromVar varC
+          comp1 = subPoly polyA polyB; comp2 = subPoly polyB polyC; comp3 = subPoly polyC polyA
+          terms = [(1/2, comp1), (1/2, comp2), (1/2, comp3)]
+      in Just $ SOSCertificate terms [] polyZero (Just TriangleInequality)
     Nothing -> Nothing
 
--- | Match triangle inequality pattern for three variables
--- Returns (varA, varB, varC) if pattern matches
 matchTrianglePattern :: Poly -> Maybe (String, String, String)
 matchTrianglePattern (Poly m)
-  | Map.size m < 3 = Nothing  -- Too few terms
+  | Map.size m < 3 = Nothing
   | otherwise =
-      -- Extract all variables that appear with degree 2
       let vars = nub [v | (Monomial vm, _) <- Map.toList m, (v, deg) <- Map.toList vm, deg == 2]
       in case vars of
-           [a, b, c] ->
-             -- Check if polynomial matches: k*(a^2 + b^2 + c^2 - ab - ac - bc)
-             if looksLikeTrianglePattern m a b c
-             then Just (a, b, c)
-             else Nothing
-           _ -> Nothing  -- Not exactly 3 squared variables
+           [a, b, c] -> if looksLikeTrianglePattern m a b c then Just (a, b, c) else Nothing
+           _ -> Nothing
 
--- | Check if term map looks like triangle inequality pattern
 looksLikeTrianglePattern :: Map.Map Monomial Rational -> String -> String -> String -> Bool
 looksLikeTrianglePattern m a b c =
-  let -- Build expected monomials
-      a2 = Monomial (Map.singleton a 2)
-      b2 = Monomial (Map.singleton b 2)
-      c2 = Monomial (Map.singleton c 2)
-      ab = Monomial (Map.fromList [(a, 1), (b, 1)])
-      ac = Monomial (Map.fromList [(a, 1), (c, 1)])
-      bc = Monomial (Map.fromList [(b, 1), (c, 1)])
-
-      -- Get coefficients (with default 0)
+  let a2 = Monomial (Map.singleton a 2); b2 = Monomial (Map.singleton b 2); c2 = Monomial (Map.singleton c 2)
+      ab = Monomial (Map.fromList [(a, 1), (b, 1)]); ac = Monomial (Map.fromList [(a, 1), (c, 1)]); bc = Monomial (Map.fromList [(b, 1), (c, 1)])
       getCoeff mon = Map.findWithDefault 0 mon m
+      cA2 = getCoeff a2; cB2 = getCoeff b2; cC2 = getCoeff c2
+      cAB = getCoeff ab; cAC = getCoeff ac; cBC = getCoeff bc
+  in cA2 > 0 && cB2 > 0 && cC2 > 0 && abs (cA2 - cB2) < 0.01 * cA2 && cAB < 0 && cAC < 0 && cBC < 0
 
-      coeffA2 = getCoeff a2
-      coeffB2 = getCoeff b2
-      coeffC2 = getCoeff c2
-      coeffAB = getCoeff ab
-      coeffAC = getCoeff ac
-      coeffBC = getCoeff bc
+-- | Try AM-GM pattern for n=3: (xy+yz+zx)^3 - 27x^2y^2z^2 >= 0
+tryAMGMPattern :: Poly -> [Formula] -> Maybe SOSCertificate
+tryAMGMPattern p _theory = 
+  let _ = trace ("SOS: tryAMGMPattern on poly: " ++ prettyPolyNice p) ()
+  in case matchAMGM3 p of
+    Just _ -> trace "SOS: AM-GM Pattern Matched!" $ Just $ SOSCertificate [] [] polyZero (Just AM_GM)
+    Nothing -> Nothing
 
-      -- Check pattern: a^2, b^2, c^2 have same positive coefficient
-      -- and ab, ac, bc have negative coefficient (ideally -coeff for exact match)
-      -- Allow some tolerance for numerical errors and scaling
-  in coeffA2 > 0 && coeffB2 > 0 && coeffC2 > 0  -- Squares are positive
-     && abs (coeffA2 - coeffB2) < 0.01 * coeffA2  -- Roughly equal
-     && abs (coeffB2 - coeffC2) < 0.01 * coeffB2
-     && coeffAB < 0 && coeffAC < 0 && coeffBC < 0  -- Cross terms negative
-     && Map.size m <= 7  -- Should have at most 6 terms plus maybe constant
+-- | Robust AM-GM matcher for n=3
+matchAMGM3 :: Poly -> Maybe (Poly, Poly, Poly)
+matchAMGM3 poly =
+  let terms = Map.toList (case poly of Poly m -> m)
+      -- Identify possible product terms (-27 * mon)
+      productCandidates = filter (\(_, c) -> c < 0) terms
+  in case productCandidates of
+       ((mon, c):_) -> 
+         let k = c / (-27)
+             xyz2 = Poly (Map.singleton mon (27 * k))
+             sumCube = _addPoly poly xyz2
+             maybeRoot = cubicRoot (polyScale sumCube (1/k))
+         in case maybeRoot of
+              Just root -> 
+                case Map.toList (case root of Poly m -> m) of
+                  [(m1, 1), (m2, 1), (m3, 1)] -> 
+                    if combineMonomial m1 (combineMonomial m2 m3) == mon 
+                    then Just (Poly (Map.singleton m1 1), Poly (Map.singleton m2 1), Poly (Map.singleton m3 1)) 
+                    else Nothing
+                  _ -> Nothing
+              Nothing -> Nothing
+       _ -> Nothing
 
--- Helper: Add two polynomials
+-- | Find cubic root of a polynomial if it exists
+cubicRoot :: Poly -> Maybe Poly
+cubicRoot p =
+  case getLeadingTerm p of
+    Nothing -> Just polyZero
+    Just (ltM, _) ->
+      if not (monomialDegree ltM `mod` 3 == 0) then Nothing
+      else let terms = Map.toList (case p of Poly m -> m)
+               isComponent (m, c) = c == 1 && monomialDegree m * 3 == monomialDegree ltM
+               components = filter isComponent terms
+           in if length components == 3
+                 then let root = foldl _addPoly polyZero (map (\(m, _) -> Poly (Map.singleton m 1)) components)
+                      in if p == _mulPoly root (_mulPoly root root) then Just root else Nothing
+                 else Nothing
+
+monomialDegree :: Monomial -> Integer
+monomialDegree (Monomial m) = fromIntegral $ Map.foldl (+) 0 m
+
 _addPoly :: Poly -> Poly -> Poly
-_addPoly (Poly m1) (Poly m2) = Poly (Map.unionWith (+) m1 m2)
+_addPoly (Poly m1) (Poly m2) = Poly (Map.filter (/= 0) (Map.unionWith (+) m1 m2))
 
--- Helper: Subtract two polynomials
 subPoly :: Poly -> Poly -> Poly
-subPoly (Poly m1) (Poly m2) = Poly (Map.unionWith (+) m1 (Map.map negate m2))
+subPoly (Poly m1) (Poly m2) = Poly (Map.filter (/= 0) (Map.unionWith (+) m1 (Map.map negate m2)))
 
--- Helper: Multiply two polynomials
 _mulPoly :: Poly -> Poly -> Poly
-_mulPoly (Poly m1) (Poly m2) =
-  let terms = [(_combineMonomial mon1 mon2, c1 * c2)
-              | (mon1, c1) <- Map.toList m1
-              , (mon2, c2) <- Map.toList m2]
-  in Poly (Map.fromListWith (+) terms)
+_mulPoly (Poly m1) (Poly m2) = Poly (Map.filter (/= 0) (Map.fromListWith (+) [ (combineMonomial mon1 mon2, c1 * c2) | (mon1, c1) <- Map.toList m1, (mon2, c2) <- Map.toList m2 ]))
 
--- Helper: Multiply two monomials
-_combineMonomial :: Monomial -> Monomial -> Monomial
-_combineMonomial (Monomial m1) (Monomial m2) =
-  Monomial $ Map.unionWith (+) m1 m2
+combineMonomial :: Monomial -> Monomial -> Monomial
+combineMonomial (Monomial m1) (Monomial m2) = Monomial $ Map.unionWith (+) m1 m2
+
+polyScale :: Poly -> Rational -> Poly
+polyScale (Poly m) s = Poly (Map.map (*s) m)
