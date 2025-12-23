@@ -45,6 +45,7 @@ import Positivity.SOS (checkSOS, checkSOSWithLemmas, SOSCertificate(..), getSOSC
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD, safeFromRational)
 import Positivity.SDP (checkSOS_SDP)
 import Positivity.SOSTypes (trySOSHeuristic)
+import Positivity.SymmetricSOS (checkOnoInequality, OnoResult(..))
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
@@ -262,16 +263,21 @@ autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory 
 
 proveInequalitySOS :: [String] -> SolverOptions -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr, Maybe ProofEvidence)
 proveInequalitySOS pts opts theoryRaw goalRaw =
-  let geomLemmas = generateGeometricLemmas theoryRaw goalRaw
-      (thPrep, goalPrep, varDefsP) = eliminateRational (theoryRaw ++ geomLemmas) goalRaw
-      (thPoly, goalPoly, varDefsS) = eliminateSqrt thPrep goalPrep
-      varDefs = M.union varDefsP varDefsS
-      goalSquared = goalPoly 
-      profileFinal = analyzeProblem thPoly goalSquared
-  in case goalSquared of
-    Ge _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
-    Gt _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
-    _ -> (False, "Not an inequality after preprocessing", Nothing, varDefs, Nothing)
+  -- First, try direct Ono inequality check (bypasses Gröbner for this pattern)
+  case checkOnoInequality theoryRaw goalRaw of
+    OnoProved proof -> (True, "Proved via Ono's inequality (AM-GM)", Just proof, M.empty, Nothing)
+    _ ->
+      -- Standard path
+      let geomLemmas = generateGeometricLemmas theoryRaw goalRaw
+          (thPrep, goalPrep, varDefsP) = eliminateRational (theoryRaw ++ geomLemmas) goalRaw
+          (thPoly, goalPoly, varDefsS) = eliminateSqrt thPrep goalPrep
+          varDefs = M.union varDefsP varDefsS
+          goalSquared = goalPoly
+          profileFinal = analyzeProblem thPoly goalSquared
+      in case goalSquared of
+        Ge _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
+        Gt _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
+        _ -> (False, "Not an inequality after preprocessing", Nothing, varDefs, Nothing)
   where
 
     trySOS theory goalFull goalOriginal profileFinal =
