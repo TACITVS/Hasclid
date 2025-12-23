@@ -991,6 +991,46 @@ polyDerivative (Poly m) var =
     , e > 0
     ]
 
+-- | GCD of two rationals
+rationalGCD :: Rational -> Rational -> Rational
+rationalGCD a b
+  | b == 0 = abs a
+  | otherwise =
+      let na = numerator a
+          da = denominator a
+          nb = numerator b
+          db = denominator b
+          -- GCD of rationals: gcd(a/b, c/d) = gcd(a*d, c*b) / (b*d)
+          numGcd = gcd (na * db) (nb * da)
+          denLcm = lcm da db
+      in abs (fromInteger numGcd / fromInteger denLcm)
+
+-- | Content of a polynomial (GCD of all coefficients)
+-- Returns 1 for zero polynomial to avoid division by zero
+polyContent :: Poly -> Rational
+polyContent (Poly m)
+  | M.null m = 1
+  | otherwise =
+      let coeffs = M.elems m
+      in foldr1 rationalGCD (map abs coeffs)
+
+-- | Primitive part of a polynomial (polynomial divided by its content)
+-- This keeps coefficients small during algebraic manipulations
+polyPrimitive :: Poly -> Poly
+polyPrimitive p@(Poly m)
+  | M.null m = p
+  | otherwise =
+      let c = polyContent p
+      in if c == 0 || c == 1
+         then p
+         else Poly (M.map (/ c) m)
+
+-- | Scale a polynomial by a rational constant
+polyScale :: Rational -> Poly -> Poly
+polyScale 0 _ = polyZero
+polyScale 1 p = p
+polyScale s (Poly m) = Poly (M.map (* s) m)
+
 -- | Generic expression traversal (bottom-up)
 mapExpr :: (Expr -> Expr) -> Expr -> Expr
 mapExpr f expr = f $ case expr of

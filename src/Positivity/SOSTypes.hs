@@ -167,7 +167,7 @@ matchAMGM3 poly =
          let k = c / (-27)
              xyz2 = Poly (Map.singleton mon (27 * k))
              sumCube = _addPoly poly xyz2
-             maybeRoot = cubicRoot (polyScale sumCube (1/k))
+             maybeRoot = cubicRoot (_polyScale sumCube (1/k))
          in case maybeRoot of
               Just root -> 
                 case Map.toList (case root of Poly m -> m) of
@@ -209,5 +209,5 @@ _mulPoly (Poly m1) (Poly m2) = Poly (Map.filter (/= 0) (Map.fromListWith (+) [ (
 combineMonomial :: Monomial -> Monomial -> Monomial
 combineMonomial (Monomial m1) (Monomial m2) = Monomial $ Map.unionWith (+) m1 m2
 
-polyScale :: Poly -> Rational -> Poly
-polyScale (Poly m) s = Poly (Map.map (*s) m)
+_polyScale :: Poly -> Rational -> Poly
+_polyScale (Poly m) s = Poly (Map.map (*s) m)

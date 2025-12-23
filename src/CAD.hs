@@ -66,6 +66,29 @@ negRec = map polyNeg
 subRec :: RecPoly -> RecPoly -> RecPoly
 subRec xs ys = addRec xs (negRec ys)
 
+-- | Make a RecPoly primitive by dividing each Poly coefficient by the
+-- overall content. This prevents coefficient explosion during the
+-- subresultant PRS algorithm.
+primitiveRec :: RecPoly -> RecPoly
+primitiveRec [] = []
+primitiveRec rp =
+  let normalized = normalizeRec rp
+  in if null normalized
+     then []
+     else
+       -- Compute content as GCD of all rational coefficients across all Polys
+       let allCoeffs = concatMap polyCoeffs normalized
+           content = if null allCoeffs
+                     then 1
+                     else foldr1 rationalGCD (map abs allCoeffs)
+       in if content == 0 || content == 1
+          then normalized
+          else map (polyScale (1 / content)) normalized
+
+-- Helper to extract all coefficients from a Poly
+polyCoeffs :: Poly -> [Rational]
+polyCoeffs (Poly m) = M.elems m
+
 -- =============================================
 -- 3. Pseudo-Division
 -- =============================================
@@ -98,19 +121,19 @@ resultant f g var =
     in subresultantPRS rf rg
 
 subresultantPRS :: RecPoly -> RecPoly -> Poly
-subresultantPRS f g = 
-  let f' = normalizeRec f
-      g' = normalizeRec g
+subresultantPRS f g =
+  let f' = primitiveRec f  -- Normalize input to prevent early explosion
+      g' = primitiveRec g
       _ = trace ("CAD: subresultantPRS degrees " ++ show (degRec f') ++ ", " ++ show (degRec g')) ()
   in if length f' < length g' then subresultantPRS g' f'
      else go f' g' (polyFromConst 1) (polyFromConst 1)
   where
     go r0 r1 g h
       | normalizeRec r1 == [] = polyZero
-      | degRec r1 == 0 = 
+      | degRec r1 == 0 =
           let d0 = degRec r0
               l1 = lcRec r1
-          in polyPow l1 (fromIntegral d0)
+          in polyPrimitive (polyPow l1 (fromIntegral d0))  -- Normalize result
       | otherwise =
           let d0 = degRec r0
               d1 = degRec r1
@@ -118,10 +141,13 @@ subresultantPRS f g =
               delta = fromIntegral (d0 - d1)
               r_prem = pseudoRem r0 r1
               divisor = polyMul g (polyPow h delta)
-              r2 = map (\c -> polyDivExact c divisor) r_prem
-              g_next = l1
-              h_next = if delta == 1 then polyDivExact (polyPow g_next delta) (polyFromConst 1)
-                       else polyDivExact (polyPow g_next delta) (polyPow h (fromIntegral (delta - 1)))
+              -- Apply exact division then normalize to prevent coefficient explosion
+              r2_raw = map (\c -> polyDivExact c divisor) r_prem
+              r2 = primitiveRec r2_raw  -- CRITICAL: Normalize after each step
+              g_next = polyPrimitive l1  -- Keep g normalized
+              h_next = if delta == 1
+                       then polyPrimitive (polyDivExact (polyPow g_next delta) (polyFromConst 1))
+                       else polyPrimitive (polyDivExact (polyPow g_next delta) (polyPow h (fromIntegral (delta - 1))))
           in go r1 r2 g_next h_next
 
 polyDivExact :: Poly -> Poly -> Poly
