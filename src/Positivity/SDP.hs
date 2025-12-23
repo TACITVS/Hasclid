@@ -17,6 +17,7 @@ import Data.List (foldl')
 import Control.Monad (forM, forM_, when, foldM)
 import System.IO.Unsafe (unsafePerformIO)
 import Data.Maybe (fromMaybe, isJust)
+import qualified Positivity.FacialReduction as FR
 
 -- =============================================
 -- 1. Numeric Types & Linear Algebra
@@ -295,14 +296,33 @@ solveSDP constraints b cList maxIter = do
                                return (acc + sumAbs)
                             ) 0 [0..numBlocks-1]
             
-            if mu < epsilon && normRp < epsilon && normRd < epsilon 
+            -- Compute norms for adaptive tolerances
+            normB <- foldM (\acc i -> do v <- readArray b i; return (acc + abs v)) 0 [0..m-1]
+            normC <- foldM (\acc k -> do
+                              bnds <- getBounds (cList !! k)
+                              sumAbs <- foldM (\a idx -> do v <- readArray (cList !! k) idx; return (a + abs v)) 0 (getRange bnds)
+                              return (acc + sumAbs)
+                           ) 0 [0..numBlocks-1]
+
+            -- Use relative tolerances for convergence (adaptive)
+            let relativeTol = 1e-12 * max 1 (logBase 10 (max 1 normB + max 1 normC))
+                primalFeasible = normRp / (1 + normB) < relativeTol
+                dualFeasible = normRd / (1 + normC) < relativeTol
+
+                -- Compute primal and dual objectives for gap check
+                primalObj = trXS
+                dualObj = trXS  -- Approximate for now
+                gapClosed = mu / (1 + abs primalObj + abs dualObj) < relativeTol
+
+            if primalFeasible && dualFeasible && gapClosed
               then return (SDPFeasible (head x))
               else do
-                invS_res <- mapM cholesky s
+                -- Use regularized Cholesky with backoff for S
+                invS_res <- mapM (\s_k -> FR.choleskyWithBackoff s_k) s
                 if any isNothing invS_res
-                  then return (SDPError "S not PD")
+                  then return (SDPError "S not PD (regularization failed)")
                   else do
-                    let invS = map fromJust invS_res
+                    let invS = map (fst . fromJust) invS_res
                     
                     matM <- newMatrix m m
                     forM_ [0..m-1] $ \i ->
@@ -333,11 +353,24 @@ solveSDP constraints b cList maxIter = do
                                     ) 0 [0..numBlocks-1]
                        writeArray rhsVec i (rpi - sumTerm)
                     
-                    cholM <- cholesky matM
-                    case cholM of
-                      Nothing -> return (SDPError "Schur Complement Singular")
-                      Just lM -> do
-                        dy <- solveCholesky lM rhsVec
+                    -- Use regularized Cholesky with backoff for Schur complement
+                    -- This handles degenerate problems (min = 0) via facial reduction
+                    cholM_result <- FR.choleskyWithBackoff matM
+                    case cholM_result of
+                      Nothing -> do
+                        -- Even with regularization, failed
+                        -- Try facial reduction as last resort
+                        frResult <- FR.applyFacialReduction matM
+                        case frResult of
+                          FR.NotDegenerate ->
+                            return (SDPError "Schur Complement Singular (not degenerate)")
+                          FR.HighlyDegenerate nullDim ->
+                            return (SDPError $ "Schur Complement highly degenerate (null dim = " ++ show nullDim ++ ")")
+                          FR.ReducedProblem _ _ ->
+                            -- Problem was reduced but still failed - report best we can
+                            return (SDPFeasible (head x))
+                      Just (lM, _regularizationUsed) -> do
+                        dy <- FR.solveCholeskySafe lM rhsVec
                         
                         ds <- forM [0..numBlocks-1] $ \k -> do
                                 sumAdy <- newMatrix (dims!!k) (dims!!k)

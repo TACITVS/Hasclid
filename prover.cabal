@@ -59,6 +59,7 @@ executable prover-int
         Positivity.Numerical
         Positivity.SDP
         Positivity.SOSTypes
+        Positivity.FacialReduction
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7,
@@ -111,6 +112,7 @@ test-suite prover-test
         Positivity.Numerical
         Positivity.SDP
         Positivity.SOSTypes
+        Positivity.FacialReduction
         ExamplesSpec
         IntegrationSpec
     build-depends:
