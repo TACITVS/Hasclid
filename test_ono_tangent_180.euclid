@@ -1,0 +1,50 @@
+-- =======================================================
+-- ONO'S INEQUALITY: THE TANGENT REDUCTION
+-- Strategy: Prove the Geometric Identity 
+--           Sum(tan A) = Product(tan A)
+--           in terms of side lengths.
+-- =======================================================
+:set-timeout 180
+:verbose
+
+-- 1. Setup Coordinates
+:point A 0 0
+:point B cx 0
+:point C ux uy
+
+:assume (> cx 0)
+:assume (> uy 0)
+
+-- 2. Define Squared Sides
+:assume (= c2 (^ cx 2))
+:assume (= b2 (+ (^ ux 2) (^ uy 2)))
+:assume (= a2 (+ (^ (- cx ux) 2) (^ uy 2)))
+
+-- 3. Define Cosine Terms (scaled)
+-- TermA = 2bc cos A = b^2 + c^2 - a^2
+-- Note: tan A = 4Area / TermA
+:assume (= TermA (- (+ b2 c2) a2))
+:assume (= TermB (- (+ a2 c2) b2))
+:assume (= TermC (- (+ a2 b2) c2))
+
+-- 4. Define Area Term (16 * Area^2)
+-- 16S^2 = 4 * (2cx * uy)^2 / 4 ... = 4 * cx^2 * uy^2
+:assume (= S16 (* 4 (* c2 (^ uy 2))))
+
+-- 5. THE TARGET IDENTITY
+-- The condition "Sum(tan) = Prod(tan)" translates to:
+-- Sum(4S/Term) = Prod(4S/Term)
+-- Sum(1/Term)  = 16S^2 / Prod(Term)
+-- Sum(Term_i * Term_j) = 16S^2
+
+:assume (= LHS (+ (* TermA TermB) (+ (* TermB TermC) (* TermC TermA))))
+:assume (= RHS S16)
+
+-- For Acute Triangles: TermA, TermB, TermC > 0
+:assume (> TermA 0)
+:assume (> TermB 0)
+:assume (> TermC 0)
+
+-- 6. ONO'S INEQUALITY
+-- (16S^2)^3 >= 27 * (TermA * TermB * TermC)^2
+:auto (>= (^ S16 3) (* 27 (^ (* TermA (* TermB TermC)) 2)))

@@ -1,0 +1,32 @@
+-- =======================================================
+-- ONO'S INEQUALITY: RAW POLYNOMIAL FORM
+-- No intermediate variables, no preprocessing
+-- Everything expanded in terms of a, b, c only
+-- =======================================================
+:set-timeout 300
+:verbose
+
+-- Triangle with sides a, b, c (all positive)
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+
+-- Triangle inequality constraints
+:assume (> (+ a b) c)
+:assume (> (+ b c) a)
+:assume (> (+ a c) b)
+
+-- Acute triangle: all angles < 90 degrees
+-- cos(A) > 0 means b^2 + c^2 > a^2
+-- cos(B) > 0 means a^2 + c^2 > b^2
+-- cos(C) > 0 means a^2 + b^2 > c^2
+:assume (> (+ (^ b 2) (^ c 2)) (^ a 2))
+:assume (> (+ (^ a 2) (^ c 2)) (^ b 2))
+:assume (> (+ (^ a 2) (^ b 2)) (^ c 2))
+
+-- ONO'S INEQUALITY in completely expanded form:
+-- LHS = (16S^2)^3 where 16S^2 = 2a^2b^2 + 2b^2c^2 + 2c^2a^2 - a^4 - b^4 - c^4
+-- RHS = 27 * (b^2+c^2-a^2)^2 * (a^2+c^2-b^2)^2 * (a^2+b^2-c^2)^2
+-- Goal: LHS >= RHS
+
+:auto (>= (^ (- (+ (+ (* 2 (* (^ a 2) (^ b 2))) (* 2 (* (^ b 2) (^ c 2)))) (* 2 (* (^ c 2) (^ a 2)))) (+ (+ (^ a 4) (^ b 4)) (^ c 4))) 3) (* 27 (* (^ (- (+ (^ b 2) (^ c 2)) (^ a 2)) 2) (* (^ (- (+ (^ a 2) (^ c 2)) (^ b 2)) 2) (^ (- (+ (^ a 2) (^ b 2)) (^ c 2)) 2)))))

@@ -1,0 +1,9 @@
+:set-timeout 60
+:verbose
+
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+:assume (= (+ x (+ y z)) (* x (* y z)))
+
+:auto (>= (^ (* x (* y z)) 2) 27)
