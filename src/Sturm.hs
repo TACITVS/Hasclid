@@ -1,9 +1,38 @@
 module Sturm where
 
 import Data.List (dropWhileEnd)
+import Data.Ratio (numerator, denominator)
 
 -- | Univariate Polynomials are just [Rational] (c0 + c1*x + c2*x^2 ...)
 type UPoly = [Rational]
+
+-- | GCD of two rationals
+rationalGCD :: Rational -> Rational -> Rational
+rationalGCD a b
+  | b == 0 = abs a
+  | otherwise =
+      let na = numerator a
+          da = denominator a
+          nb = numerator b
+          db = denominator b
+          numGcd = gcd (na * db) (nb * da)
+          denLcm = lcm da db
+      in abs (fromInteger numGcd / fromInteger denLcm)
+
+-- | Content of a univariate polynomial (GCD of all coefficients)
+polyContent :: UPoly -> Rational
+polyContent [] = 1
+polyContent p =
+  let coeffs = filter (/= 0) p
+  in if null coeffs then 1 else foldr1 rationalGCD (map abs coeffs)
+
+-- | Make polynomial primitive (divide by content)
+-- This prevents coefficient explosion during polynomial divisions
+polyPrimitive :: UPoly -> UPoly
+polyPrimitive [] = []
+polyPrimitive p =
+  let c = polyContent p
+  in if c == 0 || c == 1 then p else map (/ c) p
 
 -- =========================================================================
 -- BASIC POLYNOMIAL OPS
@@ -37,16 +66,19 @@ polyRem f g
   | gNorm == [] = error "Division by zero polynomial"
   | fNorm == [] = []
   | degree f < degree g = fNorm
-  | otherwise = 
+  | otherwise =
       let df = degree f
           dg = degree g
           lf = lc f
           lg = lc g
           factor = lf / lg
           subTerm = scalePoly factor (shiftPoly (df - dg) g)
-      in polyRem (normalize (addPoly f (negPoly subTerm))) g
-  where fNorm = normalize f
-        gNorm = normalize g
+          result = normalize (addPoly f (negPoly subTerm))
+          -- CRITICAL: Normalize to primitive after each step to prevent explosion
+          resultPrim = polyPrimitive result
+      in polyRem resultPrim g
+  where fNorm = polyPrimitive (normalize f)  -- Start with primitive
+        gNorm = polyPrimitive (normalize g)
 
 derivative :: UPoly -> UPoly
 derivative [] = []

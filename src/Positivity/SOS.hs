@@ -134,8 +134,8 @@ robustCholesky reducer p cert
                        Nothing -> error "Partition logic failed"
           in case maybeV of
                Nothing -> 
-                 let base = polyAdd (polyScale (polyFromMonomial m 1) c) (polyScale qPoly (1/2))
-                     subtraction = polyScale (polyMul base base) (1/c)
+                 let base = polyAdd (_polyScale (polyFromMonomial m 1) c) (_polyScale qPoly (1/2))
+                     subtraction = _polyScale (polyMul base base) (1/c)
                      newP = reducer (polySub p subtraction)
                      newCert = cert { sosTerms = (1/c, base) : sosTerms cert }
                  in robustCholesky reducer newP newCert
@@ -177,8 +177,8 @@ polyDivMonomial (Poly mapping) m =
      then Nothing
      else Just (Poly (M.fromList [ (r, c) | (Just r, c) <- dividedList ]))
 
-polyScale :: Poly -> Rational -> Poly
-polyScale (Poly m) s = Poly (M.map (*s) m)
+_polyScale :: Poly -> Rational -> Poly
+_polyScale (Poly m) s = Poly (M.map (*s) m)
 
 polyFromMonomial :: Monomial -> Rational -> Poly
 polyFromMonomial m c = Poly (M.singleton m c)
