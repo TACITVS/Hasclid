@@ -1,0 +1,24 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - LEMMA 1: Cosine Sum Bound
+-- =============================================================================
+-- For angles α + β + γ = π with all in (0, π/2):
+--   cos(α) + cos(β) + cos(γ) <= 3/2
+--
+-- Using the identity: cx² + cy² + cz² + 2*cx*cy*cz = 1
+-- Prove: cx + cy + cz <= 3/2
+-- =============================================================================
+
+:set-timeout 120
+:optimize on
+
+-- Cosine variables for half-angles (positive, in (0,1))
+:assume (> cx 0)
+:assume (> cy 0)
+:assume (> cz 0)
+
+-- The identity for angles summing to π
+:assume (= (+ (^ cx 2) (+ (^ cy 2) (+ (^ cz 2) (* 2 (* cx (* cy cz)))))) 1)
+
+-- Goal: cx + cy + cz <= 3/2
+:auto (<= (+ cx (+ cy cz)) (/ 3 2))
+

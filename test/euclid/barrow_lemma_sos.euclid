@@ -1,0 +1,33 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - COSINE SUM LEMMA VIA SOS
+-- =============================================================================
+-- For angles α + β + γ = π:
+--   cos²α + cos²β + cos²γ + 2*cosα*cosβ*cosγ = 1
+--
+-- Prove: 3/2 - (cx + cy + cz) >= 0
+-- Subject to: cx² + cy² + cz² + 2*cx*cy*cz = 1, cx,cy,cz > 0
+--
+-- This should be provable via SOS since it's a polynomial inequality
+-- with polynomial constraints.
+-- =============================================================================
+
+:set-timeout 120
+:optimize on
+
+-- Cosine variables (non-negative)
+:assume (>= cx 0)
+:assume (>= cy 0)
+:assume (>= cz 0)
+
+-- Upper bounds (cosines bounded by 1)
+:assume (<= cx 1)
+:assume (<= cy 1)
+:assume (<= cz 1)
+
+-- The identity for angles summing to π
+:assume (= (+ (^ cx 2) (+ (^ cy 2) (+ (^ cz 2) (* 2 (* cx (* cy cz)))))) 1)
+
+-- Goal: cx + cy + cz <= 3/2
+-- Equivalently: 3/2 - cx - cy - cz >= 0
+:auto (>= (- (/ 3 2) (+ cx (+ cy cz))) 0)
+

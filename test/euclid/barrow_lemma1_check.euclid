@@ -1,0 +1,21 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - LEMMA 1: Verify the identity at symmetric point
+-- =============================================================================
+-- At α = β = γ = π/3:
+--   cos(π/3) = 1/2
+--   cos²(π/3) = 1/4
+--   Identity check: 3*(1/4) + 2*(1/2)³ = 3/4 + 1/4 = 1
+--   Sum check: 3*(1/2) = 3/2
+-- =============================================================================
+
+:set-timeout 60
+:optimize on
+
+-- Check identity at symmetric point cx = cy = cz = 1/2
+:assume (= cx (/ 1 2))
+:assume (= cy (/ 1 2))
+:assume (= cz (/ 1 2))
+
+-- Verify identity holds: cx² + cy² + cz² + 2*cx*cy*cz = 1
+:auto (= (+ (^ cx 2) (+ (^ cy 2) (+ (^ cz 2) (* 2 (* cx (* cy cz)))))) 1)
+
