@@ -151,33 +151,44 @@ looksLikeTrianglePattern m a b c =
 -- | Try AM-GM pattern for n=3: (xy+yz+zx)^3 - 27x^2y^2z^2 >= 0
 tryAMGMPattern :: Poly -> [Formula] -> Maybe SOSCertificate
 tryAMGMPattern p _theory = 
-  let _ = trace ("SOS: tryAMGMPattern on poly: " ++ prettyPolyNice p) ()
-  in case matchAMGM3 p of
-    Just _ -> trace "SOS: AM-GM Pattern Matched!" $ Just $ SOSCertificate [] [] polyZero (Just AM_GM)
+  case matchAMGM3 p of
+    Just _ -> Just $ SOSCertificate [] [] polyZero (Just AM_GM)
     Nothing -> Nothing
 
 -- | Robust AM-GM matcher for n=3
+-- Matches k * ((a+b+c)^3 - 27abc)
+-- Note: Expansion of (a+b+c)^3 has a 6abc term, so the coefficient of abc in the final poly is -21k.
+-- | Robust AM-GM matcher for n=3
+-- Matches k * ((a+b+c)^3 - 27abc)
+-- Note: Expansion of (a+b+c)^3 has a 6abc term, so the coefficient of abc in the final poly is -21k.
 matchAMGM3 :: Poly -> Maybe (Poly, Poly, Poly)
 matchAMGM3 poly =
-  let terms = Map.toList (case poly of Poly m -> m)
-      -- Identify possible product terms (-27 * mon)
-      productCandidates = filter (\(_, c) -> c < 0) terms
-  in case productCandidates of
-       ((mon, c):_) -> 
-         let k = c / (-27)
-             xyz2 = Poly (Map.singleton mon (27 * k))
-             sumCube = _addPoly poly xyz2
-             maybeRoot = cubicRoot (polyScale sumCube (1/k))
-         in case maybeRoot of
-              Just root -> 
-                case Map.toList (case root of Poly m -> m) of
-                  [(m1, 1), (m2, 1), (m3, 1)] -> 
-                    if combineMonomial m1 (combineMonomial m2 m3) == mon 
-                    then Just (Poly (Map.singleton m1 1), Poly (Map.singleton m2 1), Poly (Map.singleton m3 1)) 
-                    else Nothing
-                  _ -> Nothing
-              Nothing -> Nothing
-       _ -> Nothing
+  case getLeadingTerm poly of
+    Just (ltM, k) -> 
+      let rootCandidateCube = _polyScale poly (1/k) -- Should be (a+b+c)^3 - 21abc
+          -- The product term in rootCandidateCube should be -21abc
+          terms = Map.toList (case rootCandidateCube of Poly m -> m)
+          productCandidates = filter (\(m, c) -> c == -21) terms
+      in case productCandidates of
+           ((mon, _):_) -> 
+             let abc = Poly (Map.singleton mon 1)
+                 maybeRoot = cubicRoot (_addPoly rootCandidateCube (_polyScale abc 21))
+             in case maybeRoot of
+                  Just root -> 
+                    case Map.toList (case root of Poly m -> m) of
+                      [(m1, 1), (m2, 1), (m3, 1)] -> 
+                        if combineMonomial m1 (combineMonomial m2 m3) == mon 
+                        then Just (Poly (Map.singleton m1 1), Poly (Map.singleton m2 1), Poly (Map.singleton m3 1)) 
+                        else Nothing
+                      _ -> Nothing
+                  Nothing -> Nothing
+           _ -> Nothing
+    Nothing -> Nothing
+
+-- | Check if a monomial is a product of three other monomials m1*m2*m3
+-- In our case, we check if it matches the cube root's components' product.
+isProductOfThree :: Monomial -> Bool
+isProductOfThree (Monomial vars) = all (\e -> e `mod` 1 == 0) (Map.elems vars) -- Trivial check
 
 -- | Find cubic root of a polynomial if it exists
 cubicRoot :: Poly -> Maybe Poly
@@ -187,12 +198,19 @@ cubicRoot p =
     Just (ltM, _) ->
       if not (monomialDegree ltM `mod` 3 == 0) then Nothing
       else let terms = Map.toList (case p of Poly m -> m)
-               isComponent (m, c) = c == 1 && monomialDegree m * 3 == monomialDegree ltM
-               components = filter isComponent terms
-           in if length components == 3
-                 then let root = foldl _addPoly polyZero (map (\(m, _) -> Poly (Map.singleton m 1)) components)
+               -- A component m_i of the root corresponds to a term m_i^3 in the polynomial
+               isCubicComponent (m, c) = c == 1 && (monomialDegree m == monomialDegree ltM) && isCubeMonomial m
+               components = filter isCubicComponent terms
+           in if not (null components)
+                 then let root = foldl _addPoly polyZero (map (\(m, _) -> Poly (Map.singleton (cubeRootMonomial m) 1)) components)
                       in if p == _mulPoly root (_mulPoly root root) then Just root else Nothing
                  else Nothing
+
+isCubeMonomial :: Monomial -> Bool
+isCubeMonomial (Monomial vars) = all (\e -> e `mod` 3 == 0) (Map.elems vars)
+
+cubeRootMonomial :: Monomial -> Monomial
+cubeRootMonomial (Monomial vars) = Monomial (Map.map (`div` 3) vars)
 
 monomialDegree :: Monomial -> Integer
 monomialDegree (Monomial m) = fromIntegral $ Map.foldl (+) 0 m
@@ -209,5 +227,5 @@ _mulPoly (Poly m1) (Poly m2) = Poly (Map.filter (/= 0) (Map.fromListWith (+) [ (
 combineMonomial :: Monomial -> Monomial -> Monomial
 combineMonomial (Monomial m1) (Monomial m2) = Monomial $ Map.unionWith (+) m1 m2
 
-polyScale :: Poly -> Rational -> Poly
-polyScale (Poly m) s = Poly (Map.map (*s) m)
+_polyScale :: Poly -> Rational -> Poly
+_polyScale (Poly m) s = Poly (Map.map (*s) m)

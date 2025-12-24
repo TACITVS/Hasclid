@@ -1,0 +1,78 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - ONO-STYLE PROOF
+-- =============================================================================
+-- Using the tangent identity for half-angles summing to π.
+--
+-- Let x = tan(α), y = tan(β), z = tan(γ) where α + β + γ = π
+-- Then: x + y + z = xyz (tangent sum identity for angles summing to π)
+--
+-- The angle bisector formula: PU = 2*PB*PC*cos(α)/(PB + PC)
+-- where cos(α) = 1/√(1 + x²)
+--
+-- Key: By AM-GM, 2*PB*PC/(PB + PC) ≤ √(PB*PC)
+-- So: PU ≤ √(PB*PC) / √(1 + x²)
+-- And: PU² ≤ PB*PC/(1 + x²)
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+-- Define tangent variables with the identity
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+:assume (= (+ x (+ y z)) (* x (* y z)))
+
+-- Define cos² terms
+:assume (= c2x (/ 1 (+ 1 (^ x 2))))
+:assume (= c2y (/ 1 (+ 1 (^ y 2))))
+:assume (= c2z (/ 1 (+ 1 (^ z 2))))
+
+-- Define positive cos terms (0 < cos < 1 for angles in (0, π/2))
+:assume (= (^ cx 2) c2x)
+:assume (> cx 0)
+:assume (= (^ cy 2) c2y)
+:assume (> cy 0)
+:assume (= (^ cz 2) c2z)
+:assume (> cz 0)
+
+-- Distance variables
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+
+-- Products of distances (used in angle bisector formula)
+:assume (= ab (* a b))
+:assume (= bc (* b c))
+:assume (= ca (* c a))
+
+-- Sum pairs
+:assume (= sab (+ a b))
+:assume (= sbc (+ b c))
+:assume (= sca (+ c a))
+
+-- Key quantity: We need to prove
+-- a + b + c >= 2*(PU + PV + PW)
+-- where PU ≤ 2*bc*cx/sbc, etc.
+
+-- Squared form of angle bisector bound:
+-- PU² ≤ bc*c2x / (sbc/2)² = 4*bc*c2x/sbc²
+
+-- Define upper bounds for 2*PU, 2*PV, 2*PW
+-- 2*PU ≤ sbc*cx (using 2*bc/sbc ≤ sbc/2 by AM-GM... wait that's backwards)
+
+-- Actually: 2*bc/sbc = 2bc/(b+c)
+-- By AM-GM: bc ≤ (b+c)²/4
+-- So: 2*bc/(b+c) ≤ (b+c)/2
+
+-- Thus: 2*PU = 4*bc*cx/sbc ≤ (b+c)*cx
+
+-- Similarly: 2*PV ≤ (c+a)*cy, 2*PW ≤ (a+b)*cz
+
+-- Goal: a + b + c >= (b+c)*cx + (c+a)*cy + (a+b)*cz
+
+:assume (= rhs (+ (* sbc cx) (+ (* sca cy) (* sab cz))))
+:assume (= lhs (+ a (+ b c)))
+
+:auto (>= lhs rhs)
+

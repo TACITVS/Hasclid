@@ -1,0 +1,26 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - EQUILATERAL CASE (CONCRETE)
+-- =============================================================================
+-- For equilateral triangle with P at center:
+-- PA = PB = PC, and PU = PV = PW = PA/2
+-- So PA + PB + PC = 2(PU + PV + PW) is trivially 3*PA = 3*PA
+-- =============================================================================
+
+:set-timeout 120
+
+-- Let's use a concrete value approach
+-- PA = 2, so PA² = 4
+-- PU = 1 (half of PA), so PU² = 1
+
+:assume (= PA 2)
+:assume (= PB 2)
+:assume (= PC 2)
+:assume (= PU 1)
+:assume (= PV 1)
+:assume (= PW 1)
+
+-- LHS = PA + PB + PC = 6
+-- RHS = 2(PU + PV + PW) = 2*3 = 6
+-- Should prove equality
+:auto (= (+ PA (+ PB PC)) (* 2 (+ PU (+ PV PW))))
+

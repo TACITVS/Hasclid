@@ -1,0 +1,70 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - COMPONENT PROOF
+-- =============================================================================
+-- Strategy: Prove for one component and use symmetry.
+--
+-- The key inequality for each component (using angle bisector formula):
+--   2*PU <= PB + PC
+--
+-- Summing all three gives Barrow's (but we need the right constraint).
+--
+-- Actually, the key is the relationship:
+--   PA >= 2*PU_A (where U_A is on BC related to angle at A, not at P)
+--
+-- For Barrow's original formulation:
+--   The angle bisectors are from P to each side.
+--   U on BC: bisector of ∠BPC
+--   V on CA: bisector of ∠CPA
+--   W on AB: bisector of ∠APB
+--
+-- Key geometric insight: ∠BPC/2 + ∠CPA/2 + ∠APB/2 = π
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+-- =============================================================================
+-- APPROACH: Use the squared difference formulation
+-- Show: (PA + PB + PC - 2*PU - 2*PV - 2*PW) >= 0
+-- =============================================================================
+
+-- Define half-angles (these satisfy α + β + γ = π)
+-- Using tangent substitution: x = tan(α), y = tan(β), z = tan(γ)
+-- with constraint: xy + yz + zx = 1 (tangent sum identity)
+
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+:assume (= (+ (* x y) (+ (* y z) (* z x))) 1)
+
+-- For the equilateral case with P at center:
+-- α = β = γ = 60° = π/3
+-- tan(60°) = sqrt(3), so x = y = z = sqrt(3)
+-- Check: 3 + 3 + 3 = 9 ≠ 1 ... hmm, that doesn't work
+
+-- Wait, for α + β + γ = π, the identity is:
+-- tan(α) + tan(β) + tan(γ) = tan(α)*tan(β)*tan(γ)
+-- NOT xy + yz + zx = 1
+
+-- Let me reconsider. For angles summing to π:
+-- tan(α) + tan(β) + tan(γ) = tan(α)*tan(β)*tan(γ)
+-- So: x + y + z = xyz
+
+:reset
+
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+:assume (= (+ x (+ y z)) (* x (* y z)))
+
+-- This is the correct tangent identity for angles summing to π
+
+-- For equilateral: x = y = z = tan(60°) = sqrt(3)
+-- Check: 3*sqrt(3) = (sqrt(3))³ = 3*sqrt(3) ✓
+
+-- Now, the angle bisector formula involves cos(θ/2)
+-- cos(θ/2) = 1/sqrt(1 + tan²(θ/2))
+
+-- This is getting complex. Let me try a simpler numerical verification first.
+:auto (> (* x (* y z)) 0)
+

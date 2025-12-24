@@ -1,0 +1,57 @@
+-- =======================================================
+-- BLUNDON'S INEQUALITY: GENERIC POLYNOMIAL FORM
+-- s <= 2R + (3*sqrt(3) - 4)r
+-- Converted to polynomial inequality to handle sqrt(3) and Area
+-- =======================================================
+:set-timeout 180
+:verbose
+
+-- Triangle with sides a, b, c (all positive)
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+
+-- Triangle inequality constraints
+:assume (> (+ a b) c)
+:assume (> (+ b c) a)
+:assume (> (+ a c) b)
+
+-- Symmetry Breaking
+:assume (<= a b)
+:assume (<= b c)
+
+-- WLOG: Fix scale s = 1 => 2s = 2
+:assume (= s_2 2)
+
+-- Define 2s (s_2)
+:assume (= s_2 (+ a (+ b c)))
+
+-- Define 16 * Area^2 (Heron's Formula)
+-- 16S^2 = 2a^2b^2 + 2b^2c^2 + 2c^2a^2 - a^4 - b^4 - c^4
+:assume (= a2 (^ a 2))
+:assume (= b2 (^ b 2))
+:assume (= c2 (^ c 2))
+:assume (= AreaSq16 (- (+ (+ (* 2 (* a2 b2)) (* 2 (* b2 c2))) (* 2 (* c2 a2))) (+ (+ (^ a2 2) (^ b2 2)) (^ c2 2))))
+
+-- Define k = sqrt(3)
+:assume (= (^ k 2) 3)
+:assume (> k 0)
+
+-- Derivation of Polynomial Form:
+-- s <= 2R + (3k - 4)r
+-- s <= abc/(2Area) + (3k-4)Area/s
+-- 2 s^2 Area <= s abc + 2(3k-4) Area^2
+-- Substitute s = s_2/2, Area = sqrt(AreaSq16)/4
+-- 2 (s_2/2)^2 (sqrt(AreaSq16)/4) <= (s_2/2) abc + 2(3k-4) (AreaSq16/16)
+-- (s_2^2 / 2) (sqrt(AreaSq16)/4) <= (s_2 abc / 2) + (3k-4) (AreaSq16/8)
+-- Multiply by 8:
+-- s_2^2 sqrt(AreaSq16) <= 4 s_2 abc + (3k-4) AreaSq16
+-- Square both sides (valid since both positive):
+-- s_2^4 AreaSq16 <= (4 s_2 abc + (3k-4) AreaSq16)^2
+
+:assume (= LHS (* (^ s_2 4) AreaSq16))
+:assume (= RHS_Base (+ (* 4 (* s_2 (* a (* b c)))) (* (- (* 3 k) 4) AreaSq16)))
+:assume (= RHS (^ RHS_Base 2))
+
+-- Goal
+:auto (<= LHS RHS)

@@ -1,0 +1,54 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - GENERIC FORM
+-- =============================================================================
+-- Goal: Prove PA + PB + PC >= 2*(PU + PV + PW) generically
+--
+-- After applying AM-GM to angle bisector formulas:
+--   2*PU <= (PB + PC) * cos(α)
+--   2*PV <= (PC + PA) * cos(β)
+--   2*PW <= (PA + PB) * cos(γ)
+--
+-- The key inequality becomes:
+--   a + b + c >= (b+c)*cx + (c+a)*cy + (a+b)*cz
+-- where a=PA, b=PB, c=PC and cx, cy, cz are half-angle cosines.
+--
+-- The constraint is: α + β + γ = π (half-angles sum to π)
+-- Using tangent: tan(α) + tan(β) + tan(γ) = tan(α)*tan(β)*tan(γ)
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+-- Tangent variables for half-angles (positive for angles in (0, π/2))
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+
+-- Tangent identity for α + β + γ = π
+:assume (= (+ x (+ y z)) (* x (* y z)))
+
+-- Distance variables (positive)
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+
+-- Cosine squared definitions: cos²(α) = 1/(1 + tan²(α))
+:assume (= c2x (/ 1 (+ 1 (^ x 2))))
+:assume (= c2y (/ 1 (+ 1 (^ y 2))))
+:assume (= c2z (/ 1 (+ 1 (^ z 2))))
+
+-- Cosine variables (positive square roots)
+:assume (= (^ cx 2) c2x)
+:assume (> cx 0)
+:assume (= (^ cy 2) c2y)
+:assume (> cy 0)
+:assume (= (^ cz 2) c2z)
+:assume (> cz 0)
+
+-- The new heuristics should:
+-- 1. Detect homogeneous structure and add a+b+c = 1 WLOG
+-- 2. Derive polynomial constraints: c2x*(1+x²) = 1
+
+-- Goal: a + b + c >= (b+c)*cx + (c+a)*cy + (a+b)*cz
+:auto (>= (+ a (+ b c)) (+ (* (+ b c) cx) (+ (* (+ c a) cy) (* (+ a b) cz))))
+

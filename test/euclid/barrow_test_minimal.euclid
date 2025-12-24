@@ -1,0 +1,14 @@
+-- Minimal test for Barrow inequality setup
+:set-timeout 60
+
+-- Equilateral triangle
+:point A 0 0
+:point B 2 0
+:point C 1 s
+
+-- s = sqrt(3)
+:assume (= (^ s 2) 3)
+:assume (> s 0)
+
+-- Test simple computation
+:prove (> s 1)

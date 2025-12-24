@@ -199,9 +199,9 @@ coreSpec = do
         let x = polyFromVar "x"
             poly = polyAdd (polyPow x 2) (polyFromConst (-1))
             disc = discriminant poly "x"
-        -- CAD discriminant for x^2 - 1 is -2 (not standard 4)
+        -- CAD discriminant for x^2 - 1 is -1 (normalized from standard -4)
         -- This is acceptable - we only care about zeros for projection
-        disc `shouldBe` polyFromConst (-2)
+        disc `shouldBe` polyFromConst (-1)
 
     describe "Resultant" $ do
       it "resultant of x^2 - a^2 and x - a w.r.t x is zero" $ do

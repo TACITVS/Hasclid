@@ -1,0 +1,40 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - POLYNOMIAL SLICE (x = y)
+-- =============================================================================
+-- Eliminate divisions by cross-multiplying
+--
+-- With x = y, tangent identity: 2x + z = x²z
+-- Cross-multiply: z*(x² - 1) = 2x (polynomial form)
+--
+-- Cosine constraint: cx²*(1+x²) = 1 (already polynomial)
+-- =============================================================================
+
+:set-timeout 180
+:optimize on
+
+-- Tangent variables
+:assume (> x 0)
+:assume (= y x)
+:assume (> z 0)
+
+-- Tangent identity in polynomial form: z*(x² - 1) = 2x
+-- This requires x² > 1, i.e., x > 1
+:assume (> (^ x 2) 1)
+:assume (= (* z (- (^ x 2) 1)) (* 2 x))
+
+-- Normalized distances
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+:assume (= (+ a (+ b c)) 1)
+
+-- Cosine constraints (polynomial)
+:assume (> cx 0)
+:assume (> cz 0)
+:assume (= (* (^ cx 2) (+ 1 (^ x 2))) 1)
+:assume (= (* (^ cz 2) (+ 1 (^ z 2))) 1)
+:assume (= cy cx)
+
+-- Goal: 1 >= (1-a)*cx + (1-b)*cy + (1-c)*cz
+:auto (>= 1 (+ (* (- 1 a) cx) (+ (* (- 1 b) cy) (* (- 1 c) cz))))
+

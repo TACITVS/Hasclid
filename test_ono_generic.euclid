@@ -1,0 +1,40 @@
+-- =======================================================
+-- ONO'S INEQUALITY: MOST GENERIC FORM
+-- No preprocessing, no coordinate changes, no tangents
+-- Pure symbolic proof from side lengths and area
+-- =======================================================
+:set-timeout 300
+:verbose
+
+-- Triangle with sides a, b, c (all positive)
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+
+-- Triangle inequality constraints (valid triangle)
+:assume (> (+ a b) c)
+:assume (> (+ b c) a)
+:assume (> (+ a c) b)
+
+-- Squared sides
+:assume (= a2 (^ a 2))
+:assume (= b2 (^ b 2))
+:assume (= c2 (^ c 2))
+
+-- Cosine terms (must be positive for acute triangle)
+:assume (= TermA (- (+ b2 c2) a2))
+:assume (= TermB (- (+ a2 c2) b2))
+:assume (= TermC (- (+ a2 b2) c2))
+
+-- Acute triangle constraints
+:assume (> TermA 0)
+:assume (> TermB 0)
+:assume (> TermC 0)
+
+-- 16 * Area^2 via Heron's formula
+-- 16S^2 = 2a^2b^2 + 2b^2c^2 + 2c^2a^2 - a^4 - b^4 - c^4
+:assume (= S16 (- (+ (+ (* 2 (* a2 b2)) (* 2 (* b2 c2))) (* 2 (* c2 a2))) (+ (+ (^ a2 2) (^ b2 2)) (^ c2 2))))
+
+-- ONO'S INEQUALITY:
+-- (16S^2)^3 >= 27 * (TermA * TermB * TermC)^2
+:auto (>= (^ S16 3) (* 27 (^ (* TermA (* TermB TermC)) 2)))

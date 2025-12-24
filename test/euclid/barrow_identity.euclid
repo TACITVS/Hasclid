@@ -1,0 +1,31 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - WITH HALF-ANGLE IDENTITY
+-- =============================================================================
+-- For angles α + β + γ = π, there's an identity:
+--   cos²α + cos²β + cos²γ + 2*cos(α)*cos(β)*cos(γ) = 1
+--
+-- This is the KEY constraint that makes Barrow work!
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+-- Use normalized distances: a + b + c = 1
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+:assume (= (+ a (+ b c)) 1)
+
+-- Cosine variables for half-angles (positive for angles in (0, π/2))
+:assume (> cx 0)
+:assume (> cy 0)
+:assume (> cz 0)
+
+-- The identity for angles summing to π:
+-- cos²α + cos²β + cos²γ + 2*cos(α)*cos(β)*cos(γ) = 1
+:assume (= (+ (^ cx 2) (+ (^ cy 2) (+ (^ cz 2) (* 2 (* cx (* cy cz)))))) 1)
+
+-- Goal: 1 >= (1-a)*cx + (1-b)*cy + (1-c)*cz
+
+:auto (>= 1 (+ (* (- 1 a) cx) (+ (* (- 1 b) cy) (* (- 1 c) cz))))
+

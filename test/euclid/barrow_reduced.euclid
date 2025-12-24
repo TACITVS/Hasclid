@@ -1,0 +1,42 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - REDUCED VARIABLES
+-- =============================================================================
+-- Strategy: Eliminate variables using constraints
+--
+-- Let's use: c = 1 - a - b (from a + b + c = 1)
+-- And focus on a symmetric section where cx = cy = cz = cs
+-- Then x = y = z = t (from symmetry)
+-- Tangent identity: 3t = t³ => t² = 3 => t = √3
+-- So cs² = 1/(1+3) = 1/4, cs = 1/2
+--
+-- With symmetry, goal becomes: 1 >= 2*cs * (1 - a + 1 - b + 1 - c)
+--                              1 >= 2*cs * (3 - 1)
+--                              1 >= 2*cs * 2 = 4*cs
+-- For cs = 1/2: 1 >= 2 which is FALSE!
+--
+-- Wait, let me recompute...
+-- Goal: 1 >= (1-a)*cs + (1-b)*cs + (1-c)*cs = cs*(3 - (a+b+c)) = cs*(3-1) = 2*cs
+-- For cs = 1/2: 1 >= 1 ✓ (equality, correct!)
+--
+-- Now test a perturbation from symmetry
+-- =============================================================================
+
+:set-timeout 120
+:optimize on
+
+-- WLOG: a + b + c = 1
+:assume (> a 0)
+:assume (> b 0)
+:assume (= c (- 1 (+ a b)))
+:assume (> c 0)
+
+-- Symmetric cosines: cs = 1/2 (equality case)
+:assume (= cs (/ 1 2))
+:assume (= cx cs)
+:assume (= cy cs)
+:assume (= cz cs)
+
+-- Goal: 1 >= (1-a)*cx + (1-b)*cy + (1-c)*cz
+-- With symmetric cosines: 1 >= cs * (3 - 1) = 2*cs = 1
+:auto (>= 1 (+ (* (- 1 a) cx) (+ (* (- 1 b) cy) (* (- 1 c) cz))))
+

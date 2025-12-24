@@ -1,0 +1,44 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - FULL TANGENT FORMULATION
+-- =============================================================================
+-- Variables: x = tan(α), y = tan(β), z = tan(γ) where α + β + γ = π
+-- Constraint: x + y + z = xyz (tangent identity for angles summing to π)
+--
+-- For acute angles (all in (0, π/2)):
+--   x, y, z > 0
+--   cos²(α) = 1/(1+x²), so cx² = 1/(1+x²)
+--
+-- Key: Using WLOG normalization a + b + c = 1
+-- Goal: 1 >= (1-a)*cx + (1-b)*cy + (1-c)*cz
+-- =============================================================================
+
+:set-timeout 120
+:optimize on
+
+-- Tangent variables (positive for acute half-angles)
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+
+-- Tangent identity for α + β + γ = π
+:assume (= (+ x (+ y z)) (* x (* y z)))
+
+-- Normalized distances
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+:assume (= (+ a (+ b c)) 1)
+
+-- Cosine squared terms: cx² = 1/(1+x²)
+-- For acute half-angles, cx > 0, so cx = √(1/(1+x²))
+-- Square both sides: cx²*(1+x²) = 1
+:assume (> cx 0)
+:assume (> cy 0)
+:assume (> cz 0)
+:assume (= (* (^ cx 2) (+ 1 (^ x 2))) 1)
+:assume (= (* (^ cy 2) (+ 1 (^ y 2))) 1)
+:assume (= (* (^ cz 2) (+ 1 (^ z 2))) 1)
+
+-- Goal: 1 >= (1-a)*cx + (1-b)*cy + (1-c)*cz
+:auto (>= 1 (+ (* (- 1 a) cx) (+ (* (- 1 b) cy) (* (- 1 c) cz))))
+

@@ -52,13 +52,17 @@ executable prover-int
         Validation
         ReplSupport
         F4Lite
+        F5
         Wu
         Geometry.WLOG
         Geometry.Barycentric
+        Heuristics
         Positivity.SOS
         Positivity.Numerical
         Positivity.SDP
         Positivity.SOSTypes
+        Positivity.FacialReduction
+        Positivity.SymmetricSOS
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7,
@@ -104,13 +108,17 @@ test-suite prover-test
         Validation
         ReplSupport
         F4Lite
+        F5
         Wu
         Geometry.WLOG
         Geometry.Barycentric
+        Heuristics
         Positivity.SOS
         Positivity.Numerical
         Positivity.SDP
         Positivity.SOSTypes
+        Positivity.FacialReduction
+        Positivity.SymmetricSOS
         ExamplesSpec
         IntegrationSpec
     build-depends:
@@ -129,3 +137,23 @@ test-suite prover-test
         numbers
     default-language: GHC2021
     ghc-options: -Wall -Wno-unused-imports -Wno-incomplete-patterns -Wno-name-shadowing
+
+
+test-suite f5-test
+    type:             exitcode-stdio-1.0
+    main-is:          TestF5.hs
+    hs-source-dirs:   test, src
+    other-modules:
+        F5
+        Expr
+        TermOrder
+        F4Lite
+        BuchbergerOpt
+        Modular
+        Geometry.WLOG
+        Geometry.Barycentric
+        Error
+        Timeout
+    build-depends:    base, hspec, containers, vector, numbers, array, deepseq, random, mtl, time
+    default-language: GHC2021
+

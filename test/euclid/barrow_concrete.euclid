@@ -1,0 +1,70 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - CONCRETE TEST CASE
+-- =============================================================================
+-- Triangle: A = (0,0), B = (4,0), C = (0,3) (right triangle, legs 3 and 4)
+-- Interior point: P = (1, 1)
+--
+-- We compute all distances and verify Barrow's inequality numerically.
+-- =============================================================================
+
+:set-timeout 120
+:optimize on
+
+-- Squared distances from P to vertices
+-- PA² = 1² + 1² = 2
+-- PB² = 3² + 1² = 10
+-- PC² = 1² + 2² = 5
+-- BC² = 4² + 3² = 25 (hypotenuse)
+-- CA² = 0² + 3² = 9
+-- AB² = 4² + 0² = 16
+
+:assume (= PA2 2)
+:assume (= PB2 10)
+:assume (= PC2 5)
+:assume (= BC2 25)
+:assume (= CA2 9)
+:assume (= AB2 16)
+
+-- Positive distance variables
+:assume (= (^ PA 2) PA2)
+:assume (> PA 0)
+:assume (= (^ PB 2) PB2)
+:assume (> PB 0)
+:assume (= (^ PC 2) PC2)
+:assume (> PC 0)
+
+-- Side lengths
+:assume (= (^ BC 2) BC2)
+:assume (> BC 0)
+:assume (= (^ CA 2) CA2)
+:assume (> CA 0)
+:assume (= (^ AB 2) AB2)
+:assume (> AB 0)
+
+-- Compute angle bisector lengths using the formula:
+-- PU² = PB*PC*((PB+PC)² - BC²)/(PB+PC)²
+
+:assume (= sBC (+ PB PC))
+:assume (= sBC2 (^ sBC 2))
+:assume (= diffU (- sBC2 BC2))
+:assume (= PU2 (/ (* (* PB PC) diffU) sBC2))
+:assume (= (^ PU 2) PU2)
+:assume (> PU 0)
+
+:assume (= sCA (+ PC PA))
+:assume (= sCA2 (^ sCA 2))
+:assume (= diffV (- sCA2 CA2))
+:assume (= PV2 (/ (* (* PC PA) diffV) sCA2))
+:assume (= (^ PV 2) PV2)
+:assume (> PV 0)
+
+:assume (= sAB (+ PA PB))
+:assume (= sAB2 (^ sAB 2))
+:assume (= diffW (- sAB2 AB2))
+:assume (= PW2 (/ (* (* PA PB) diffW) sAB2))
+:assume (= (^ PW 2) PW2)
+:assume (> PW 0)
+
+-- GOAL: PA + PB + PC >= 2*(PU + PV + PW)
+:auto (>= (+ PA (+ PB PC)) (* 2 (+ PU (+ PV PW))))
+

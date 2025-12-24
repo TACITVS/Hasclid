@@ -1,0 +1,25 @@
+-- ONO'S INEQUALITY (Standard Form)
+:set-timeout 180
+:verbose
+
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+
+-- We use squared variables to avoid sqrts in this test
+:assume (= a2 (^ a 2))
+:assume (= b2 (^ b 2))
+:assume (= c2 (^ c 2))
+
+-- TermA = b^2 + c^2 - a^2
+:assume (= TermA (- (+ b2 c2) a2))
+:assume (= TermB (- (+ a2 c2) b2))
+:assume (= TermC (- (+ a2 b2) c2))
+
+-- Goal: Ono's Inequality
+-- S16 is not defined here, we want Heron to kick in if we assume it's a triangle.
+-- Wait, Heron heuristic needs to know what S16 is. 
+-- In Heuristics.hs, I added tryHeronSubstitution which adds (= S16 Heron(a2,b2,c2)) 
+-- if S16 is used but not defined.
+
+:auto (>= (^ S16 3) (* 27 (^ (* TermA (* TermB TermC)) 2)))

@@ -1,0 +1,84 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - TANGENT FORMULATION
+-- =============================================================================
+-- Key insight: The half-angles at P satisfy α + β + γ = π
+-- where α = ∠BPC/2, β = ∠CPA/2, γ = ∠APB/2
+--
+-- Using tangent substitution: x = tan(α), y = tan(β), z = tan(γ)
+-- The identity α + β + γ = π gives: x + y + z = xyz
+--
+-- The angle bisector formula: PU = 2*PB*PC*cos(α)/(PB + PC)
+-- where cos(α) = 1/sqrt(1 + x²)
+--
+-- For an acute-angle configuration (all angles < π/2), x, y, z > 0.
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+-- Tangent variables for half-angles at P
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+
+-- Tangent identity for angles summing to π:
+-- tan(α) + tan(β) + tan(γ) = tan(α)*tan(β)*tan(γ)
+:assume (= (+ x (+ y z)) (* x (* y z)))
+
+-- cos² values (using cos²θ = 1/(1 + tan²θ))
+:assume (= cos2_alpha (/ 1 (+ 1 (^ x 2))))
+:assume (= cos2_beta (/ 1 (+ 1 (^ y 2))))
+:assume (= cos2_gamma (/ 1 (+ 1 (^ z 2))))
+
+-- For the angle bisector lengths:
+-- PU² = 4*PB²*PC²*cos²(α) / (PB + PC)²
+-- By AM-GM: PB*PC <= (PB + PC)²/4
+-- So: PU² <= (PB + PC)² * cos²(α)
+-- And: PU <= (PB + PC) * cos(α)
+
+-- Similarly: PV <= (PC + PA) * cos(β), PW <= (PA + PB) * cos(γ)
+
+-- Define:
+-- LHS = PA + PB + PC
+-- RHS_bound = 2*(PU + PV + PW) <= 2*[(PB+PC)cos(α) + (PC+PA)cos(β) + (PA+PB)cos(γ)]
+
+-- For the equality case (equilateral, P at center):
+-- x = y = z = tan(60°) = sqrt(3)
+-- cos(60°) = 1/2
+-- (PB+PC) = 2r, so (PB+PC)*cos(α) = r
+-- RHS_bound = 2*3*r = 6r... no that's too big
+
+-- Wait, for equilateral:
+-- PU = r/2, so 2*PU = r
+-- (PB + PC)*cos(60°) = 2r*(1/2) = r
+-- So bound is tight here!
+
+-- The goal is: PA + PB + PC >= 2*(PU + PV + PW)
+-- Using the bounds: PA + PB + PC >= 2*[(PB+PC)*cos(α) + (PC+PA)*cos(β) + (PA+PB)*cos(γ)]
+
+-- Define simplified variables for distances
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+
+:assume (= PA a)
+:assume (= PB b)
+:assume (= PC c)
+
+-- The inequality to prove:
+-- a + b + c >= 2*[(b+c)*cos(α) + (c+a)*cos(β) + (a+b)*cos(γ)]
+-- Let's verify this algebraically.
+
+-- Actually, for the general case, we need:
+-- a + b + c >= 2*sqrt(cos2_alpha)*(b+c) + 2*sqrt(cos2_beta)*(c+a) + 2*sqrt(cos2_gamma)*(a+b)
+
+-- This still has square roots. Let me try a squared version.
+
+-- For now, verify the tangent identity is valid for equilateral:
+-- x = y = z = sqrt(3)
+-- LHS = 3*sqrt(3)
+-- RHS = (sqrt(3))³ = 3*sqrt(3) ✓
+
+-- Basic check: the identity is consistent
+:auto (= (+ x (+ y z)) (* x (* y z)))
+

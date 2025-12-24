@@ -1,0 +1,101 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - GENERAL CASE
+-- =============================================================================
+-- Theorem: PA + PB + PC >= 2(PU + PV + PW)
+--
+-- Key formula for angle bisector length:
+--   PU² * (PB + PC)² = PB * PC * ((PB + PC)² - BC²)
+--
+-- We use squared formulations to avoid square roots.
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+-- =============================================================================
+-- SETUP: Generic triangle ABC with interior point P
+-- =============================================================================
+
+-- WLOG position: A at origin, B on x-axis, C in upper half-plane
+:point A 0 0
+:point B bx 0
+:point C cx cy
+
+-- Non-degeneracy
+:assume (> bx 0)
+:assume (> cy 0)
+
+-- Interior point P with barycentric-style constraints
+:assume (> px 0)
+:assume (> py 0)
+:assume (< py cy)
+
+-- Define squared distances
+:assume (= PA2 (+ (^ px 2) (^ py 2)))
+:assume (= PB2 (+ (^ (- px bx) 2) (^ py 2)))
+:assume (= PC2 (+ (^ (- px cx) 2) (^ (- py cy) 2)))
+
+:assume (= BC2 (+ (^ (- bx cx) 2) (^ cy 2)))
+:assume (= CA2 (+ (^ cx 2) (^ cy 2)))
+:assume (= AB2 (^ bx 2))
+
+-- Define positive distances
+:assume (= (^ PA 2) PA2)
+:assume (> PA 0)
+:assume (= (^ PB 2) PB2)
+:assume (> PB 0)
+:assume (= (^ PC 2) PC2)
+:assume (> PC 0)
+
+-- =============================================================================
+-- KEY FORMULA: Angle bisector length
+-- PU² * (PB + PC)² = PB * PC * ((PB + PC)² - BC²)
+-- =============================================================================
+
+-- For U (angle bisector of ∠BPC meeting BC):
+-- PU² * (PB + PC)² = PB² * PC² * (1 + cos(∠BPC))
+-- Using cos(∠BPC) = (PB² + PC² - BC²)/(2*PB*PC):
+-- PU² * (PB + PC)² = PB * PC * (2*PB*PC + PB² + PC² - BC²) / 2
+--                  = PB * PC * ((PB + PC)² - BC²) / 2 ... wait this doesn't match
+
+-- Actually: PU² = PB * PC * (1 - BC²/(PB+PC)²)
+-- So: PU² * (PB + PC)² = PB * PC * ((PB + PC)² - BC²)
+
+-- Let's define: PU_formula2 = PB * PC * ((PB + PC)² - BC²) / (PB + PC)²
+-- Then PU² = PU_formula2 should hold.
+
+-- Define the formula-based quantities
+:assume (= denomU2 (^ (+ PB PC) 2))
+:assume (= innerU (- denomU2 BC2))
+:assume (> innerU 0)
+:assume (= PU2_formula (/ (* (* PB PC) innerU) denomU2))
+
+-- PU satisfies the angle bisector formula
+:assume (= (^ PU 2) PU2_formula)
+:assume (> PU 0)
+
+-- Similarly for V (∠CPA, meeting CA):
+:assume (= denomV2 (^ (+ PC PA) 2))
+:assume (= innerV (- denomV2 CA2))
+:assume (> innerV 0)
+:assume (= PV2_formula (/ (* (* PC PA) innerV) denomV2))
+:assume (= (^ PV 2) PV2_formula)
+:assume (> PV 0)
+
+-- And W (∠APB, meeting AB):
+:assume (= denomW2 (^ (+ PA PB) 2))
+:assume (= innerW (- denomW2 AB2))
+:assume (> innerW 0)
+:assume (= PW2_formula (/ (* (* PA PB) innerW) denomW2))
+:assume (= (^ PW 2) PW2_formula)
+:assume (> PW 0)
+
+-- =============================================================================
+-- GOAL: Barrow's Inequality
+-- =============================================================================
+
+-- The inequality: PA + PB + PC >= 2*(PU + PV + PW)
+-- Equivalently: (PA + PB + PC)² >= 4*(PU + PV + PW)²
+
+:auto (>= (+ PA (+ PB PC)) (* 2 (+ PU (+ PV PW))))
+

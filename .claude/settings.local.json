@@ -44,7 +44,10 @@
       "Bash(cmd.exe /c \"taskkill /F /IM prover-int.exe 2>&1 || echo No prover running\")",
       "Bash(cmd.exe /c:*)",
       "Bash(do echo \"=== Testing: $file ===\")",
-      "WebSearch"
+      "WebSearch",
+      "Bash(ghci:*)",
+      "WebFetch(domain:arxiv.org)",
+      "Bash(./test_f5_bounds.exe:*)"
     ],
     "deny": [],
     "ask": []
