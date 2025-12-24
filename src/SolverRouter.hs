@@ -28,6 +28,7 @@ import Preprocessing (preprocess, preprocessGeometry, PreprocessingResult(..), a
 import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..))
 import Wu (wuProve, wuProveWithTrace, formatWuTrace, proveExistentialWu, reduceWithWu)
+import qualified Wu (WuTrace(..))
 import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive, intBoundsFromQ, promoteIntVars)
 import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
 import CADLift (proveFormulaCAD)
@@ -373,11 +374,54 @@ isInequality (Lt _ _) = True
 isInequality _ = False
 
 executeSolver :: [String] -> SolverChoice -> SolverOptions -> ProblemProfile -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
-executeSolver pts solver opts _profile theory goal =
+executeSolver pts solver opts profile theory goal =
   case solver of
     UseSOS -> let (proved, reason, trace, defs, _) = proveInequalitySOS pts opts theory goal in (proved, reason, trace, defs)
     UseCAD -> let (proved, reason, trace, defs) = runCadRational theory goal in (proved, reason, trace, defs)
-    _ -> (False, "Not implemented", Nothing, M.empty)
+    UseWu ->
+      case wuProveWithTrace theory goal of
+        Left _err -> (False, "Wu's method failed", Nothing, M.empty)
+        Right trace -> (Wu.isProved trace, Wu.proofReason trace, Just (formatWuTrace trace), M.empty)
+    UseGroebner ->
+      -- For equalities, try Wu first then Groebner
+      if isEquality goal
+      then case wuProveWithTrace theory goal of
+             Right trace | Wu.isProved trace ->
+               (True, Wu.proofReason trace, Just (formatWuTrace trace), M.empty)
+             _ ->
+               let (gbProved, gbReason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal) Nothing theory goal
+               in (gbProved, gbReason, Nothing, M.empty)
+      else let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal) Nothing theory goal
+           in (proved, reason, Nothing, M.empty)
+    UseAreaMethod ->
+      -- Try area method, fallback to Wu/Groebner if it fails
+      case deriveConstruction theory goal of
+        Just (construction, geoExpr) ->
+          let (proved, trace) = proveArea construction geoExpr
+          in if proved
+             then (True, "Proved by Area Method", Just trace, M.empty)
+             else -- Fallback to Wu for equalities
+               if isEquality goal
+               then case wuProveWithTrace theory goal of
+                      Right wuTrace | Wu.isProved wuTrace ->
+                        (True, Wu.proofReason wuTrace, Just (formatWuTrace wuTrace), M.empty)
+                      _ ->
+                        let (gbProved, gbReason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal) Nothing theory goal
+                        in (gbProved, gbReason, Nothing, M.empty)
+               else (False, trace, Nothing, M.empty)
+        Nothing ->
+          -- Can't construct for area method, use Wu/Groebner directly
+          if isEquality goal
+          then case wuProveWithTrace theory goal of
+                 Right trace | Wu.isProved trace ->
+                   (True, Wu.proofReason trace, Just (formatWuTrace trace), M.empty)
+                 _ ->
+                   let (gbProved, gbReason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal) Nothing theory goal
+                   in (gbProved, gbReason, Nothing, M.empty)
+          else (False, "Area method not applicable", Nothing, M.empty)
+    UseGeoSolver -> (False, "GeoSolver pass-through", Nothing, M.empty)
+    UseConstructiveWu -> (False, "Not implemented", Nothing, M.empty)
+    Unsolvable -> (False, "Problem classified as unsolvable", Nothing, M.empty)
 
 extractPolyVars :: Poly -> S.Set String
 extractPolyVars (Poly m) = S.fromList $ concatMap (\(mono, _) -> let Monomial vars = mono in M.keys vars) (M.toList m)

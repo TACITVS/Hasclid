@@ -19,48 +19,58 @@ import Data.Maybe (mapMaybe, listToMaybe)
 -- | Parameter Substitution: If we have a parameter k with k^2 = c and k > 0,
 -- substitute k with a rational approximation of sqrt(c).
 -- This is useful for inequalities where algebraic numbers cause issues for SOS/CAD.
+-- IMPORTANT: Only apply to inequality goals, not equalities (float errors cause false negatives).
 tryParameterSubstitution :: Theory -> Formula -> (Theory, Formula, [String])
-tryParameterSubstitution theory goal =
-  let vars = nub $ concatMap varsInFormula (goal : theory)
-      
-      -- Find candidate parameters defined by k^2 = Const
-      findParam :: String -> Maybe Rational
-      findParam v = 
-        let isSqDef (Eq (Pow (Var x) 2) (Const c)) | x == v = Just c
-            isSqDef (Eq (Pow (Var x) 2) (IntConst c)) | x == v = Just (fromInteger c % 1)
-            isSqDef _ = Nothing
-            
-            isPos (Gt (Var x) (Const 0)) | x == v = True
-            isPos _ = False
-            
-            constVal = listToMaybe (mapMaybe isSqDef theory)
-            posCheck = any isPos theory
-        in if posCheck then constVal else Nothing
-            
-      params = mapMaybe (\v -> fmap (\c -> (v, c)) (findParam v)) vars
-      
-      approxSqrt :: Rational -> Rational
-      approxSqrt r = 
-        -- Newton iteration for integer sqrt
-        let n = numerator r
-            d = denominator r
-            val = fromIntegral n / fromIntegral d
-            s = sqrt val :: Double
-            -- Convert back to rational (approximate)
-        in toRational s
+tryParameterSubstitution theory goal
+  | not (isIneq goal) = (theory, goal, [])  -- Skip for equalities (float errors cause false negatives)
+  | otherwise =
+      let vars = nub $ concatMap varsInFormula (goal : theory)
 
-  in case params of
-       ((p, val):_) ->
-         let approx = approxSqrt val
-             subs = M.singleton p (Const approx)
-             -- We do NOT remove the definition. This allows the solver to use both 
-             -- the approximation and the definition, potentially finding a contradiction 
-             -- or using the definition for reduction if the approx is close enough to be useful.
-             -- In practice, this often allows proving difficult inequalities by 'numeric' means.
-             newTheory = map (applySubstitutionsFormula subs) theory
-             newGoal = applySubstitutionsFormula subs goal
-         in (newTheory, newGoal, ["Applied Rational Approximation for " ++ p ++ ": sqrt(" ++ show (fromRational val :: Double) ++ ") ~ " ++ show (fromRational approx :: Double)])
-       _ -> (theory, goal, [])
+          -- Find candidate parameters defined by k^2 = Const
+          findParam :: String -> Maybe Rational
+          findParam v =
+            let isSqDef (Eq (Pow (Var x) 2) (Const c)) | x == v = Just c
+                isSqDef (Eq (Pow (Var x) 2) (IntConst c)) | x == v = Just (fromInteger c % 1)
+                isSqDef _ = Nothing
+
+                isPos (Gt (Var x) (Const 0)) | x == v = True
+                isPos _ = False
+
+                constVal = listToMaybe (mapMaybe isSqDef theory)
+                posCheck = any isPos theory
+            in if posCheck then constVal else Nothing
+
+          params = mapMaybe (\v -> fmap (\c -> (v, c)) (findParam v)) vars
+
+          approxSqrt :: Rational -> Rational
+          approxSqrt r =
+            -- Newton iteration for integer sqrt
+            let n = numerator r
+                d = denominator r
+                val = fromIntegral n / fromIntegral d
+                s = sqrt val :: Double
+                -- Convert back to rational (approximate)
+            in toRational s
+
+      in case params of
+           ((p, val):_) ->
+             let approx = approxSqrt val
+                 subs = M.singleton p (Const approx)
+                 -- We do NOT remove the definition. This allows the solver to use both
+                 -- the approximation and the definition, potentially finding a contradiction
+                 -- or using the definition for reduction if the approx is close enough to be useful.
+                 -- In practice, this often allows proving difficult inequalities by 'numeric' means.
+                 newTheory = map (applySubstitutionsFormula subs) theory
+                 newGoal = applySubstitutionsFormula subs goal
+             in (newTheory, newGoal, ["Applied Rational Approximation for " ++ p ++ ": sqrt(" ++ show (fromRational val :: Double) ++ ") ~ " ++ show (fromRational approx :: Double)])
+           _ -> (theory, goal, [])
+  where
+    isIneq :: Formula -> Bool
+    isIneq (Ge _ _) = True
+    isIneq (Gt _ _) = True
+    isIneq (Le _ _) = True
+    isIneq (Lt _ _) = True
+    isIneq _ = False
 
 -- | Ravi Substitution: a = y+z, b = z+x, c = x+y
 -- Applicable when a, b, c are sides of a triangle.

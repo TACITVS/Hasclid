@@ -1,0 +1,50 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - SLICE: x = y (Two Equal Angles)
+-- =============================================================================
+-- Reduce complexity by assuming two half-angles are equal: α = β
+-- This means x = y (tangents equal), and cx = cy (cosines equal)
+--
+-- Tangent identity: x + y + z = xyz
+-- With x = y: 2x + z = x²z => z(x² - 1) = 2x => z = 2x/(x² - 1)
+-- For x > 1 (angle > π/4), z > 0
+--
+-- This reduces from 6 free parameters to 4: (a, b, c, x)
+-- With a + b + c = 1, we have 3 free parameters
+-- =============================================================================
+
+:set-timeout 180
+:optimize on
+
+-- Tangent variable (for acute half-angles, x > 0)
+-- For the constraint to give z > 0, we need x > 1 (angle > π/4)
+:assume (> x 1)
+
+-- Symmetric: y = x
+:assume (= y x)
+
+-- z from tangent identity: 2x + z = x²z => z = 2x/(x² - 1)
+:assume (= z (/ (* 2 x) (- (^ x 2) 1)))
+:assume (> z 0)
+
+-- Normalized distances
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+:assume (= (+ a (+ b c)) 1)
+
+-- Cosine squared: cx² = 1/(1+x²)
+-- For positive cosine: cx = 1/sqrt(1+x²)
+-- Constraint: cx²*(1+x²) = 1
+:assume (> cx 0)
+:assume (= (* (^ cx 2) (+ 1 (^ x 2))) 1)
+
+-- cy = cx (since y = x)
+:assume (= cy cx)
+
+-- cz² = 1/(1+z²), cz > 0
+:assume (> cz 0)
+:assume (= (* (^ cz 2) (+ 1 (^ z 2))) 1)
+
+-- Goal: 1 >= (1-a)*cx + (1-b)*cy + (1-c)*cz
+:auto (>= 1 (+ (* (- 1 a) cx) (+ (* (- 1 b) cy) (* (- 1 c) cz))))
+

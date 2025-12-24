@@ -1,0 +1,19 @@
+-- =============================================================================
+-- BARROW CONSTRAINT SATISFIABILITY CHECK
+-- =============================================================================
+-- Verify the constraint system has a solution at the symmetric point
+-- =============================================================================
+
+:set-timeout 60
+:optimize on
+
+-- Symmetric point: x = y = z = sqrt(3), so x² = 3
+:assume (= (^ x 2) 3)
+:assume (> x 0)
+:assume (= y x)
+:assume (= z x)
+
+-- Verify tangent identity: x + y + z = xyz
+-- 3x = x³ => x² = 3 ✓
+:auto (= (+ x (+ y z)) (* x (* y z)))
+
