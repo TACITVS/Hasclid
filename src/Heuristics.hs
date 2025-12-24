@@ -51,6 +51,10 @@ tryParameterSubstitution theory goal =
        ((p, val):_) ->
          let approx = approxSqrt val
              subs = M.singleton p (Const approx)
+             -- We do NOT remove the definition. This allows the solver to use both 
+             -- the approximation and the definition, potentially finding a contradiction 
+             -- or using the definition for reduction if the approx is close enough to be useful.
+             -- In practice, this often allows proving difficult inequalities by 'numeric' means.
              newTheory = map (applySubstitutionsFormula subs) theory
              newGoal = applySubstitutionsFormula subs goal
          in (newTheory, newGoal, ["Applied Rational Approximation for " ++ p ++ ": sqrt(" ++ show (fromRational val :: Double) ++ ") ~ " ++ show (fromRational approx :: Double)])

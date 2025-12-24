@@ -16,6 +16,13 @@
 :assume (> (+ b c) a)
 :assume (> (+ a c) b)
 
+-- Symmetry Breaking
+:assume (<= a b)
+:assume (<= b c)
+
+-- WLOG: Fix scale s = 1 => 2s = 2
+:assume (= s_2 2)
+
 -- Define 2s (s_2)
 :assume (= s_2 (+ a (+ b c)))
 
