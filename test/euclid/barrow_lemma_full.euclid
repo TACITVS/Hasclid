@@ -1,0 +1,34 @@
+-- =============================================================================
+-- BARROW'S KEY LEMMA (FULL): 2*PU <= PB + PC
+-- =============================================================================
+-- Equivalently: 4 * PB * PC * ((PB + PC)² - BC²) <= (PB + PC)⁴
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+:assume (> PB 0)
+:assume (> PC 0)
+:assume (>= BC 0)
+
+-- Triangle inequality: PB + PC > BC
+:assume (> (+ PB PC) BC)
+
+-- Define key expressions
+:assume (= s (+ PB PC))
+:assume (= s2 (^ s 2))
+:assume (= s4 (^ s 4))
+:assume (= p (* PB PC))
+:assume (= bc2 (^ BC 2))
+:assume (= diff (- s2 bc2))
+
+-- LHS of the inequality we want to prove
+:assume (= lhs (* 4 (* p diff)))
+
+-- GOAL: lhs <= s4
+-- Proof structure:
+--   lhs = 4*p*diff <= s2*diff = s2*(s2 - bc2) = s4 - s2*bc2 <= s4
+--   using 4*p <= s2 (already proved) and bc2 >= 0
+
+:auto (<= lhs s4)
+

@@ -1,0 +1,64 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - DIRECT SQUARED APPROACH
+-- =============================================================================
+-- Goal: (PA + PB + PC)² >= 4*(PU + PV + PW)²
+--
+-- We use the angle bisector formula and express everything algebraically.
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+-- Positive quantities
+:assume (> PA 0)
+:assume (> PB 0)
+:assume (> PC 0)
+:assume (> BC 0)
+:assume (> CA 0)
+:assume (> AB 0)
+
+-- Triangle inequalities for P's visibility to each side
+:assume (> (+ PB PC) BC)
+:assume (> (+ PC PA) CA)
+:assume (> (+ PA PB) AB)
+
+-- Define the angle bisector lengths squared
+-- PU² = PB*PC*((PB+PC)² - BC²)/(PB+PC)²
+-- Let's use auxiliary variables for clarity
+
+:assume (= sBC (+ PB PC))
+:assume (= sCA (+ PC PA))
+:assume (= sAB (+ PA PB))
+
+:assume (= sBC2 (^ sBC 2))
+:assume (= sCA2 (^ sCA 2))
+:assume (= sAB2 (^ sAB 2))
+
+:assume (= diffU (- sBC2 (^ BC 2)))
+:assume (= diffV (- sCA2 (^ CA 2)))
+:assume (= diffW (- sAB2 (^ AB 2)))
+
+:assume (> diffU 0)
+:assume (> diffV 0)
+:assume (> diffW 0)
+
+-- Angle bisector lengths squared
+:assume (= PU2 (/ (* (* PB PC) diffU) sBC2))
+:assume (= PV2 (/ (* (* PC PA) diffV) sCA2))
+:assume (= PW2 (/ (* (* PA PB) diffW) sAB2))
+
+:assume (= (^ PU 2) PU2)
+:assume (> PU 0)
+:assume (= (^ PV 2) PV2)
+:assume (> PV 0)
+:assume (= (^ PW 2) PW2)
+:assume (> PW 0)
+
+-- Define sums for the inequality
+:assume (= LHS (+ PA (+ PB PC)))
+:assume (= RHS (* 2 (+ PU (+ PV PW))))
+
+-- GOAL: LHS >= RHS
+-- Equivalently: LHS² >= RHS² (since both positive)
+:auto (>= LHS RHS)
+

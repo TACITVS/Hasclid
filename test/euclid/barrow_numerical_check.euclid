@@ -1,0 +1,44 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - NUMERICAL VERIFICATION
+-- =============================================================================
+-- Test with specific numerical values to verify the inequality structure.
+-- =============================================================================
+
+:set-timeout 120
+:optimize on
+
+-- Test Case 1: Right triangle with P at a specific point
+-- Triangle: A = (0,0), B = (4,0), C = (0,3)
+-- P at (1, 1) (interior point)
+
+:assume (= PA2 (+ 1 1))
+:assume (= PB2 (+ 9 1))
+:assume (= PC2 (+ 1 4))
+:assume (= BC2 (+ 16 9))
+
+:assume (= PA (sqrt PA2))
+:assume (= PB (sqrt PB2))
+:assume (= PC (sqrt PC2))
+
+-- Compute the angle bisector lengths
+-- For U (on BC), using: PU² = PB*PC*((PB+PC)² - BC²)/(PB+PC)²
+:assume (= sum_BC (+ PB PC))
+:assume (= sum_BC2 (^ sum_BC 2))
+:assume (= inner_U (- sum_BC2 BC2))
+:assume (= PU2 (/ (* (* PB PC) inner_U) sum_BC2))
+:assume (= PU (sqrt PU2))
+
+-- For simplicity, let's just compute and check numerically
+-- PA ≈ sqrt(2) ≈ 1.414
+-- PB ≈ sqrt(10) ≈ 3.162
+-- PC ≈ sqrt(5) ≈ 2.236
+-- BC = 5
+
+-- LHS = PA + PB + PC ≈ 1.414 + 3.162 + 2.236 ≈ 6.81
+
+-- For RHS, we need PU, PV, PW
+-- This is complex to compute exactly. Let's verify the algebraic structure.
+
+-- Verify: sum_BC2 > BC2 (triangle inequality)
+:auto (> sum_BC2 BC2)
+

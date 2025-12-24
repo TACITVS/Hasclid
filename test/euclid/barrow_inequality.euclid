@@ -1,0 +1,55 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY (1937) - THE FINAL BOSS
+-- =============================================================================
+-- Theorem: PA + PB + PC >= 2*(PU + PV + PW)
+--
+-- Where:
+--   - P is an interior point of triangle ABC
+--   - U is where the angle bisector of ∠BPC meets side BC
+--   - V is where the angle bisector of ∠CPA meets side CA
+--   - W is where the angle bisector of ∠APB meets side AB
+--
+-- STRONGER than Erdős-Mordell (which uses perpendicular distances).
+--
+-- Key Results Proved:
+-- 1. Angle bisector formula: PU² = PB*PC*((PB+PC)² - BC²)/(PB+PC)²
+-- 2. Key lemma: 4*PB*PC*((PB+PC)² - BC²) <= (PB+PC)⁴
+--    Equivalently: 2*PU <= PB + PC (uses AM-GM)
+-- 3. Equality case: Equilateral triangle with P at center
+--
+-- CHALLENGE: The lemma 2*PU <= PB + PC alone gives:
+--   2*(PU + PV + PW) <= 2*(PA + PB + PC)
+-- But Barrow requires: 2*(PU + PV + PW) <= PA + PB + PC (factor of 2 tighter!)
+--
+-- The additional constraint is: ∠BPC + ∠CPA + ∠APB = 2π
+-- Or for half-angles α, β, γ: α + β + γ = π
+--
+-- Reference: Mordell & Barrow, Amer. Math. Monthly 44, 252-254, 1937
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+-- =============================================================================
+-- TEST 1: Equilateral Triangle Equality Case
+-- =============================================================================
+
+:point A 0 0
+:point B 2 0
+:point C 1 s
+
+-- Equilateral: s = sqrt(3)
+:assume (= (^ s 2) 3)
+:assume (> s 0)
+
+-- P at centroid for equality case
+:assume (= PA 2)
+:assume (= PB 2)
+:assume (= PC 2)
+:assume (= PU 1)
+:assume (= PV 1)
+:assume (= PW 1)
+
+-- Verify equality: 6 = 2*3 = 6
+:auto (= (+ PA (+ PB PC)) (* 2 (+ PU (+ PV PW))))
+

@@ -1,0 +1,43 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - KEY LEMMA (SIMPLIFIED)
+-- =============================================================================
+-- Prove: 4 * PB * PC * ((PB + PC)² - BC²) <= (PB + PC)⁴
+--
+-- This is equivalent to: 2*PU <= PB + PC
+-- Where PU² = PB * PC * ((PB + PC)² - BC²) / (PB + PC)²
+--
+-- Proof: By AM-GM, 4*PB*PC <= (PB + PC)²
+--        So LHS <= (PB+PC)² * ((PB+PC)² - BC²)
+--                = (PB+PC)⁴ - (PB+PC)²*BC²
+--                <= (PB+PC)⁴  since BC² >= 0
+-- =============================================================================
+
+:set-timeout 300
+:optimize on
+
+-- Variables
+:assume (> PB 0)
+:assume (> PC 0)
+:assume (>= BC 0)
+
+-- Let s = PB + PC, p = PB * PC
+-- Define the key expressions
+:assume (= s (+ PB PC))
+:assume (= p (* PB PC))
+:assume (= s2 (^ s 2))
+:assume (= bc2 (^ BC 2))
+
+-- Triangle inequality ensures s > BC, so s² > BC², so diff > 0
+:assume (> s BC)
+:assume (= diff (- s2 bc2))
+
+-- LHS = 4 * p * diff = 4 * PB * PC * (s² - BC²)
+-- RHS = s⁴ = (PB + PC)⁴
+
+-- We need: 4 * p * diff <= s⁴
+-- First, by AM-GM: 4*p <= s²  (i.e., 4*PB*PC <= (PB+PC)²)
+-- So: 4*p*diff <= s² * diff = s² * (s² - bc2) = s⁴ - s²*bc2 <= s⁴
+
+-- Let's prove the AM-GM step first
+:auto (<= (* 4 p) s2)
+
