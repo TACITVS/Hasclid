@@ -141,10 +141,11 @@ autoSolveInternal pts allowSplit opts pointSubs theoryRaw goalRaw =
       (theoryH3, goalH3, logH3) = tryRaviSubstitution theoryH2 goalH2
       (theoryH4, goalH4, logH4) = tryTangentSubstitution theoryH3 goalH3
       (theoryH5, goalH5, logH5) = trySymmetryBreaking theoryH4 goalH4
+      (theoryH6, goalH6, logH6) = tryParameterSubstitution theoryH5 goalH5
       
-      heuristicLogs = logH1 ++ logH2 ++ logH3 ++ logH4 ++ logH5
+      heuristicLogs = logH1 ++ logH2 ++ logH3 ++ logH4 ++ logH5 ++ logH6
 
-      (theoryS, goalS, varDefsS) = eliminateSqrt theoryH5 goalH5
+      (theoryS, goalS, varDefsS) = eliminateSqrt theoryH6 goalH6
       (theoryP, goalP, varDefsP) = eliminateRational theoryS goalS
       varDefs = M.union varDefsS varDefsP
       preprocessResult = preprocess pointSubs theoryP goalP

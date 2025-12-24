@@ -4,12 +4,57 @@ module Heuristics
   , trySymmetryBreaking
   , tryHeronSubstitution
   , tryCotangentSubstitution
+  , tryParameterSubstitution
   ) where
 
 import Expr
 import Data.List (nub, sort, find)
 import qualified Data.Map.Strict as M
 import Debug.Trace (trace)
+import Data.Ratio ((%), numerator, denominator)
+import Data.Maybe (mapMaybe, listToMaybe)
+
+-- | Parameter Substitution: If we have a parameter k with k^2 = c and k > 0,
+-- substitute k with a rational approximation of sqrt(c).
+-- This is useful for inequalities where algebraic numbers cause issues for SOS/CAD.
+tryParameterSubstitution :: Theory -> Formula -> (Theory, Formula, [String])
+tryParameterSubstitution theory goal =
+  let vars = nub $ concatMap varsInFormula (goal : theory)
+      
+      -- Find candidate parameters defined by k^2 = Const
+      findParam :: String -> Maybe Rational
+      findParam v = 
+        let isSqDef (Eq (Pow (Var x) 2) (Const c)) | x == v = Just c
+            isSqDef (Eq (Pow (Var x) 2) (IntConst c)) | x == v = Just (fromInteger c % 1)
+            isSqDef _ = Nothing
+            
+            isPos (Gt (Var x) (Const 0)) | x == v = True
+            isPos _ = False
+            
+            constVal = listToMaybe (mapMaybe isSqDef theory)
+            posCheck = any isPos theory
+        in if posCheck then constVal else Nothing
+            
+      params = mapMaybe (\v -> fmap (\c -> (v, c)) (findParam v)) vars
+      
+      approxSqrt :: Rational -> Rational
+      approxSqrt r = 
+        -- Newton iteration for integer sqrt
+        let n = numerator r
+            d = denominator r
+            val = fromIntegral n / fromIntegral d
+            s = sqrt val :: Double
+            -- Convert back to rational (approximate)
+        in toRational s
+
+  in case params of
+       ((p, val):_) ->
+         let approx = approxSqrt val
+             subs = M.singleton p (Const approx)
+             newTheory = map (applySubstitutionsFormula subs) theory
+             newGoal = applySubstitutionsFormula subs goal
+         in (newTheory, newGoal, ["Applied Rational Approximation for " ++ p ++ ": sqrt(" ++ show (fromRational val :: Double) ++ ") ~ " ++ show (fromRational approx :: Double)])
+       _ -> (theory, goal, [])
 
 -- | Ravi Substitution: a = y+z, b = z+x, c = x+y
 -- Applicable when a, b, c are sides of a triangle.
@@ -36,18 +81,28 @@ applyRavi [va, vb, vc] theory goal isSquared =
       
       -- Also substitute S2 (Squared Area) if present
       -- S2 = xyz(x+y+z)
-      s2Subs = if "S2" `elem` (nub $ concatMap varsInFormula (goal : theory))
+      vars = nub $ concatMap varsInFormula (goal : theory)
+      
+      s2Subs = if "S2" `elem` vars
                then M.insert "S2" (Mul (Mul x (Mul y z)) (Add x (Add y z))) subs
                else subs
       
-      -- 16S2 = 16xyz(x+y+z)
-      s16Subs = if "S16" `elem` (nub $ concatMap varsInFormula (goal : theory))
-                then M.insert "S16" (Mul (Const 16) (Mul (Mul x (Mul y z)) (Add x (Add y z)))) s2Subs
-                else s2Subs
+      -- 16S2 or AreaSq16 = 16xyz(x+y+z)
+      s16Subs = let val = Mul (Const 16) (Mul (Mul x (Mul y z)) (Add x (Add y z)))
+                in if "S16" `elem` vars
+                   then M.insert "S16" val s2Subs
+                   else if "AreaSq16" `elem` vars
+                        then M.insert "AreaSq16" val s2Subs
+                        else s2Subs
+
+      -- s_2 (2s) = 2(x+y+z)
+      finalSubs = if "s_2" `elem` vars
+                  then M.insert "s_2" (Mul (Const 2) (Add x (Add y z))) s16Subs
+                  else s16Subs
 
       newTheory = [Gt x (Const 0), Gt y (Const 0), Gt z (Const 0)] ++ 
-                  map (applySubstitutionsFormula s16Subs) theory
-      newGoal = applySubstitutionsFormula s16Subs goal
+                  map (applySubstitutionsFormula finalSubs) theory
+      newGoal = applySubstitutionsFormula finalSubs goal
   in (newTheory, newGoal, ["Applied Ravi Substitution: " ++ va ++ "," ++ vb ++ "," ++ vc ++ " -> x,y,z"])
 applyRavi _ theory goal _ = (theory, goal, [])
 
