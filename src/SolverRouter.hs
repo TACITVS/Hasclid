@@ -135,17 +135,19 @@ autoSolveInternal :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [
 autoSolveInternal pts allowSplit opts pointSubs theoryRaw goalRaw =
   let (theoryG, goalG, _logG) = preprocessGeometry pointSubs theoryRaw goalRaw
       
-      -- Apply Heuristics (Heron, Cotangent, Ravi, Tangent, Symmetry)
+      -- Apply Heuristics (Heron, Cotangent, Ravi, Tangent, Symmetry, Homogeneous, HalfAngle)
       (theoryH1, goalH1, logH1) = tryHeronSubstitution theoryG goalG
       (theoryH2, goalH2, logH2) = tryCotangentSubstitution theoryH1 goalH1
       (theoryH3, goalH3, logH3) = tryRaviSubstitution theoryH2 goalH2
       (theoryH4, goalH4, logH4) = tryTangentSubstitution theoryH3 goalH3
       (theoryH5, goalH5, logH5) = trySymmetryBreaking theoryH4 goalH4
       (theoryH6, goalH6, logH6) = tryParameterSubstitution theoryH5 goalH5
-      
-      heuristicLogs = logH1 ++ logH2 ++ logH3 ++ logH4 ++ logH5 ++ logH6
+      (theoryH7, goalH7, logH7) = tryHomogeneousNormalization theoryH6 goalH6
+      (theoryH8, goalH8, logH8) = tryHalfAngleTangent theoryH7 goalH7
 
-      (theoryS, goalS, varDefsS) = eliminateSqrt theoryH6 goalH6
+      heuristicLogs = logH1 ++ logH2 ++ logH3 ++ logH4 ++ logH5 ++ logH6 ++ logH7 ++ logH8
+
+      (theoryS, goalS, varDefsS) = eliminateSqrt theoryH8 goalH8
       (theoryP, goalP, varDefsP) = eliminateRational theoryS goalS
       varDefs = M.union varDefsS varDefsP
       preprocessResult = preprocess pointSubs theoryP goalP

@@ -5,6 +5,8 @@ module Heuristics
   , tryHeronSubstitution
   , tryCotangentSubstitution
   , tryParameterSubstitution
+  , tryHomogeneousNormalization
+  , tryHalfAngleTangent
   ) where
 
 import Expr
@@ -269,3 +271,154 @@ applySubstitutionsExpr subs (Div e1 e2) = Div (applySubstitutionsExpr subs e1) (
 applySubstitutionsExpr subs (Pow e n) = Pow (applySubstitutionsExpr subs e) n
 applySubstitutionsExpr subs (Sqrt e) = Sqrt (applySubstitutionsExpr subs e)
 applySubstitutionsExpr _ e = e
+
+-- =============================================================================
+-- Homogeneous Normalization for Barrow-type inequalities
+-- =============================================================================
+
+-- | Homogeneous Normalization: If variables a, b, c appear only in sums/products
+-- and the inequality is scale-invariant, normalize by setting a+b+c = 1.
+-- This is valid WLOG for homogeneous inequalities and reduces variable count.
+tryHomogeneousNormalization :: Theory -> Formula -> (Theory, Formula, [String])
+tryHomogeneousNormalization theory goal =
+  let vars = nub $ concatMap varsInFormula (goal : theory)
+
+      -- Look for distance-like variable groups
+      distanceGroups =
+        [ (["a", "b", "c"], "distances")
+        , (["PA", "PB", "PC"], "distances from P")
+        , (["PU", "PV", "PW"], "angle bisector lengths")
+        ]
+
+      -- Check which groups are present and not already normalized
+      activeGroups = filter (groupActive vars theory) distanceGroups
+
+  in case activeGroups of
+       ((grpVars, name):_) ->
+         -- Check if normalization would help (goal is inequality)
+         if isInequality goal && isHomogeneous goal grpVars
+         then let varExprs = map Var grpVars
+                  sumExpr = foldr1 (\v acc -> Add v acc) (reverse varExprs)
+                  normConstraint = Eq sumExpr (Const 1)
+              in (normConstraint : theory, goal,
+                  ["WLOG Normalization: " ++ intercalate "+" grpVars ++ " = 1 (" ++ name ++ ")"])
+         else (theory, goal, [])
+       _ -> (theory, goal, [])
+  where
+    intercalate sep xs = foldr1 (\x acc -> x ++ sep ++ acc) xs
+
+    groupActive vars th (grpVars, _) =
+      -- Group is active if all vars present and not already constrained
+      all (`elem` vars) grpVars && not (hasNormConstraint grpVars th)
+
+    hasNormConstraint grpVars th = any (isNormEq grpVars) th
+
+    isNormEq grpVars (Eq lhs (Const _)) = containsAllVars grpVars lhs
+    isNormEq grpVars (Eq (Const _) rhs) = containsAllVars grpVars rhs
+    isNormEq _ _ = False
+
+    containsAllVars grpVars expr =
+      let exprVars = varsInExpr expr
+      in all (`elem` exprVars) grpVars
+
+    isInequality (Ge _ _) = True
+    isInequality (Gt _ _) = True
+    isInequality (Le _ _) = True
+    isInequality (Lt _ _) = True
+    isInequality _ = False
+
+    -- Check if expression is homogeneous in given variables
+    -- (Simplified: check if all terms have same total degree in these vars)
+    isHomogeneous (Ge l r) vars = isHomogeneousExpr (Sub l r) vars
+    isHomogeneous (Gt l r) vars = isHomogeneousExpr (Sub l r) vars
+    isHomogeneous (Le l r) vars = isHomogeneousExpr (Sub l r) vars
+    isHomogeneous (Lt l r) vars = isHomogeneousExpr (Sub l r) vars
+    isHomogeneous _ _ = False
+
+-- | Check if expression is homogeneous in given variables
+isHomogeneousExpr :: Expr -> [String] -> Bool
+isHomogeneousExpr expr vars =
+  let degrees = collectDegrees expr vars
+  in case nub degrees of
+       [_] -> True  -- All terms have same degree
+       [] -> True   -- No terms with these vars (degree 0)
+       _ -> False   -- Mixed degrees
+
+-- | Collect degrees of each additive term in the expression
+collectDegrees :: Expr -> [String] -> [Int]
+collectDegrees expr vars = collectDegreesRec expr vars []
+  where
+    collectDegreesRec (Add e1 e2) vs acc =
+      collectDegreesRec e1 vs (collectDegreesRec e2 vs acc)
+    collectDegreesRec (Sub e1 e2) vs acc =
+      collectDegreesRec e1 vs (collectDegreesRec e2 vs acc)
+    collectDegreesRec e vs acc = termDegree e vs : acc
+
+    termDegree (Var v) vs = if v `elem` vs then 1 else 0
+    termDegree (Const _) _ = 0
+    termDegree (IntConst _) _ = 0
+    termDegree (Mul e1 e2) vs = termDegree e1 vs + termDegree e2 vs
+    termDegree (Div e1 e2) vs = termDegree e1 vs - termDegree e2 vs
+    termDegree (Pow e n) vs = termDegree e vs * fromIntegral n
+    termDegree _ _ = 0
+
+-- =============================================================================
+-- Half-Angle Tangent Heuristic for Barrow-type problems
+-- =============================================================================
+
+-- | Half-Angle Tangent: If we see x, y, z with x+y+z = xyz pattern,
+-- add the constraint and derive cosine relations.
+-- This is for Barrow where α + β + γ = π implies tan identity.
+tryHalfAngleTangent :: Theory -> Formula -> (Theory, Formula, [String])
+tryHalfAngleTangent theory goal =
+  let vars = nub $ concatMap varsInFormula (goal : theory)
+
+      -- Look for half-angle tangent variables (x, y, z or tanAlpha, tanBeta, tanGamma)
+      hasTangentTriple = hasTangentIdentity theory
+
+      -- Look for cosine squared definitions: c2x = 1/(1 + x²)
+      cosDefinitions = findCosineDefinitions theory
+
+  in if hasTangentTriple && not (null cosDefinitions)
+     then
+       -- Derive polynomial constraints from cosine definitions
+       let polyConstraints = map derivePolyConstraint cosDefinitions
+           logs = ["Half-angle tangent pattern detected",
+                   "Derived polynomial constraints: " ++ show (length polyConstraints)]
+       in (polyConstraints ++ theory, goal, logs)
+     else (theory, goal, [])
+  where
+    -- Check if theory contains x + y + z = x*y*z
+    hasTangentIdentity th = any isTangentEq th
+
+    isTangentEq (Eq lhs rhs) =
+      (isSum3 lhs && isProduct3 rhs && sameVars lhs rhs) ||
+      (isSum3 rhs && isProduct3 lhs && sameVars lhs rhs)
+    isTangentEq _ = False
+
+    isSum3 (Add _ (Add _ _)) = True
+    isSum3 (Add (Add _ _) _) = True
+    isSum3 _ = False
+
+    isProduct3 (Mul _ (Mul _ _)) = True
+    isProduct3 (Mul (Mul _ _) _) = True
+    isProduct3 _ = False
+
+    sameVars e1 e2 = sort (varsInExpr e1) == sort (varsInExpr e2)
+
+    -- Find definitions like: c2x = 1/(1 + x²) or (^ cx 2) = c2x
+    findCosineDefinitions th = mapMaybe extractCosineDefn th
+
+    extractCosineDefn (Eq (Var cname) (Div (Const 1) (Add (Const 1) (Pow (Var tname) 2)))) =
+      Just (cname, tname, True)  -- c2x = 1/(1+x²)
+    extractCosineDefn (Eq (Pow (Var cname) 2) (Var c2name)) =
+      Just (c2name, cname, False)  -- cx² = c2x
+    extractCosineDefn _ = Nothing
+
+    -- Derive: (1 + tan²)*cos² = 1  =>  cos² + tan²*cos² = 1
+    derivePolyConstraint (c2name, tname, True) =
+      -- c2x = 1/(1+x²)  =>  c2x*(1+x²) = 1
+      Eq (Mul (Var c2name) (Add (Const 1) (Pow (Var tname) 2))) (Const 1)
+    derivePolyConstraint (c2name, cname, False) =
+      -- cx² = c2x  =>  identity (already polynomial)
+      Eq (Pow (Var cname) 2) (Var c2name)
