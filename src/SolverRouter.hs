@@ -46,7 +46,7 @@ import Positivity.SOS (checkSOS, checkSOSWithLemmas, SOSCertificate(..), getSOSC
 import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD, safeFromRational)
 import Positivity.SDP (checkSOS_SDP)
 import Positivity.SOSTypes (trySOSHeuristic)
-import Positivity.SymmetricSOS (checkOnoInequality, OnoResult(..))
+import Positivity.SymmetricSOS (checkOnoInequality, checkBarrowInequality, OnoResult(..), BarrowResult(..))
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
@@ -134,8 +134,18 @@ autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
 
 autoSolveInternal :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
 autoSolveInternal pts allowSplit opts pointSubs theoryRaw goalRaw =
+  -- EARLY CHECK: Try generic polynomial prover before expensive preprocessing
+  case checkBarrowInequality theoryRaw goalRaw of
+    BarrowProved proof ->
+      let rawProfile = analyzeProblem theoryRaw goalRaw
+      in AutoSolveResult UseGroebner "Generic polynomial methods (early)" rawProfile goalRaw True ("Proved via generic polynomial methods\n" ++ proof) Nothing Nothing M.empty
+    _ -> autoSolveInternalFull pts allowSplit opts pointSubs theoryRaw goalRaw
+
+-- | Full solver with preprocessing (called after early check fails)
+autoSolveInternalFull :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
+autoSolveInternalFull pts allowSplit opts pointSubs theoryRaw goalRaw =
   let (theoryG, goalG, _logG) = preprocessGeometry pointSubs theoryRaw goalRaw
-      
+
       -- Apply Heuristics (Heron, Cotangent, Ravi, Tangent, Symmetry, Homogeneous, HalfAngle)
       (theoryH1, goalH1, logH1) = tryHeronSubstitution theoryG goalG
       (theoryH2, goalH2, logH2) = tryCotangentSubstitution theoryH1 goalH1
@@ -271,17 +281,21 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
   case checkOnoInequality theoryRaw goalRaw of
     OnoProved proof -> (True, "Proved via Ono's inequality (AM-GM)", Just proof, M.empty, Nothing)
     _ ->
-      -- Standard path
-      let geomLemmas = generateGeometricLemmas theoryRaw goalRaw
-          (thPrep, goalPrep, varDefsP) = eliminateRational (theoryRaw ++ geomLemmas) goalRaw
-          (thPoly, goalPoly, varDefsS) = eliminateSqrt thPrep goalPrep
-          varDefs = M.union varDefsP varDefsS
-          goalSquared = goalPoly
-          profileFinal = analyzeProblem thPoly goalSquared
-      in case goalSquared of
-        Ge _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
-        Gt _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
-        _ -> (False, "Not an inequality after preprocessing", Nothing, varDefs, Nothing)
+      -- Second, try generic Barrow/polynomial prover
+      case checkBarrowInequality theoryRaw goalRaw of
+        BarrowProved proof -> (True, "Proved via generic polynomial methods", Just proof, M.empty, Nothing)
+        _ ->
+          -- Standard path
+          let geomLemmas = generateGeometricLemmas theoryRaw goalRaw
+              (thPrep, goalPrep, varDefsP) = eliminateRational (theoryRaw ++ geomLemmas) goalRaw
+              (thPoly, goalPoly, varDefsS) = eliminateSqrt thPrep goalPrep
+              varDefs = M.union varDefsP varDefsS
+              goalSquared = goalPoly
+              profileFinal = analyzeProblem thPoly goalSquared
+          in case goalSquared of
+            Ge _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
+            Gt _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
+            _ -> (False, "Not an inequality after preprocessing", Nothing, varDefs, Nothing)
   where
 
     trySOS theory goalFull goalOriginal profileFinal =

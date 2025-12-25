@@ -63,6 +63,7 @@ executable prover-int
         Positivity.SOSTypes
         Positivity.FacialReduction
         Positivity.SymmetricSOS
+        Positivity.GeneralizedSturm
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7,
