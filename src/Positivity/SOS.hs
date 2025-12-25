@@ -13,7 +13,6 @@ import Data.List (sortBy, nub, sort, delete)
 import Data.Ratio (numerator, denominator, (%))
 import Data.Maybe (isJust, mapMaybe)
 import TermOrder (compareMonomials, TermOrder(..))
-import Positivity.SDP (checkSOS_SDP)
 import Positivity.SOSTypes (trySOSHeuristic, SOSPattern(..), SOSCertificate(..), sqrtRational)
 
 emptyCert :: SOSCertificate
@@ -22,7 +21,7 @@ emptyCert = SOSCertificate [] [] polyZero Nothing
 -- | Check if polynomial is a Sum of Squares, potentially modulo an ideal (via reducer)
 -- and potentially using a list of known non-negative lemmata.
 checkSOS :: (Poly -> Poly) -> Poly -> Bool
-checkSOS reducer p = isJust (getSOSCertificate [] reducer p) || checkSOS_SDP p
+checkSOS reducer p = isJust (getSOSCertificate [] reducer p)
 
 -- | Get SOS certificate if it exists, using known non-negative variables and lemmata.
 getSOSCertificate :: [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate

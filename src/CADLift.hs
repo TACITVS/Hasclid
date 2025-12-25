@@ -24,6 +24,7 @@ import Expr
 import CAD (completeProjection, mcCallumProjection)
 import Sturm (isolateRoots)
 import Timeout
+import Error (TimeoutErrorType(..))
 import Debug.Trace (trace)
 import GHC.Stack (HasCallStack, renderStack, callStack)
 import qualified Control.Exception as CE
@@ -109,10 +110,8 @@ cadDecompose polys vars =
 cadDecomposeT :: [Poly] -> [String] -> TimeoutM [(CADCell, SignAssignment)]
 cadDecomposeT polys vars = do
   -- Check timeout before starting decomposition
-  timedOut <- checkTimeout
-  if timedOut
-    then error "CAD decomposition timeout exceeded"
-    else case vars of
+  throwTimeoutError CADTimeout  -- Throws if timeout exceeded
+  case vars of
       [] -> -- Base case: 0-dimensional space (point)
         let sample = M.empty
             signs = M.fromList [ (p, determineSign p sample) | p <- polys ]
@@ -342,11 +341,8 @@ liftCell polys var (lowerCell, _lowerSigns) =
 liftCellT :: [Poly] -> String -> (CADCell, SignAssignment) -> TimeoutM [(CADCell, SignAssignment)]
 liftCellT polys var (lowerCell, _lowerSigns) = do
   -- Check timeout before lifting
-  timedOut <- checkTimeout
-  if timedOut
-    then error "CAD lift operation timeout exceeded"
-    else
-      let
+  throwTimeoutError CADLiftTimeout  -- Throws if timeout exceeded
+  let
           -- Substitute lower cell's sample point into polynomials
           substituted = [ evaluatePolyRational(samplePoint lowerCell) p | p <- polys ]
 

@@ -6,7 +6,7 @@
 -- We use the angle bisector formula and express everything algebraically.
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 -- Positive quantities
@@ -61,4 +61,5 @@
 -- GOAL: LHS >= RHS
 -- Equivalently: LHS² >= RHS² (since both positive)
 :auto (>= LHS RHS)
+
 

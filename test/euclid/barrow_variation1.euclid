@@ -1,0 +1,22 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY VARIATION 1 - Different Coefficients
+-- =============================================================================
+-- Modified goal: 2*(a + b + c) >= (b+c)*cx + (c+a)*cy + (a+b)*cz
+-- This is a STRONGER inequality than the original Barrow
+-- The generic solver should handle this without any pattern-specific code
+-- =============================================================================
+
+:set-timeout 60
+:optimize on
+
+-- Positive variables
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+
+-- Goal: 2*(a + b + c) >= (b+c)*cx + (c+a)*cy + (a+b)*cz
+-- This is stronger than the original Barrow inequality
+:auto (>= (* 2 (+ a (+ b c))) (+ (* (+ b c) cx) (+ (* (+ c a) cy) (* (+ a b) cz))))

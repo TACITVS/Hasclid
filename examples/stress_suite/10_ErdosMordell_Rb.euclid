@@ -2,7 +2,7 @@
 ; R_b >= d_a + d_c
 ; The boss.
 
-:set-timeout 300
+:set-timeout 180
 
 :assume (= (^ s 2) 3)
 :assume (> s 0)
@@ -10,9 +10,13 @@
 :assume (> (+ (- (* s x) y) s) 0)
 :assume (> (+ (- (* (- 0 s) x) y) s) 0)
 :assume (= da y)
-:assume (= dc (/ (+ (- (* s x) y) s) 2))
+; Eliminate division by multiplying through
+:assume (= (* 2 dc) (+ (- (* s x) y) s))
 :assume (= (^ Rb 2) (+ (^ (+ x 1) 2) (^ y 2)))
 :assume (>= Rb 0)
+:assume (>= da 0)
+:assume (>= dc 0)
 
-:auto (>= Rb (+ da dc))
+; Prove: Rb >= da + dc (squared form)
+:auto (>= (^ Rb 2) (^ (+ da dc) 2))
 :q

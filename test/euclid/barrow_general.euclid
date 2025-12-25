@@ -9,9 +9,9 @@
 -- We use squared formulations to avoid square roots.
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
-
+:verbose
 -- =============================================================================
 -- SETUP: Generic triangle ABC with interior point P
 -- =============================================================================
@@ -68,26 +68,25 @@
 :assume (= denomU2 (^ (+ PB PC) 2))
 :assume (= innerU (- denomU2 BC2))
 :assume (> innerU 0)
-:assume (= PU2_formula (/ (* (* PB PC) innerU) denomU2))
-
--- PU satisfies the angle bisector formula
-:assume (= (^ PU 2) PU2_formula)
+-- PU satisfies the angle bisector formula (polynomial form)
+:assume (= (* (^ PU 2) denomU2) (* (* PB PC) innerU))
 :assume (> PU 0)
 
 -- Similarly for V (∠CPA, meeting CA):
 :assume (= denomV2 (^ (+ PC PA) 2))
 :assume (= innerV (- denomV2 CA2))
 :assume (> innerV 0)
-:assume (= PV2_formula (/ (* (* PC PA) innerV) denomV2))
-:assume (= (^ PV 2) PV2_formula)
+-- PV satisfies the angle bisector formula (polynomial form)
+:assume (= (* (^ PV 2) denomV2) (* (* PC PA) innerV))
 :assume (> PV 0)
 
 -- And W (∠APB, meeting AB):
 :assume (= denomW2 (^ (+ PA PB) 2))
 :assume (= innerW (- denomW2 AB2))
+:verbose
 :assume (> innerW 0)
-:assume (= PW2_formula (/ (* (* PA PB) innerW) denomW2))
-:assume (= (^ PW 2) PW2_formula)
+-- PW satisfies the angle bisector formula (polynomial form)
+:assume (= (* (^ PW 2) denomW2) (* (* PA PB) innerW))
 :assume (> PW 0)
 
 -- =============================================================================
@@ -97,5 +96,5 @@
 -- The inequality: PA + PB + PC >= 2*(PU + PV + PW)
 -- Equivalently: (PA + PB + PC)² >= 4*(PU + PV + PW)²
 
-:auto (>= (+ PA (+ PB PC)) (* 2 (+ PU (+ PV PW))))
+:auto (>= (^ (+ PA (+ PB PC)) 2) (* 4 (^ (+ PU (+ PV PW)) 2)))
 

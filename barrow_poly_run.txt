@@ -1,0 +1,68 @@
+==================================================
+   Hasclid v9.0 - Multi-Solver System
+   Intelligent routing: Wu/Grobner/CAD + Router
+   Type :help for commands.
+==================================================
+> :set-timeout 180
+Solver timeout set to: 180 seconds
+
+> :load test/euclid/barrow_poly.euclid
+> :set-timeout 120
+Solver timeout set to: 120 seconds
+> :assume (> bx 0)
+Assumed: (> bx 0)
+> :assume (> cy 0)
+Assumed: (> cy 0)
+> :assume (> cx 0)  
+Assumed: (> cx 0)
+> :assume (> px 0)
+Assumed: (> px 0)
+> :assume (> py 0)
+Assumed: (> py 0)
+> :assume (> PA 0)
+Assumed: (> PA 0)
+> :assume (> PB 0)
+Assumed: (> PB 0)
+> :assume (> PC 0)
+Assumed: (> PC 0)
+> :assume (> PU 0)
+Assumed: (> PU 0)
+> :assume (> PV 0)
+Assumed: (> PV 0)
+> :assume (> PW 0)
+Assumed: (> PW 0)
+> :assume (= (^ PA 2) (+ (^ px 2) (^ py 2)))
+Assumed: (= (^ PA 2) ((^ px 2) + (^ py 2)))
+> :assume (= (^ PB 2) (+ (^ (- px bx) 2) (^ py 2)))
+Assumed: (= (^ PB 2) ((^ (- px bx) 2) + (^ py 2)))
+> :assume (= (^ PC 2) (+ (^ (- px cx) 2) (^ (- py cy) 2)))
+Assumed: (= (^ PC 2) ((^ (- px cx) 2) + (^ (- py cy) 2)))
+> :assume (= (^ BC 2) (+ (^ (- bx cx) 2) (^ cy 2)))
+Assumed: (= (^ BC 2) ((^ (- bx cx) 2) + (^ cy 2)))
+> :assume (= (^ CA 2) (+ (^ cx 2) (^ cy 2)))
+Assumed: (= (^ CA 2) ((^ cx 2) + (^ cy 2)))
+> :assume (= (^ AB 2) (^ bx 2))
+Assumed: (= (^ AB 2) (^ bx 2))
+> :assume (= (* (^ PU 2) (^ (+ PB PC) 2)) (* (* PB PC) (- (^ (+ PB PC) 2) (^ BC 2))))
+Assumed: (= (* (^ PU 2) (^ (PB + PC) 2)) (* (* PB PC) (- (^ (PB + PC) 2) (^ BC 2))))
+> :assume (= (* (^ PV 2) (^ (+ PC PA) 2)) (* (* PC PA) (- (^ (+ PC PA) 2) (^ CA 2))))
+Assumed: (= (* (^ PV 2) (^ (PC + PA) 2)) (* (* PC PA) (- (^ (PC + PA) 2) (^ CA 2))))
+> :assume (= (* (^ PW 2) (^ (+ PA PB) 2)) (* (* PA PB) (- (^ (+ PA PB) 2) (^ AB 2))))
+Assumed: (= (* (^ PW 2) (^ (PA + PB) 2)) (* (* PA PB) (- (^ (PA + PB) 2) (^ AB 2))))
+> :assume (> (- (^ (+ PB PC) 2) (^ BC 2)) 0)
+Assumed: (> (- (^ (PB + PC) 2) (^ BC 2)) 0)
+> :assume (> (- (^ (+ PC PA) 2) (^ CA 2)) 0)
+Assumed: (> (- (^ (PC + PA) 2) (^ CA 2)) 0)
+> :assume (> (- (^ (+ PA PB) 2) (^ AB 2)) 0)
+Assumed: (> (- (^ (PA + PB) 2) (^ AB 2)) 0)
+> :auto (>= (+ PA (+ PB PC)) (* 2 (+ PU (+ PV PW))))
+CAD: Step 5 - Full decomposition
+CAD: Step 3 - Optimizing variable order
+CAD: Step 2 - Extracting vars
+CAD: Step 1 - Extracting polys
+[CRITICAL ERROR] exception: CRITICAL CAD ERROR: arithmetic underflow
+Stack Trace: []
+File loaded: test/euclid/barrow_poly.euclid
+
+> :q
+Goodbye.

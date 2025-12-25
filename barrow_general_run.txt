@@ -1,0 +1,226 @@
+==================================================
+   Hasclid v9.0 - Multi-Solver System
+   Intelligent routing: Wu/Grobner/CAD + Router
+   Type :help for commands.
+==================================================
+> :set-timeout 180
+Solver timeout set to: 180 seconds
+
+> :load test/euclid/barrow_general.euclid
+> :set-timeout 300
+Solver timeout set to: 300 seconds
+> :optimize on
+Buchberger optimization ON
+> :verbose
+Verbose mode ON: Will show detailed proof explanations
+> :point A 0 0
+Defined 2D Point A at (0, 0)
+> :point B bx 0
+Defined 2D Point B at (bx, 0)
+> :point C cx cy
+Defined 2D Point C at (cx, cy)
+> :assume (> bx 0)
+Assumed: (> bx 0)
+> :assume (> cy 0)
+Assumed: (> cy 0)
+> :assume (> px 0)
+Assumed: (> px 0)
+> :assume (> py 0)
+Assumed: (> py 0)
+> :assume (< py cy)
+Assumed: (< py cy)
+> :assume (= PA2 (+ (^ px 2) (^ py 2)))
+Assumed: (= PA2 ((^ px 2) + (^ py 2)))
+> :assume (= PB2 (+ (^ (- px bx) 2) (^ py 2)))
+Assumed: (= PB2 ((^ (- px bx) 2) + (^ py 2)))
+> :assume (= PC2 (+ (^ (- px cx) 2) (^ (- py cy) 2)))
+Assumed: (= PC2 ((^ (- px cx) 2) + (^ (- py cy) 2)))
+> :assume (= BC2 (+ (^ (- bx cx) 2) (^ cy 2)))
+Assumed: (= BC2 ((^ (- bx cx) 2) + (^ cy 2)))
+> :assume (= CA2 (+ (^ cx 2) (^ cy 2)))
+Assumed: (= CA2 ((^ cx 2) + (^ cy 2)))
+> :assume (= AB2 (^ bx 2))
+Assumed: (= AB2 (^ bx 2))
+> :assume (= (^ PA 2) PA2)
+Assumed: (= (^ PA 2) PA2)
+> :assume (> PA 0)
+Assumed: (> PA 0)
+> :assume (= (^ PB 2) PB2)
+Assumed: (= (^ PB 2) PB2)
+> :assume (> PB 0)
+Assumed: (> PB 0)
+> :assume (= (^ PC 2) PC2)
+Assumed: (= (^ PC 2) PC2)
+> :assume (> PC 0)
+Assumed: (> PC 0)
+> :assume (= denomU2 (^ (+ PB PC) 2))
+Assumed: (= denomU2 (^ (PB + PC) 2))
+> :assume (= innerU (- denomU2 BC2))
+Assumed: (= innerU (- denomU2 BC2))
+> :assume (> innerU 0)
+Assumed: (> innerU 0)
+> :assume (= PU2_formula (/ (* (* PB PC) innerU) denomU2))
+Assumed: (= PU2_formula (/ (* (* PB PC) innerU) denomU2))
+> :assume (= (^ PU 2) PU2_formula)
+Assumed: (= (^ PU 2) PU2_formula)
+> :assume (> PU 0)
+Assumed: (> PU 0)
+> :assume (= denomV2 (^ (+ PC PA) 2))
+Assumed: (= denomV2 (^ (PC + PA) 2))
+> :assume (= innerV (- denomV2 CA2))
+Assumed: (= innerV (- denomV2 CA2))
+> :assume (> innerV 0)
+Assumed: (> innerV 0)
+> :assume (= PV2_formula (/ (* (* PC PA) innerV) denomV2))
+Assumed: (= PV2_formula (/ (* (* PC PA) innerV) denomV2))
+> :assume (= (^ PV 2) PV2_formula)
+Assumed: (= (^ PV 2) PV2_formula)
+> :assume (> PV 0)
+Assumed: (> PV 0)
+> :assume (= denomW2 (^ (+ PA PB) 2))
+Assumed: (= denomW2 (^ (PA + PB) 2))
+> :assume (= innerW (- denomW2 AB2))
+Assumed: (= innerW (- denomW2 AB2))
+> :assume (> innerW 0)
+Assumed: (> innerW 0)
+> :assume (= PW2_formula (/ (* (* PA PB) innerW) denomW2))
+Assumed: (= PW2_formula (/ (* (* PA PB) innerW) denomW2))
+> :assume (= (^ PW 2) PW2_formula)
+Assumed: (= (^ PW 2) PW2_formula)
+> :assume (> PW 0)
+Assumed: (> PW 0)
+> :auto (>= (+ PA (+ PB PC)) (* 2 (+ PU (+ PV PW))))
+CAD: Step 5 - Full decomposition
+CAD: Step 3 - Optimizing variable order
+CAD: Step 2 - Extracting vars
+CAD: Step 1 - Extracting polys
+CAD: coeff=(-1) % 1 value=1 % 1
+CAD: coeff=1 % 1 value=1 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=1 % 1
+CAD: coeff=1 % 1 value=1 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: evalPolyAt END
+CAD: evalPolyAt END
+CAD: evalPolyAt END
+CAD: evalPolyAt END
+CAD: Step 6 - Checking 3 cells
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+=== HASCLID AUTOMATIC PROOF SYSTEM ===
+
+PROBLEM ANALYSIS:
+  Structure: Mixed
+VERDICT: NOT PROVED
+Failed: No solvers available or all failed
+
+PROOF DEVELOPMENT:
+
+
+
+File loaded: test/euclid/barrow_general.euclid
+
+> :q
+Goodbye.
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=(-1) % 1
+CAD: coeff=1 % 1 value=(-1) % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=(-2) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=(-1) % 1 value=1 % 1
+CAD: coeff=1 % 1 value=1 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: coeff=1 % 1 value=0 % 1
+CAD: Step 7 - Found 0 valid cells
+CAD: Result = False

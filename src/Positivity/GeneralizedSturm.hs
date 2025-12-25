@@ -16,8 +16,6 @@ module Positivity.GeneralizedSturm
 
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import Data.List (nub)
-import Data.Maybe (mapMaybe)
 import Data.Ratio ((%))
 
 import Expr (Poly(..), Monomial(..), polyZero, polyAdd, polyMul, polyNeg,
@@ -51,8 +49,9 @@ evaluatePolyAt env (Poly mp) =
 -- =========================================================================
 
 -- | Try to prove a polynomial inequality using generic methods
-tryGenericProof :: [Poly] -> [Poly] -> Poly -> ProofResult
-tryGenericProof eqConstraints posConstraints goal =
+-- When allowSampling is False, heuristic sampling is skipped.
+tryGenericProof :: Bool -> [Poly] -> [Poly] -> Poly -> ProofResult
+tryGenericProof allowSampling eqConstraints posConstraints goal =
   let vars = S.toList $ S.unions $ map getVars (goal : eqConstraints ++ posConstraints)
       nVars = length vars
       nEq = length eqConstraints
@@ -70,13 +69,16 @@ tryGenericProof eqConstraints posConstraints goal =
          Nothing -> Unknown "Could not evaluate constant"
   else
   -- Try direct sum-of-nonnegatives check
-  case checkSumOfNonNegatives goal vars of
+  case checkSumOfNonNegatives goal of
     Proved msg -> Proved msg
     _ ->
-      -- Try quick positivity check with limited sampling
-      case tryQuickSampling vars posConstraints goal of
-        Proved msg -> Proved msg
-        _ -> Unknown "Generic proof methods inconclusive"
+      if allowSampling
+      then
+        -- Try quick positivity check with limited sampling
+        case tryQuickSampling vars posConstraints goal of
+          Proved msg -> Proved msg
+          _ -> Unknown "Generic proof methods inconclusive"
+      else Unknown "Generic proof methods inconclusive (sampling disabled)"
 
 -- | Check if a constant polynomial is non-negative
 checkConstantPositive :: Poly -> Maybe Bool
@@ -126,8 +128,8 @@ tryQuickSampling vars posConstraints goal =
 -- =========================================================================
 
 -- | Check if the polynomial is trivially a sum of non-negative terms
-checkSumOfNonNegatives :: Poly -> [String] -> ProofResult
-checkSumOfNonNegatives (Poly mp) vars =
+checkSumOfNonNegatives :: Poly -> ProofResult
+checkSumOfNonNegatives (Poly mp) =
   -- A polynomial is trivially non-negative if:
   -- 1. It has no terms (zero)
   -- 2. All terms are constant * (product of even powers)
@@ -146,38 +148,6 @@ checkSumOfNonNegatives (Poly mp) vars =
 -- =========================================================================
 -- SAMPLING APPROACH
 -- =========================================================================
-
--- | Try sampling at points in the feasible region
-trySampling :: [String] -> [Poly] -> [Poly] -> Poly -> ProofResult
-trySampling vars eqConstraints posConstraints goal =
-  let -- Generate sample values (keep values small to respect common bounds)
-      baseValues = [1%10, 1%4, 1%2, 3%4, 1]
-
-      -- Generate sample points
-      samplePoints = generateSamples (length vars) baseValues
-
-      -- For each sample point, check if constraints are satisfied and goal is non-neg
-      results = map (checkPoint vars eqConstraints posConstraints goal) samplePoints
-
-      -- Filter points that satisfy constraints
-      feasibleResults = filter fst results
-
-  in if null feasibleResults
-     then Unknown "No feasible points found in sampling"
-     else if all snd feasibleResults
-          then Proved $ "Verified at " ++ show (length feasibleResults) ++ " feasible sample points"
-          else Unknown "Found feasible point with negative goal"
-  where
-    checkPoint vs eqCs posCs g vals =
-      let env = M.fromList (zip vs vals)
-          -- Check equality constraints (approximate)
-          eqSatisfied = all (\p -> abs (evaluatePolyAt env p) < 1%100) eqCs
-          -- Check positivity constraints
-          posSatisfied = all (\p -> evaluatePolyAt env p > 0) posCs
-          -- Check goal
-          goalVal = evaluatePolyAt env g
-          goalOk = goalVal >= 0
-      in (eqSatisfied && posSatisfied, goalOk)
 
 -- | Generate sample points respecting common bound constraints
 generateSamples :: Int -> [Rational] -> [[Rational]]

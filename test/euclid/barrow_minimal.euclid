@@ -12,7 +12,7 @@
 -- Actually, the cleanest formulation uses the half-angle constraint differently.
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 -- Use normalized distances: a + b + c = 1
@@ -43,4 +43,5 @@
 -- Since a+b+c=1 and all positive, this is about weighted averages
 
 :auto (>= 1 (+ (* (- 1 a) cx) (+ (* (- 1 b) cy) (* (- 1 c) cz))))
+
 

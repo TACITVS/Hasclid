@@ -14,9 +14,9 @@
 --   - cx² = 1/(1 + x²), cy² = 1/(1 + y²), cz² = 1/(1 + z²)
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
-
+:verbose
 -- Tangent variables (positive for angles in (0, π/2))
 :assume (> x 0)
 :assume (> y 0)
@@ -72,4 +72,5 @@
 -- = cx * [3 - (a+b+c)] = cx * [3 - 1] = 2*cx = 2*(1/2) = 1
 
 :auto (>= 1 (+ (* (- 1 a) cx) (+ (* (- 1 b) cy) (* (- 1 c) cz))))
+
 

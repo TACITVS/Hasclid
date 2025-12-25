@@ -4,7 +4,7 @@
 ; Original formula had division: dc = (s*x - y + s) / 2
 ; We rewrite to eliminate division by introducing dc2 = 2*dc
 
-:set-timeout 300
+:set-timeout 180
 
 :assume (= (^ s 2) 3)
 :assume (> s 0)
@@ -12,18 +12,15 @@
 :assume (> (+ (- (* s x) y) s) 0)
 :assume (> (+ (- (* (- 0 s) x) y) s) 0)
 :assume (= da y)
+:assume (= (* 2 dc) (+ (- (* s x) y) s))
+:assume (>= da 0)
+:assume (>= dc 0)
 
-; Instead of dc = (s*x - y + s) / 2, we use dc2 = s*x - y + s and prove Rb >= da + dc2/2
-; Equivalently, prove 2*Rb >= 2*da + dc2
-; Which is: 2*Rb >= 2*y + (s*x - y + s)
-; Simplifying: 2*Rb >= s*x + y + s
+; Instead of dc = (s*x - y + s) / 2, we use 2*dc = s*x - y + s.
+; Prove the squared form: Rb^2 >= (da + dc)^2.
 
 :assume (= (^ Rb 2) (+ (^ (+ x 1) 2) (^ y 2)))
 :assume (>= Rb 0)
 
-; Prove: 2*Rb >= s*x + y + s
-; Squared form to avoid sqrt: (2*Rb)^2 >= (s*x + y + s)^2
-; That is: 4*Rb^2 >= (s*x + y + s)^2
-
-:prove (>= (* 4 (^ Rb 2)) (^ (+ (+ (* s x) y) s) 2))
+:auto (>= (^ Rb 2) (^ (+ da dc) 2))
 :q

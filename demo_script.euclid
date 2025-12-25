@@ -1,0 +1,5 @@
+:point A 0 0
+:point B 4 0
+:assume (= (midpoint A B M) 0)
+:prove-unified (= (dist2 A M) (dist2 M B))
+:quit

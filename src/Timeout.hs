@@ -8,12 +8,15 @@ module Timeout
   , checkTimeout
   , noTimeout
   , throwTimeout
+  , throwTimeoutError
   ) where
 
 import Control.Monad (when)
 import Control.Monad.Reader
+import Control.Monad.Except
 import Control.Monad.IO.Class
 import Data.Time.Clock (UTCTime, getCurrentTime, addUTCTime, NominalDiffTime)
+import Error (ProverError(..), TimeoutErrorType(..))
 
 -- =============================================
 -- Timeout Context
@@ -31,13 +34,14 @@ data TimeoutContext = TimeoutContext
 -- =============================================
 
 -- | Monad for computations with timeout support
--- Wraps ReaderT to carry timeout context
-newtype TimeoutM a = TimeoutM { unTimeoutM :: ReaderT TimeoutContext IO a }
-  deriving (Functor, Applicative, Monad, MonadIO, MonadReader TimeoutContext)
+-- Uses ExceptT for proper error handling with ProverError
+newtype TimeoutM a = TimeoutM { unTimeoutM :: ExceptT ProverError (ReaderT TimeoutContext IO) a }
+  deriving (Functor, Applicative, Monad, MonadIO, MonadReader TimeoutContext, MonadError ProverError)
 
 -- | Run a TimeoutM computation with a given context
-runTimeoutM :: TimeoutContext -> TimeoutM a -> IO a
-runTimeoutM ctx action = runReaderT (unTimeoutM action) ctx
+-- Returns Either ProverError a
+runTimeoutM :: TimeoutContext -> TimeoutM a -> IO (Either ProverError a)
+runTimeoutM ctx action = runReaderT (runExceptT (unTimeoutM action)) ctx
 
 -- =============================================
 -- Timeout Operations
@@ -67,9 +71,16 @@ checkTimeout = do
       now <- liftIO getCurrentTime
       return $ now >= dl
 
--- | Throw an error if timeout has been exceeded
--- This is a convenience function for use in long-running computations
+-- | Throw an error if timeout has been exceeded (legacy interface)
+-- This uses 'error' for backward compatibility with existing code
 throwTimeout :: String -> TimeoutM ()
 throwTimeout context = do
   timedOut <- checkTimeout
   when timedOut $ error $ "Timeout exceeded: " ++ context
+
+-- | Throw a proper ProverError if timeout has been exceeded
+-- Preferred over throwTimeout for new code
+throwTimeoutError :: TimeoutErrorType -> TimeoutM ()
+throwTimeoutError errType = do
+  timedOut <- checkTimeout
+  when timedOut $ throwError (TimeoutError errType)

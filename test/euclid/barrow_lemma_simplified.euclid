@@ -12,7 +12,7 @@
 --                <= (PB+PC)⁴  since BC² >= 0
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 -- Variables
@@ -40,4 +40,5 @@
 
 -- Let's prove the AM-GM step first
 :auto (<= (* 4 p) s2)
+
 

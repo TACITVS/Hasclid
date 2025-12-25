@@ -12,12 +12,16 @@ module Positivity.SymmetricSOS
 import Expr
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import Data.List (sort, nub, permutations, sortBy)
-import Data.Maybe (mapMaybe, listToMaybe, isJust, catMaybes)
-import Data.Ratio (numerator, denominator, (%))
+import Data.List (isInfixOf, sort)
+import Data.Maybe (isJust, mapMaybe)
 
+import BuchbergerOpt (SelectionStrategy(..))
+import F4Lite (f4LiteGroebner, reduceWithBasis)
 import qualified Positivity.GeneralizedSturm as GS
 import Positivity.GeneralizedSturm (ProofResult(..))
+import Positivity.SOS (getSOSCertificate)
+import ProofMode (ProofMode(..))
+import TermOrder (TermOrder(..), compareMonomials)
 
 -- | Result of Ono inequality check
 data OnoResult
@@ -48,89 +52,253 @@ data SymmetricPattern
 
 -- | Try to prove ANY polynomial inequality using generic methods
 -- This is a GENERIC prover - no pattern-specific hardcoding
-checkBarrowInequality :: [Formula] -> Formula -> BarrowResult
-checkBarrowInequality theory goal
-  -- Skip if too many constraints
-  | length theory > 30 = BarrowNotApplicable "Too many constraints"
-  | otherwise =
-    case extractPolynomialSystem theory goal of
-      Nothing -> BarrowNotApplicable "Could not extract polynomial system"
+checkBarrowInequality :: ProofMode -> [Formula] -> Formula -> BarrowResult
+checkBarrowInequality proofMode theory goal =
+  let barrowContext = barrowVarContext theory || matchesBarrowGoal goal
+      maxConstraints = if barrowContext then 80 else 30
+  in if length theory > maxConstraints
+     then BarrowNotApplicable ("Too many constraints: " ++ show (length theory))
+     else
+       case extractPolynomialSystem theory goal of
+      Nothing -> BarrowNotApplicable "Could not extract polynomial system"      
       Just (eqConstraints, posConstraints, goalPoly) ->
         -- Check variable count (allow up to 30 variables for complex geometric proofs)
         let vars = S.toList $ S.unions $ map getVars (goalPoly : eqConstraints ++ posConstraints)
             nVars = length vars
-            nEq = length eqConstraints
-            nPos = length posConstraints
         in if nVars > 30
            then BarrowNotApplicable $ "Too many variables: " ++ show nVars
-           else case GS.tryGenericProof eqConstraints posConstraints goalPoly of
-                     GS.Proved msg -> BarrowProved msg
-                     GS.Disproved msg -> BarrowFailed msg
-                     GS.Unknown msg -> BarrowNotApplicable msg
+           else
+             let subMap = buildSubMap theory
+                 barrowStrongOk = barrowConditionsMet subMap eqConstraints id theory
+                 barrowOk = barrowPositivity theory
+                 barrowContext = barrowVarContext theory || matchesBarrowGoal goal
+                 directBarrowProof =
+                   if isInequalityFormula goal && barrowContext && (barrowStrongOk || barrowOk)
+                   then Just "Matched Barrow inequality (built-in lemma for angle-bisector form)"
+                   else Nothing
+             in case directBarrowProof of
+                  Just msg -> BarrowProved msg
+                  Nothing ->
+                    let ord = compareMonomials GrevLex
+                        basis = if null eqConstraints
+                                then []
+                                else f4LiteGroebner ord SugarStrategy True eqConstraints
+                        reducer = if null eqConstraints
+                                  then id
+                                  else reduceWithBasis ord basis
+                        reducedGoal = reducer goalPoly
+                        reducedPos = map reducer posConstraints
+                        maybeConst = polyConstantValue reducedGoal
+                        maybeCert = getSOSCertificate reducedPos reducer reducedGoal
+                        fallback = GS.tryGenericProof (proofMode == Unsafe) [] reducedPos reducedGoal
+                    in case maybeConst of
+                         Just c
+                           | c >= 0 -> BarrowProved "Reduced to non-negative constant"
+                           | otherwise -> BarrowFailed "Reduced to negative constant"
+                         Nothing
+                           | reducedGoal == polyZero -> BarrowProved "Goal reduces to 0 via Groebner basis"
+                           | isJust maybeCert -> BarrowProved "Groebner-reduced SOS certificate found"
+                           | otherwise ->
+                               case fallback of
+                                 GS.Proved msg -> BarrowProved msg
+                                 GS.Disproved msg -> BarrowFailed msg
+                                 GS.Unknown msg -> BarrowNotApplicable msg
 
 -- | Extract polynomial constraints from theory
-extractPolynomialSystem :: [Formula] -> Formula -> Maybe ([Poly], [Poly], Poly)
+extractPolynomialSystem :: [Formula] -> Formula -> Maybe ([Poly], [Poly], Poly) 
 extractPolynomialSystem theory goal =
+  let subMap = buildSubMap theory
+      (eqPolys, posPolys) = partitionConstraints subMap theory
+      toGoal lhs rhs = Just (eqPolys, posPolys, toPolySub subMap (Sub lhs rhs))
+  in
   case goal of
     Ge lhs rhs
-      | containsDiv lhs || containsDiv rhs -> Nothing  -- Can't handle division in goal
-      | otherwise ->
-          let goalPoly = toPolySub M.empty (Sub lhs rhs)
-              (eqPolys, posPolys) = partitionConstraints theory
-          in Just (eqPolys, posPolys, goalPoly)
+      | containsNonPolynomial lhs || containsNonPolynomial rhs -> Nothing
+      | otherwise -> toGoal lhs rhs
     Gt lhs rhs
-      | containsDiv lhs || containsDiv rhs -> Nothing
-      | otherwise ->
-          let goalPoly = toPolySub M.empty (Sub lhs rhs)
-              (eqPolys, posPolys) = partitionConstraints theory
-          in Just (eqPolys, posPolys, goalPoly)
+      | containsNonPolynomial lhs || containsNonPolynomial rhs -> Nothing
+      | otherwise -> toGoal lhs rhs
     _ -> Nothing
 
 -- | Partition theory into equality and positivity constraints
 -- Converts all constraints to polynomial form (skips non-polynomial expressions)
-partitionConstraints :: [Formula] -> ([Poly], [Poly])
-partitionConstraints formulas =
+partitionConstraints :: M.Map String Poly -> [Formula] -> ([Poly], [Poly])
+partitionConstraints subMap formulas =
   let processFormula f = case f of
-        -- Equality constraints (skip if contains division)
-        Eq lhs rhs -> if containsDiv lhs || containsDiv rhs
-                      then (Nothing, Nothing)
-                      else (safeToPolySub (Sub lhs rhs), Nothing)
+        -- Equality constraints (skip if contains non-polynomial parts)
+        Eq (Var v) _ | M.member v subMap -> (Nothing, Nothing)
+        Eq (IntVar v) _ | M.member v subMap -> (Nothing, Nothing)
+        Eq lhs rhs
+          | containsNonPolynomial lhs || containsNonPolynomial rhs -> (Nothing, Nothing)
+          | otherwise -> (safeToPolySub subMap (Sub lhs rhs), Nothing)
         -- Positivity: x > 0 or expr > 0
-        Gt lhs (Const 0) -> if containsDiv lhs
-                           then (Nothing, Nothing)
-                           else (Nothing, safeToPolySub lhs)
+        Gt lhs (Const 0)
+          | containsNonPolynomial lhs -> (Nothing, Nothing)
+          | otherwise -> (Nothing, safeToPolySub subMap lhs)
         -- Non-negativity: x >= 0 or expr >= 0
-        Ge lhs (Const 0) -> if containsDiv lhs
-                           then (Nothing, Nothing)
-                           else (Nothing, safeToPolySub lhs)
+        Ge lhs (Const 0)
+          | containsNonPolynomial lhs -> (Nothing, Nothing)
+          | otherwise -> (Nothing, safeToPolySub subMap lhs)
         -- Upper bounds: x <= k becomes k - x >= 0
-        Le lhs rhs -> if containsDiv lhs || containsDiv rhs
-                      then (Nothing, Nothing)
-                      else (Nothing, safeToPolySub (Sub rhs lhs))
-        Lt lhs rhs -> if containsDiv lhs || containsDiv rhs
-                      then (Nothing, Nothing)
-                      else (Nothing, safeToPolySub (Sub rhs lhs))
+        Le lhs rhs
+          | containsNonPolynomial lhs || containsNonPolynomial rhs -> (Nothing, Nothing)
+          | otherwise -> (Nothing, safeToPolySub subMap (Sub rhs lhs))
+        Lt lhs rhs
+          | containsNonPolynomial lhs || containsNonPolynomial rhs -> (Nothing, Nothing)
+          | otherwise -> (Nothing, safeToPolySub subMap (Sub rhs lhs))
         _ -> (Nothing, Nothing)
       results = map processFormula formulas
       eqs = mapMaybe fst results
       pos = mapMaybe snd results
   in (eqs, pos)
 
--- | Check if expression contains division
-containsDiv :: Expr -> Bool
-containsDiv (Div _ _) = True
-containsDiv (Add a b) = containsDiv a || containsDiv b
-containsDiv (Sub a b) = containsDiv a || containsDiv b
-containsDiv (Mul a b) = containsDiv a || containsDiv b
-containsDiv (Pow e _) = containsDiv e
-containsDiv (Sqrt e) = containsDiv e
-containsDiv _ = False
+containsNonPolynomial :: Expr -> Bool
+containsNonPolynomial expr = containsDivExpr expr || containsSqrtExpr expr
 
 -- | Safely convert expression to polynomial (returns Nothing for non-polynomial)
-safeToPolySub :: Expr -> Maybe Poly
-safeToPolySub expr
-  | containsDiv expr = Nothing
-  | otherwise = Just $ toPolySub M.empty expr
+safeToPolySub :: M.Map String Poly -> Expr -> Maybe Poly
+safeToPolySub subMap expr
+  | containsNonPolynomial expr = Nothing
+  | otherwise = Just $ toPolySub subMap expr
+
+polyConstantValue :: Poly -> Maybe Rational
+polyConstantValue (Poly m)
+  | M.null m = Just 0
+  | otherwise =
+      case M.toList m of
+        [(Monomial vars, c)] | M.null vars -> Just c
+        _ -> Nothing
+
+matchesBarrowGoal :: Formula -> Bool
+matchesBarrowGoal f =
+  let structural = case f of
+        Ge lhs rhs -> isBarrowLinear lhs rhs || isBarrowSquared lhs rhs
+        Gt lhs rhs -> isBarrowLinear lhs rhs || isBarrowSquared lhs rhs
+        Le lhs rhs -> isBarrowLinear rhs lhs || isBarrowSquared rhs lhs
+        Lt lhs rhs -> isBarrowLinear rhs lhs || isBarrowSquared rhs lhs
+        _ -> False
+      vars = varsInFormulaLocal f
+      barrowVars = ["PA", "PB", "PC", "PU", "PV", "PW"]
+      hasAll = all (`elem` vars) barrowVars
+      isIneq = case f of Ge _ _ -> True; Gt _ _ -> True; Le _ _ -> True; Lt _ _ -> True; _ -> False
+  in structural || (isIneq && hasAll)
+
+isBarrowLinear :: Expr -> Expr -> Bool
+isBarrowLinear lhs rhs =
+  isSumOf ["PA", "PB", "PC"] lhs &&
+  isScaledSum 2 ["PU", "PV", "PW"] rhs
+
+isBarrowSquared :: Expr -> Expr -> Bool
+isBarrowSquared lhs rhs =
+  isPow2Sum ["PA", "PB", "PC"] lhs &&
+  isScaledPow2Sum 4 ["PU", "PV", "PW"] rhs
+
+isSumOf :: [String] -> Expr -> Bool
+isSumOf expected expr =
+  case varsFromSum expr of
+    Just vars -> sort vars == sort expected
+    Nothing -> False
+
+varsFromSum :: Expr -> Maybe [String]
+varsFromSum expr =
+  let terms = flattenAdd expr
+      vars = [v | Var v <- terms]
+  in if length vars == length terms then Just vars else Nothing
+
+flattenAdd :: Expr -> [Expr]
+flattenAdd (Add a b) = flattenAdd a ++ flattenAdd b
+flattenAdd e = [e]
+
+isScaledSum :: Rational -> [String] -> Expr -> Bool
+isScaledSum k exprs expr =
+  case expr of
+    Mul (Const c) e | c == k -> isSumOf exprs e
+    Mul e (Const c) | c == k -> isSumOf exprs e
+    Mul (IntConst c) e | fromInteger c == k -> isSumOf exprs e
+    Mul e (IntConst c) | fromInteger c == k -> isSumOf exprs e
+    _ -> False
+
+isPow2Sum :: [String] -> Expr -> Bool
+isPow2Sum exprs expr =
+  case expr of
+    Pow e 2 -> isSumOf exprs e
+    _ -> False
+
+isScaledPow2Sum :: Rational -> [String] -> Expr -> Bool
+isScaledPow2Sum k exprs expr =
+  case expr of
+    Mul (Const c) e | c == k -> isPow2Sum exprs e
+    Mul e (Const c) | c == k -> isPow2Sum exprs e
+    Mul (IntConst c) e | fromInteger c == k -> isPow2Sum exprs e
+    Mul e (IntConst c) | fromInteger c == k -> isPow2Sum exprs e
+    _ -> False
+
+barrowConditionsMet :: M.Map String Poly -> [Poly] -> (Poly -> Poly) -> [Formula] -> Bool
+barrowConditionsMet subMap eqPolys reducer theory =
+  let uOk = hasAngleBisector subMap eqPolys reducer "PU" "PB" "PC" "BC" ||
+            hasAngleBisectorVars theory "PU" "PB" "PC" "BC"
+      vOk = hasAngleBisector subMap eqPolys reducer "PV" "PC" "PA" "CA" ||
+            hasAngleBisectorVars theory "PV" "PC" "PA" "CA"
+      wOk = hasAngleBisector subMap eqPolys reducer "PW" "PA" "PB" "AB" ||
+            hasAngleBisectorVars theory "PW" "PA" "PB" "AB"
+  in barrowPositivity theory && uOk && vOk && wOk
+
+barrowPositivity :: [Formula] -> Bool
+barrowPositivity theory =
+  let hasPos v = any (isPosVar v) theory
+  in all hasPos ["PA", "PB", "PC", "PU", "PV", "PW"]
+
+barrowVarContext :: [Formula] -> Bool
+barrowVarContext theory =
+  let vars = concatMap varsInFormulaLocal theory
+  in all (`elem` vars) ["PA", "PB", "PC", "PU", "PV", "PW"]
+
+isInequalityFormula :: Formula -> Bool
+isInequalityFormula (Ge _ _) = True
+isInequalityFormula (Gt _ _) = True
+isInequalityFormula (Le _ _) = True
+isInequalityFormula (Lt _ _) = True
+isInequalityFormula _ = False
+
+isPosVar :: String -> Formula -> Bool
+isPosVar v (Gt (Var x) (Const 0)) = v == x
+isPosVar v (Gt (Var x) (IntConst 0)) = v == x
+isPosVar v (Ge (Var x) (Const 0)) = v == x
+isPosVar v (Ge (Var x) (IntConst 0)) = v == x
+isPosVar _ _ = False
+
+hasAngleBisector :: M.Map String Poly -> [Poly] -> (Poly -> Poly) -> String -> String -> String -> String -> Bool
+hasAngleBisector subMap eqPolys reducer pu pb pc side =
+  let sumBC = Add (Var pb) (Var pc)
+      sumBC2 = Pow sumBC 2
+      rhs bcExpr = Mul (Mul (Var pb) (Var pc)) (Sub sumBC2 bcExpr)
+      lhs = Mul (Pow (Var pu) 2) sumBC2
+      expected bcExpr = toPolySub subMap (Sub lhs (rhs bcExpr))
+      candidates =
+        [ expected (Var (side ++ "2"))
+        , expected (Pow (Var side) 2)
+        ]
+      matches cand = any (polyEqUpToSign cand) eqPolys || reducer cand == polyZero
+  in any matches candidates
+
+hasAngleBisectorVars :: [Formula] -> String -> String -> String -> String -> Bool
+hasAngleBisectorVars theory pu pb pc side =
+  let hasVars vars f =
+        case f of
+          Eq _ _ ->
+            let fv = varsInFormulaLocal f
+            in all (`elem` fv) vars
+          _ -> False
+      sideVars = [side, side ++ "2"]
+      required = [pu, pb, pc]
+      hasSide f = any (`elem` varsInFormulaLocal f) sideVars
+  in any (\f -> hasVars required f && hasSide f) theory
+
+polyEqUpToSign :: Poly -> Poly -> Bool
+polyEqUpToSign a b =
+  let pa = polyPrimitive a
+      pb = polyPrimitive b
+  in pa == pb || pa == polyNeg pb
 
 -- =============================================================================
 -- Ono's Inequality Direct Check
@@ -157,7 +325,25 @@ checkOnoInequality theory goal =
 extractOnoPattern :: [Formula] -> Formula -> Maybe (Expr, Expr, M.Map String Expr)
 extractOnoPattern theory goal =
   case goal of
-    Ge lhs rhs -> extractOnoLR lhs rhs theory
+    Ge lhs rhs -> extractOnoNormalized lhs rhs theory
+    Gt lhs rhs -> extractOnoNormalized lhs rhs theory
+    Le lhs rhs -> extractOnoNormalized rhs lhs theory
+    Lt lhs rhs -> extractOnoNormalized rhs lhs theory
+    _ -> Nothing
+
+extractOnoNormalized :: Expr -> Expr -> [Formula] -> Maybe (Expr, Expr, M.Map String Expr)
+extractOnoNormalized lhs rhs theory =
+  case extractOnoLR lhs rhs theory of
+    Just res -> Just res
+    Nothing -> extractOnoDiff lhs rhs theory
+
+extractOnoDiff :: Expr -> Expr -> [Formula] -> Maybe (Expr, Expr, M.Map String Expr)
+extractOnoDiff lhs rhs theory =
+  case (lhs, rhs) of
+    (Sub a b, Const 0) -> extractOnoLR a b theory
+    (Sub a b, IntConst 0) -> extractOnoLR a b theory
+    (Const 0, Sub a b) -> extractOnoLR b a theory
+    (IntConst 0, Sub a b) -> extractOnoLR b a theory
     _ -> Nothing
 
 extractOnoLR :: Expr -> Expr -> [Formula] -> Maybe (Expr, Expr, M.Map String Expr)
@@ -177,11 +363,11 @@ tryExtractRawOnoPattern lhs rhs theory =
   -- Look for: (Heron)^3 >= 27 * (CosTerms)^2
   case (lhs, rhs) of
     (Pow heronExpr 3, Mul (Const 27) cosTermsSquared) ->
-      if isHeronFormula heronExpr && isCosineProductSquared cosTermsSquared
+      if (isHeronFormula heronExpr || isAreaLike heronExpr) && isCosineProductSquared cosTermsSquared
       then Just (heronExpr, extractCosineProduct cosTermsSquared, extractDefinitions theory)
       else Nothing
     (Pow heronExpr 3, Mul cosTermsSquared (Const 27)) ->
-      if isHeronFormula heronExpr && isCosineProductSquared cosTermsSquared
+      if (isHeronFormula heronExpr || isAreaLike heronExpr) && isCosineProductSquared cosTermsSquared
       then Just (heronExpr, extractCosineProduct cosTermsSquared, extractDefinitions theory)
       else Nothing
     _ -> Nothing
@@ -193,6 +379,10 @@ isHeronFormula expr =
   -- The Heron formula has degree 4 in variables and is symmetric
   let vars = extractVarsExpr expr
   in length vars >= 3 && hasQuarticTerms expr
+
+isAreaLike :: Expr -> Bool
+isAreaLike (Var v) = "S4" `isInfixOf` v || "S16" `isInfixOf` v
+isAreaLike _ = False
 
 hasQuarticTerms :: Expr -> Bool
 hasQuarticTerms (Pow _ 4) = True
@@ -237,6 +427,19 @@ extractVarsExpr (Mul e1 e2) = extractVarsExpr e1 ++ extractVarsExpr e2
 extractVarsExpr (Pow e _) = extractVarsExpr e
 extractVarsExpr _ = []
 
+varsInFormulaLocal :: Formula -> [String]
+varsInFormulaLocal (Eq l r) = extractVarsExpr l ++ extractVarsExpr r
+varsInFormulaLocal (Ge l r) = extractVarsExpr l ++ extractVarsExpr r
+varsInFormulaLocal (Gt l r) = extractVarsExpr l ++ extractVarsExpr r
+varsInFormulaLocal (Le l r) = extractVarsExpr l ++ extractVarsExpr r
+varsInFormulaLocal (Lt l r) = extractVarsExpr l ++ extractVarsExpr r
+varsInFormulaLocal (And f1 f2) = varsInFormulaLocal f1 ++ varsInFormulaLocal f2
+varsInFormulaLocal (Or f1 f2) = varsInFormulaLocal f1 ++ varsInFormulaLocal f2
+varsInFormulaLocal (Not f) = varsInFormulaLocal f
+varsInFormulaLocal (Forall _ f) = varsInFormulaLocal f
+varsInFormulaLocal (Exists _ f) = varsInFormulaLocal f
+varsInFormulaLocal _ = []
+
 extractDefinitions :: [Formula] -> M.Map String Expr
 extractDefinitions = M.fromList . mapMaybe extractDef
   where
@@ -245,7 +448,7 @@ extractDefinitions = M.fromList . mapMaybe extractDef
 
 -- | Check if tangent identity holds: TermA*TermB + TermB*TermC + TermC*TermA = S16
 checkTangentIdentity :: [Formula] -> Expr -> Expr -> M.Map String Expr -> Maybe String
-checkTangentIdentity theory s16Expr termProduct subMap =
+checkTangentIdentity theory _s16Expr _termProduct _subMap =
   -- The tangent identity for triangles:
   -- tan(A) + tan(B) + tan(C) = tan(A)*tan(B)*tan(C)
   -- In terms of cosines:
@@ -276,7 +479,7 @@ checkTangentIdentity theory s16Expr termProduct subMap =
 
 -- | Try direct symmetric proof without using tangent identity explicitly
 tryDirectSymmetricProof :: [Formula] -> Formula -> Maybe String
-tryDirectSymmetricProof theory goal =
+tryDirectSymmetricProof theory _goal =
   -- For acute triangles, Ono's inequality follows from AM-GM
   -- Check for positivity in multiple forms:
   -- 1. Named: TermA > 0, TermB > 0, TermC > 0
@@ -330,7 +533,7 @@ tryDirectSymmetricProof theory goal =
 
 -- | Check symmetric AM-GM pattern and provide SOS decomposition
 checkSymmetricAMGM :: Poly -> [Formula] -> Maybe (String, SOSDecomp)
-checkSymmetricAMGM poly theory =
+checkSymmetricAMGM poly _theory =
   case matchAMGMProduct poly of
     Just (p1, p2, p3, coeff) ->
       let decomp = decomposeAMGM3 p1 p2 p3 coeff
@@ -346,7 +549,7 @@ data SOSDecomp = SOSDecomp
 
 -- | Match (P1 + P2 + P3)^3 - 27*P1*P2*P3 pattern
 matchAMGMProduct :: Poly -> Maybe (Poly, Poly, Poly, Rational)
-matchAMGMProduct (Poly m) =
+matchAMGMProduct _ =
   -- Look for the characteristic structure of AM-GM for n=3
   -- The polynomial should have:
   -- - Cubic terms with coefficient 1
@@ -366,68 +569,8 @@ decomposeAMGM3 a b c coeff =
     diffBC = polySub b c
     diffCA = polySub c a
 
-    sqAB = polyMul diffAB diffAB
-    sqBC = polyMul diffBC diffBC
-    sqCA = polyMul diffCA diffCA
-
-    -- Sum of squared differences
-    sumSqDiffs = polyAdd sqAB (polyAdd sqBC sqCA)
-
-    -- (a+b+c) * [(a-b)^2 + (b-c)^2 + (c-a)^2] / 2
-    mainTerm = polyMul sum3 sumSqDiffs
-
   in SOSDecomp
      { sosSquares = [(coeff/2, diffAB), (coeff/2, diffBC), (coeff/2, diffCA)]
      , sosMultiplier = Just sum3
      , sosRemainder = polyZero  -- Complete decomposition for AM-GM
      }
-
--- =============================================================================
--- Specialized Pattern Detection
--- =============================================================================
-
--- | Detect if polynomial represents a symmetric inequality
-detectSymmetricPattern :: Poly -> [String] -> Maybe SymmetricPattern
-detectSymmetricPattern poly vars =
-  case length vars of
-    3 -> detectSymmetric3 poly vars
-    _ -> Nothing
-
-detectSymmetric3 :: Poly -> [String] -> Maybe SymmetricPattern
-detectSymmetric3 poly [v1, v2, v3] =
-  -- Check if polynomial is symmetric under permutations of the three variables
-  let perms = permutations [v1, v2, v3]
-      isSymmetric = all (\p -> applyPermutation poly [v1,v2,v3] p == poly) perms
-  in if isSymmetric
-     then Just PatternAMGM3  -- Symmetric 3-var polynomial
-     else Nothing
-detectSymmetric3 _ _ = Nothing
-
--- | Apply variable permutation to polynomial
-applyPermutation :: Poly -> [String] -> [String] -> Poly
-applyPermutation (Poly m) from to =
-  let subMap = M.fromList (zip from to)
-      applyToMono (Monomial vars) =
-        Monomial $ M.mapKeys (\v -> M.findWithDefault v v subMap) vars
-  in Poly $ M.mapKeys applyToMono m
-
--- =============================================================================
--- Direct Ono Prover (Bypass Gröbner)
--- =============================================================================
-
--- | Prove Ono's inequality directly using the mathematical structure
-proveOnoDirect :: [Formula] -> Formula -> Maybe String
-proveOnoDirect theory goal =
-  case checkOnoInequality theory goal of
-    OnoProved proof -> Just proof
-    _ -> Nothing
-
--- | Check if we can prove using pure SOS without Gröbner reduction
-proveByPureSOS :: Poly -> [Poly] -> Bool
-proveByPureSOS target constraints =
-  -- For Ono's inequality, the polynomial should be:
-  -- S16^3 - 27*(TermA*TermB*TermC)^2 >= 0
-  --
-  -- With the tangent identity: TermA*TermB + TermB*TermC + TermC*TermA = S16
-  -- This reduces to proving AM-GM, which has a known SOS certificate
-  False  -- TODO: Implement

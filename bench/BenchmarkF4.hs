@@ -6,6 +6,7 @@ import Data.List (isPrefixOf, sort)
 import Control.Monad (forM_)
 import Text.Printf (printf)
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 
 -- Project imports
 import Expr (Theory, Formula, Expr(..))
@@ -43,11 +44,11 @@ runBenchmark path = do
       
       -- Run Buchberger (Default)
       let optsBuch = defaultSolverOptions { groebnerBackend = BuchbergerBackend, useOptimizedGroebner = True }
-      (timeB, resB) <- timeIt $ return $ autoSolve optsBuch t g
+      (timeB, resB) <- timeIt $ return $ autoSolve optsBuch M.empty t g
       
       -- Run F4
       let optsF4 = defaultSolverOptions { groebnerBackend = F4Backend }
-      (timeF4, resF4) <- timeIt $ return $ autoSolve optsF4 t g
+      (timeF4, resF4) <- timeIt $ return $ autoSolve optsF4 M.empty t g
       
       printf "  Buchberger: %s [%s] (%.6fs)\n" (showResult resB) (show (selectedSolver resB)) timeB
       printf "  F4        : %s [%s] (%.6fs)\n" (showResult resF4) (show (selectedSolver resF4)) timeF4
@@ -71,19 +72,19 @@ processCommand st rawCmd =
   if null cleanCmd then st
   else if ":assume" `isPrefixOf` cleanCmd then
       let rest = drop 7 cleanCmd
-      in case parseFormulaWithMacros (macros st) rest of
+      in case parseFormulaWithMacros (macros st) S.empty rest of
            Right f -> st { theory = theory st ++ [f] }
            Left _ -> st
   else if ":prove" `isPrefixOf` cleanCmd || ":auto" `isPrefixOf` cleanCmd then
        let rest = drop (if ":prove" `isPrefixOf` cleanCmd then 6 else 5) cleanCmd
-       in case parseFormulaWithMacros (macros st) rest of
+       in case parseFormulaWithMacros (macros st) S.empty rest of
             Right f -> st { goal = Just f }
             Left _ -> st
   else if ":macro" `isPrefixOf` cleanCmd then
       st -- TODO: Support macros
   else if "(" `isPrefixOf` cleanCmd then
       -- Implicit goal
-      case parseFormulaWithMacros (macros st) cleanCmd of
+      case parseFormulaWithMacros (macros st) S.empty cleanCmd of
            Right f -> st { goal = Just f }
            Left _ -> st
   else st

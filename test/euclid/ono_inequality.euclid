@@ -1,4 +1,4 @@
-:set-timeout 600
+:set-timeout 180
 :verbose
 :optimize on
 :set-strategy sugar

@@ -15,7 +15,7 @@
 -- This proves 4*PU² <= (PB+PC)², hence 2*PU <= PB + PC.
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 -- Variables: PB, PC, BC are positive reals with triangle inequality
@@ -45,4 +45,5 @@
 
 -- Approach 1: Direct squared form
 :auto (<= (* 4 PU2) sum2)
+
 

@@ -1,0 +1,5 @@
+:verbose
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+:auto (>= (+ a b) c)

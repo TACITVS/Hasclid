@@ -301,7 +301,7 @@ propagateDistance kb p1 p2 distExpr =
              in (newKBs, [step])
              
     -- Detect unknowns
-    isUnknown (Var v) | take 1 v `elem` ["x","y","z"] = Just v
+    isUnknown (Var v) | isCoordVarName v = Just v
     isUnknown _ = Nothing
     
     uX1 = isUnknown x1; uX2 = isUnknown x2
@@ -442,7 +442,7 @@ expandExprRecursive :: CoordMap -> Expr -> Expr
 expandExprRecursive kb (Var v) =
   case resolveVar kb v of
     Just e -> expandExprRecursive kb e
-    Nothing -> if take 1 v == "z" then Const 0 else Var v
+    Nothing -> Var v
 expandExprRecursive kb (Add e1 e2) = Add (expandExprRecursive kb e1) (expandExprRecursive kb e2)
 expandExprRecursive kb (Sub e1 e2) = Sub (expandExprRecursive kb e1) (expandExprRecursive kb e2)
 expandExprRecursive kb (Mul e1 e2) = Mul (expandExprRecursive kb e1) (expandExprRecursive kb e2)
@@ -458,6 +458,13 @@ expandExprRecursive kb (Dist2 p1 p2) =
       z2 = expandExprRecursive kb (Var ("z"++p2))
   in Add (Add (Pow (Sub x1 x2) 2) (Pow (Sub y1 y2) 2)) (Pow (Sub z1 z2) 2)
 expandExprRecursive _ e = e
+
+isCoordVarName :: String -> Bool
+isCoordVarName ('z':'z':'_':_) = False
+isCoordVarName ('x':rest) = not (null rest)
+isCoordVarName ('y':rest) = not (null rest)
+isCoordVarName ('z':rest) = not (null rest)
+isCoordVarName _ = False
 
 resolveVar :: CoordMap -> String -> Maybe Expr
 resolveVar kb v =

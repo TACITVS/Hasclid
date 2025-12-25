@@ -1,0 +1,9 @@
+:set-timeout 10
+:verbose
+
+:assume (> u 0)
+:assume (> v 0)
+:assume (> w 0)
+:assume (= dummy 0)
+
+:auto (>= (^ (+ (* u v) (+ (* v w) (* w u))) 3) (* 27 (^ (* u (* v w)) 2)))

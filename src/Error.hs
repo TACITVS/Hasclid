@@ -5,6 +5,8 @@ module Error
   , ParseErrorType(..)
   , ProofErrorType(..)
   , ValidationErrorType(..)
+  , TimeoutErrorType(..)
+  , PolynomialErrorType(..)
   , formatError
   , toEither
   ) where
@@ -25,6 +27,26 @@ data ProverError
   | UnsupportedOperation String             -- Operation not supported in context
   | MathematicalError String                -- Mathematical impossibility
   | InternalError String                    -- Should never happen
+  | TimeoutError TimeoutErrorType           -- Computation timeout
+  | PolynomialError PolynomialErrorType     -- Polynomial-specific errors
+  | ModularError String                     -- Modular arithmetic failures
+  deriving (Eq, Show, Generic)
+
+-- | Timeout error types
+data TimeoutErrorType
+  = BuchbergerTimeout                       -- Groebner basis timeout
+  | CADTimeout                              -- CAD decomposition timeout
+  | CADLiftTimeout                          -- CAD lift operation timeout
+  | IntSolverTimeout                        -- Integer solver timeout
+  | GeneralTimeout String                   -- General computation timeout
+  deriving (Eq, Show, Generic)
+
+-- | Polynomial-specific error types
+data PolynomialErrorType
+  = ZeroPolynomialLeadingTerm               -- Requested LT of zero polynomial
+  | PolynomialTooLarge Int                  -- Polynomial exceeds size limit
+  | InvalidPolynomialOperation String       -- General invalid operation
+  | EmptyBasis                              -- Empty polynomial basis
   deriving (Eq, Show, Generic)
 
 data ParseErrorType
@@ -92,6 +114,39 @@ formatError (MathematicalError msg) =
 formatError (InternalError msg) =
   "Internal Error (this should not happen!): " ++ msg ++ "\n" ++
   "Please report this as a bug at https://github.com/TACITVS/Hasclid/issues"
+
+formatError (TimeoutError errType) =
+  "Timeout Error: " ++ formatTimeoutError errType
+
+formatError (PolynomialError errType) =
+  "Polynomial Error: " ++ formatPolynomialError errType
+
+formatError (ModularError msg) =
+  "Modular Arithmetic Error: " ++ msg
+
+-- Format Timeout Errors
+formatTimeoutError :: TimeoutErrorType -> String
+formatTimeoutError BuchbergerTimeout =
+  "Groebner basis computation timed out (Buchberger algorithm)"
+formatTimeoutError CADTimeout =
+  "CAD decomposition timed out"
+formatTimeoutError CADLiftTimeout =
+  "CAD lift operation timed out"
+formatTimeoutError IntSolverTimeout =
+  "Integer solver timed out"
+formatTimeoutError (GeneralTimeout ctx) =
+  "Computation timed out: " ++ ctx
+
+-- Format Polynomial Errors
+formatPolynomialError :: PolynomialErrorType -> String
+formatPolynomialError ZeroPolynomialLeadingTerm =
+  "Attempted to get leading term of zero polynomial"
+formatPolynomialError (PolynomialTooLarge size) =
+  "Polynomial exceeds size limit (" ++ show size ++ " terms)"
+formatPolynomialError (InvalidPolynomialOperation op) =
+  "Invalid polynomial operation: " ++ op
+formatPolynomialError EmptyBasis =
+  "Empty polynomial basis (no generators)"
 
 -- Format Parse Errors
 formatParseError :: ParseErrorType -> String

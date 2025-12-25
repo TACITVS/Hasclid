@@ -47,7 +47,10 @@
       "WebSearch",
       "Bash(ghci:*)",
       "WebFetch(domain:arxiv.org)",
-      "Bash(./test_f5_bounds.exe:*)"
+      "Bash(./test_f5_bounds.exe:*)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:files.ele-math.com)",
+      "WebFetch(domain:www.math.pku.edu.cn)"
     ],
     "deny": [],
     "ask": []

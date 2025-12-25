@@ -1,0 +1,23 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY - SIMPLE TEST (Reduced Variables)
+-- =============================================================================
+-- Goal: Test with 4 variables using non-strict bounds
+
+:set-timeout 120
+:optimize on
+
+-- Single tangent/cosine pair
+:assume (> x 0)
+
+-- Polynomial constraint for cosine: cx^2 * (1 + x^2) = 1
+-- This implies cx <= 1 (since cx^2 = 1/(1+x^2) <= 1)
+:assume (> cx 0)
+:assume (<= cx 1)
+
+-- Distance variables
+:assume (> a 0)
+:assume (> b 0)
+
+-- Simple goal: a + b >= (a + b) * cx
+-- This is true when cx <= 1
+:auto (>= (+ a b) (* (+ a b) cx))

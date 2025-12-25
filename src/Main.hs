@@ -11,7 +11,7 @@ import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea, expr
 import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
 import IntSolver (IntSolveOptions(..))
 import Lagrange (solve4Squares)
-import Prover (proveTheory, proveTheoryWithCache, proveTheoryWithOptions, buildSubMap, toPolySub, evaluatePoly, ProofTrace, formatProofTrace, buchberger, proveByInduction, promoteIntVars)
+import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, proveByInduction)
 import BuchbergerOpt (SelectionStrategy(..), buchbergerWithStrategy)
 import CounterExample (findCounterExample, formatCounterExample)
 import CAD (discriminant, toRecursive)
@@ -30,6 +30,7 @@ import ProblemAnalyzer (analyzeProblem)
 import Geometry.WLOG (detectPoints)
 import RationalElim (eliminateRational)
 import SqrtElim (eliminateSqrt)
+import ProofMode (ProofMode(..))
 
 import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice, hSetBuffering, BufferMode(..))
 import System.Environment (getArgs)
@@ -46,6 +47,9 @@ import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Reader (ReaderT, runReaderT, ask)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (unless)
+
+maxTimeoutSeconds :: Int
+maxTimeoutSeconds = 180
 
 -- =============================================
 -- 1. ENTRY POINT
@@ -425,14 +429,19 @@ handleCommand state stateWithHist newHist input = do
                   else "Bounded brute-force search for integer goals: OFF"
       pure (stateWithHist { solverOptions = newOpts }, msg)
 
-    (":set-timeout":timeStr:_) -> 
+    (":set-timeout":timeStr:_) ->
       if all isDigit timeStr
-      then 
-        let seconds = read timeStr :: Int
-        in if seconds < 1 
+      then
+        let requested = read timeStr :: Int
+        in if requested < 1
            then pure (stateWithHist, "Timeout must be at least 1 second")
-           else pure (stateWithHist { solverTimeout = seconds, lastTimeoutSeconds = Nothing } 
-                     , "Solver timeout set to: " ++ show seconds ++ " seconds")
+           else
+             let seconds = min maxTimeoutSeconds requested
+                 msg = if requested > maxTimeoutSeconds
+                       then "Solver timeout capped at " ++ show maxTimeoutSeconds ++ " seconds (requested " ++ show requested ++ ")"
+                       else "Solver timeout set to: " ++ show seconds ++ " seconds"
+             in pure (stateWithHist { solverTimeout = seconds, lastTimeoutSeconds = Nothing }
+                     , msg)
       else pure (stateWithHist, "Usage: :set-timeout <seconds> (e.g., :set-timeout 60)")
 
     (":show-timeout":_) -> pure (stateWithHist, "Current solver timeout: " ++ show (solverTimeout state) ++ " seconds")
@@ -472,16 +481,29 @@ handleCommand state stateWithHist newHist input = do
                  msg = "Groebner backend set to: " ++ (if b == F4Backend then "f4" else "buchberger")
              in pure (stateWithHist { solverOptions = newOpts }, msg)
 
-    (":set-f4-batch":flag:_) -> 
+    (":set-f4-batch":flag:_) ->
       let newFlag = map toLower flag `elem` ["on","true","1","yes"]
           opts = solverOptions stateWithHist
           newOpts = opts { f4UseBatch = newFlag }
           msg = "F4 batch reduction " ++ if newFlag then "ENABLED" else "DISABLED"
       in pure (stateWithHist { solverOptions = newOpts }, msg)
 
-    (":set-strategy":name:_) -> 
+    (":proof-mode":mode:_) ->
+      let newMode = case map toLower mode of
+                      "sound" -> Just Sound
+                      "unsafe" -> Just Unsafe
+                      _ -> Nothing
+      in case newMode of
+           Nothing -> pure (stateWithHist, "Unknown proof mode. Options: sound | unsafe")
+           Just m ->
+             let opts = solverOptions stateWithHist
+                 newOpts = opts { proofMode = m }
+                 msg = "Proof mode set to: " ++ map toLower mode
+             in pure (stateWithHist { solverOptions = newOpts }, msg)
+
+    (":set-strategy":name:_) ->
       case map toLower name of
-        "normal" -> 
+        "normal" ->
           let newOpts = (solverOptions stateWithHist) { selectionStrategyOpt = NormalStrategy }
           in pure (stateWithHist { selectionStrategy = NormalStrategy, solverOptions = newOpts }, "Selection strategy set to Normal")
         "sugar" -> 
@@ -540,13 +562,14 @@ handleCommand state stateWithHist newHist input = do
        "  :auto-simplify          Toggle automatic expression simplification",
        "  :declare-int v1 v2...   Declare variables as integers",
        "  :bruteforce on|off      Toggle bounded brute-force fallback for integer goals",
-       "  :set-timeout <seconds>  Set solver timeout (default: 30)",
+       "  :set-timeout <seconds>  Set solver timeout (default: 30, max: " ++ show maxTimeoutSeconds ++ ")",
        "  :show-timeout           Show current timeout setting",
        "  :set-order <order>      Set term ordering (grevlex|lex|gradedlex)",
        "  :show-order             Show current term ordering",
        "  :optimize on|off        Toggle Buchberger optimization",
        "  :set-gb-backend name    Set Groebner backend (buchberger|f4)",
        "  :set-f4-batch on|off    Toggle F4 modular batch reduction",
+       "  :proof-mode sound|unsafe  Set proof mode (sound disables heuristics)",
        "  :set-strategy name      Set selection strategy (normal|sugar|minimal)",
        "  :cache-stats            Show Groebner cache statistics",
        "  :clear-cache            Clear Groebner cache",
@@ -610,7 +633,7 @@ handleCommand state stateWithHist newHist input = do
            Right f -> pure (stateWithHist { lemmas = f : lemmas state }, "Lemma saved: " ++ prettyFormula f)
            Left err -> pure (stateWithHist, formatError err)
 
-    (":prove":_) -> 
+    (":prove":_) ->
       let str = drop 7 input
       in case parseFormulaWithMacros (macros state) (intVars state) str of
            Left err -> pure (stateWithHist, formatError err)
@@ -619,23 +642,48 @@ handleCommand state stateWithHist newHist input = do
                  fullContext = theory state ++ lemmas state
                  -- Convert And goal to theory + single goal
                  (contextWithAnd, singleGoal) = convertAndGoal fullContext expandedFormula
-                 -- Apply preprocessing (including point substitutions)
-                 preprocessResult = preprocess (pointSubs state) contextWithAnd singleGoal
-                 theory' = preprocessedTheory preprocessResult
-                 goal' = preprocessedGoal preprocessResult
                  current = solverTimeout state
-                 groebnerFn = chooseBuchberger env stateWithHist
-             maybeResult <- liftIO $ runWithTimeout current $ do
-               let (proved, reason, trace, cache') = proveTheoryWithOptions groebnerFn (Just (groebnerCache state)) theory' goal'
-               let msg = (if proved then "RESULT: PROVED\n" else "RESULT: NOT PROVED\n") 
-                         ++ reason ++ 
-                         (if verbose state then "\n\n" ++ formatProofTrace trace else "")
-               _ <- CE.evaluate (length msg)
-               return (stateWithHist { groebnerCache = maybe (groebnerCache state) id cache' }, msg)
+                 opts = currentSolverOptions env stateWithHist
+                 isIneq = case singleGoal of
+                   Ge _ _ -> True
+                   Gt _ _ -> True
+                   Le _ _ -> True
+                   Lt _ _ -> True
+                   _ -> False
+             if isIneq
+               then do
+                 let isVerbose = verbose stateWithHist
+                 eres <- liftIO $ try $ runWithTimeout current $ do
+                   let res = autoSolve opts (pointSubs stateWithHist) contextWithAnd singleGoal
+                       traceStr = if isVerbose
+                                  then maybe "" (\t -> "\n\n" ++ t) (detailedTrace res)
+                                  else ""
+                       msg = (if isProved res then "RESULT: PROVED\n" else "RESULT: NOT PROVED\n")
+                             ++ proofReason res ++ traceStr
+                   _ <- CE.evaluate (length msg)
+                   return msg
+                 case eres of
+                   Left Underflow -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Underflow in solver.")
+                   Left Overflow  -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
+                   Left _         -> pure (stateWithHist, "[NUMERICAL ERROR] Math exception in solver.")
+                   Right Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                   Right (Just msg) -> pure (stateWithHist, msg)
+               else do
+                 let preprocessResult = preprocess (pointSubs state) contextWithAnd singleGoal
+                     theory' = preprocessedTheory preprocessResult
+                     goal' = preprocessedGoal preprocessResult
+                     groebnerFn = chooseBuchberger env stateWithHist
+                 maybeResult <- liftIO $ runWithTimeout current $ do
+                   let (proved, reason, trace, cache') = proveTheoryWithOptions (proofMode opts) groebnerFn (Just (groebnerCache state)) theory' goal'
+                   let msg = (if proved then "RESULT: PROVED\n" else "RESULT: NOT PROVED\n")
+                             ++ reason ++
+                             (if verbose state then "\n\n" ++ formatProofTrace trace else "")
+                   _ <- CE.evaluate (length msg)
+                   return (stateWithHist { groebnerCache = maybe (groebnerCache state) id cache' }, msg)
 
-             case maybeResult of
-               Just res -> pure res
-               Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
+                 case maybeResult of
+                   Just res -> pure res
+                   Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
 
     (":wu":_) -> 
       let str = drop 4 input

@@ -1,0 +1,57 @@
+Hasclid REPL Session Demonstration
+================================
+
+$ cabal run prover-int
+
+   Hasclid v9.0 - Multi-Solver System
+   Intelligent routing: Wu/Grobner/CAD + Router
+   Type :help for commands.
+
+> :assume (= a b)
+Assumed: (= a b)
+
+> :assume (= b c)
+Assumed: (= b c)
+
+> :prove-unified (= a c)
+Unified Orchestrator Result: Proved
+GROEBNER BASIS ALGEBRAIC PROOF DEVELOPMENT:
+========================================
+Used Assumptions (2):
+   * (= a b)
+   * (= b c)
+
+Proof Logic and Algebraic Steps:
+   1. Reduced expression to normal form: 0 (IDENTITY VERIFIED)
+
+Canonical Basis Size: 2 polynomials
+========================================
+OVERALL RESULT: [PROVED]
+
+> :reset
+Theory reset.
+
+> :point A 0 0
+Defined 2D Point A at (0, 0)
+
+> :point B 4 0
+Defined 2D Point B at (4, 0)
+
+> :assume (= (midpoint A B M) 0)
+Assumed: (= (midpoint A B M) 0)
+
+> :prove-unified (= (dist2 A M) (dist2 M B))
+Unified Orchestrator Result: Proved
+GROEBNER BASIS ALGEBRAIC PROOF DEVELOPMENT:
+========================================
+Used Assumptions (1):
+   * (= (midpoint A B M) 0)
+
+Proof Logic and Algebraic Steps:
+   1. Applied geometric constraint: (= xM 2)
+   2. Applied geometric constraint: (= yM 0)
+   3. Reduced expression to normal form: 0 (IDENTITY VERIFIED)
+
+Canonical Basis Size: 0 polynomials
+========================================
+OVERALL RESULT: [PROVED]

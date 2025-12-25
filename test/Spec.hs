@@ -15,7 +15,7 @@ import Timeout
 import Wu (wuProveE, WuResult(..))
 import Lagrange (solve4Squares, solve4SquaresE)
 import SolverRouter (autoSolve, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions, SolverChoice(..))
-import Error (ProverError(..), ProofErrorType(..), formatError)
+import Error (ProverError(..), ProofErrorType(..), TimeoutErrorType(..), formatError)
 import Data.List (isPrefixOf, isInfixOf)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -140,18 +140,18 @@ coreSpec = do
       ctx <- withTimeout 1  -- 1 second timeout
       threadDelay 1500000      -- Sleep 1.5s
       result <- runTimeoutM ctx checkTimeout
-      result `shouldBe` True
+      result `shouldBe` Right True
 
     it "does not timeout before deadline" $ do
       ctx <- withTimeout 1  -- 1 second timeout
       result <- runTimeoutM ctx checkTimeout
-      result `shouldBe` False
+      result `shouldBe` Right False
 
     it "no-timeout never times out" $ do
       ctx <- noTimeout
       threadDelay 10000       -- Sleep 10ms
       result <- runTimeoutM ctx checkTimeout
-      result `shouldBe` False
+      result `shouldBe` Right False
 
   describe "Buchberger Timeout" $ do
     it "completes for simple polynomial systems without timeout" $ do
@@ -161,9 +161,11 @@ coreSpec = do
                    polyAdd (polyPow y 2) (polyFromConst (-1))]
       ctx <- noTimeout
       result <- runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys)
-      length result `shouldSatisfy` (> 0)
+      case result of
+        Right basis -> length basis `shouldSatisfy` (> 0)
+        Left err -> expectationFailure ("Unexpected error: " ++ show err)
 
-    it "throws error on timeout for expensive systems" $ do
+    it "returns error on timeout for expensive systems" $ do
       let x = polyFromVar "x"
           y = polyFromVar "y"
           z = polyFromVar "z"
@@ -178,7 +180,12 @@ coreSpec = do
                   , polyAdd (polyMul y w) (polyFromConst 1)
                   ]
       ctx <- withTimeout 0  -- 0 second timeout (immediate)
-      runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys) `shouldThrow` anyErrorCall
+      -- With proper error handling, timeout returns Either ProverError
+      result <- runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys)
+      case result of
+        Left (TimeoutError BuchbergerTimeout) -> return ()  -- Expected
+        Left err -> expectationFailure ("Wrong error type: " ++ show err)
+        Right _ -> expectationFailure "Expected timeout error but computation succeeded"
 
   describe "CAD Implementation Correctness" $ do
     describe "Discriminant" $ do

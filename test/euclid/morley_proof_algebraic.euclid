@@ -13,7 +13,7 @@
 -- ============================================================================
 
 :verbose
-:set-timeout 300  -- High timeout for complex polynomial arithmetic
+:set-timeout 180  -- High timeout for complex polynomial arithmetic
 
 -- 1. DEFINE TRIANGLE
 -- ============================================================================

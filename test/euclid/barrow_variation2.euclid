@@ -1,0 +1,31 @@
+-- =============================================================================
+-- BARROW'S INEQUALITY VARIATION 2 - Scaled Version
+-- =============================================================================
+-- Goal: k*(a + b + c) >= (b+c)*cx + (c+a)*cy + (a+b)*cz for k=1
+-- This tests if the generic solver works on the same structure with different values
+-- =============================================================================
+
+:set-timeout 60
+:optimize on
+
+-- Positive tangent variables
+:assume (> x 0)
+:assume (> y 0)
+:assume (> z 0)
+
+-- Positive distance variables
+:assume (> a 0)
+:assume (> b 0)
+:assume (> c 0)
+
+-- Positive cosine variables with bounds (since 0 < cos < 1)
+:assume (> cx 0)
+:assume (> cy 0)
+:assume (> cz 0)
+:assume (< cx 1)
+:assume (< cy 1)
+:assume (< cz 1)
+
+-- Goal: a + b + c >= (b+c)*cx + (c+a)*cy + (a+b)*cz
+-- This should be provable when cosines are bounded below 1
+:auto (>= (+ a (+ b c)) (+ (* (+ b c) cx) (+ (* (+ c a) cy) (* (+ a b) cz))))

@@ -21,6 +21,7 @@ module IntSolver
 
 import Expr
 import Timeout
+import Error (TimeoutErrorType(..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Map.Strict as M
 import qualified Data.List as L
@@ -552,11 +553,8 @@ intIntervalSolveT opts allowBranch theory goal = do
       -- Timeout-aware refinement loop
       solveLoopT envIn theoryIn usedLP 0 = return $ Right (envIn, theoryIn, usedLP)
       solveLoopT envIn theoryIn usedLP n = do
-        timedOut <- checkTimeout
-        if timedOut
-          then error "Integer solver timeout exceeded in refinement loop"
-          else
-            let step = do
+        throwTimeoutError IntSolverTimeout  -- Throws if timeout exceeded
+        let step = do
                   envRefined <- iterateRefineFix envIn 20 theoryIn
                   theoryPruned <- pruneConstraints envRefined theoryIn
                   (envLP, usedLP1) <- linearRelaxation theoryIn goal envRefined

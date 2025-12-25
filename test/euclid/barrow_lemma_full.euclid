@@ -4,7 +4,7 @@
 -- Equivalently: 4 * PB * PC * ((PB + PC)² - BC²) <= (PB + PC)⁴
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 :assume (> PB 0)
@@ -31,4 +31,5 @@
 --   using 4*p <= s2 (already proved) and bc2 >= 0
 
 :auto (<= lhs s4)
+
 

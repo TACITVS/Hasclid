@@ -32,8 +32,9 @@ import Error
 import IntSolver
 import Sturm (sturmSequence, rootsInInterval, samplePoints, evalPoly)
 import Core.GB (buchbergerOptimized, reduce, sPoly)
-import Positivity (checkPositivityEnhanced, PositivityResult(..), PositivityMethod(..), Confidence(..))
+import Positivity (checkPositivityEnhancedWithHeuristics, PositivityResult(..), PositivityMethod(..), Confidence(..))
 import Positivity.SDP (checkSOS_Constrained)
+import ProofMode (ProofMode(..), defaultProofMode)
 import Cache (GroebnerCache, lookupBasis, insertBasis)
 import CADLift (proveFormulaCAD, satisfiableFormulaCAD, solveQuantifiedFormulaCAD)
 import SqrtElim (eliminateSqrt)
@@ -266,12 +267,13 @@ getConstInt _ = 0
 
 -- Shared Groebner fallback
 groebnerFallback
-  :: ([Poly] -> [Poly])
+  :: ProofMode
+  -> ([Poly] -> [Poly])
   -> Maybe GroebnerCache
   -> Theory
   -> Formula
   -> (Bool, String, ProofTrace, Maybe GroebnerCache)
-groebnerFallback customBuchberger maybeCache theory formula =
+groebnerFallback proofMode customBuchberger maybeCache theory formula =
   let
     (theoryPrep, formulaPrep, subApplied) = preprocessSystem theory formula
     (substAssumptions, constraintAssumptions) = partitionTheory theoryPrep
@@ -333,32 +335,35 @@ groebnerFallback customBuchberger maybeCache theory formula =
     reducedTheory = map reduceFormula theoryPrep
 
     checkPositivityWithFallback poly allowZero theory =
-      let (posResult, posMsg) = checkPositivity poly allowZero
+      let (posResult, posMsg) = checkPositivity proofMode poly allowZero
+          tryCad =
+            let goalExpr = unsafePerformIO $ do
+                  r <- try (evaluate (polyToExpr poly)) :: IO (Either ArithException Expr)
+                  case r of
+                    Left e -> error ("CATCHED IN POLYTOEXPR: " ++ show e)
+                    Right ex -> return ex
+                vars = S.toList (getVars poly)
+                relevantTheory = filter (\f -> all (`elem` vars) (varsInFormula f)) theory
+                goal = if allowZero then Ge goalExpr (Const 0) else Gt goalExpr (Const 0)
+                res = unsafePerformIO $ do
+                  r <- try (evaluate (proveFormulaCAD relevantTheory goal)) :: IO (Either ArithException Bool)
+                  case r of
+                    Left e -> error ("CATCHED IN PROVER: " ++ show e)
+                    Right b -> return b
+            in if res
+               then (True, "Proved via CAD on Normal Form (Generic).")
+               else (False, posMsg)
       in if posResult
          then (True, posMsg)
          else
-           -- Try Numeric SDP with Constraints
-           let constraints = extractInequalities theory
-               sdpResult = checkSOS_Constrained poly constraints
-           in if sdpResult
-              then (True, "Verified Sum-of-Squares via Numeric SDP (Constrained)")
-              else
-               let goalExpr = unsafePerformIO $ do
-                     r <- try (evaluate (polyToExpr poly)) :: IO (Either ArithException Expr)
-                     case r of
-                       Left e -> error ("CATCHED IN POLYTOEXPR: " ++ show e)
-                       Right ex -> return ex
-                   vars = S.toList (getVars poly)
-                   relevantTheory = filter (\f -> all (`elem` vars) (varsInFormula f)) theory
-                   goal = if allowZero then Ge goalExpr (Const 0) else Gt goalExpr (Const 0)
-                   res = unsafePerformIO $ do
-                     r <- try (evaluate (proveFormulaCAD relevantTheory goal)) :: IO (Either ArithException Bool)
-                     case r of
-                       Left e -> error ("CATCHED IN PROVER: " ++ show e)
-                       Right b -> return b
-               in if res
-                  then (True, "Proved via CAD on Normal Form (Generic).")
-                  else (False, posMsg)
+           case proofMode of
+             Unsafe ->
+               let constraints = extractInequalities theory
+                   sdpResult = checkSOS_Constrained poly constraints
+               in if sdpResult
+                  then (True, "Verified Sum-of-Squares via Numeric SDP (Constrained)")
+                  else tryCad
+             Sound -> tryCad
 
   in case formulaPrep of
        Eq _ _ ->
@@ -397,24 +402,24 @@ groebnerFallback customBuchberger maybeCache theory formula =
          (False, "Goal not supported by available solvers.", ProofTrace allSteps theoryPrep (length basis), updatedCache)
 
 -- | Prove a formula with optional cache support
-proveTheoryWithCache :: Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
-proveTheoryWithCache maybeCache theoryRaw formulaRaw =
+proveTheoryWithCache :: ProofMode -> Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+proveTheoryWithCache proofMode maybeCache theoryRaw formulaRaw =
   let theory = map expandFiniteDomain theoryRaw
       formula = expandFiniteDomain formulaRaw
       baseTrace = emptyTrace { usedAssumptions = theory }
   in case formula of
       And f1 f2 ->
-        let (p1, r1, t1, c1) = proveTheoryWithCache maybeCache theory f1
+        let (p1, r1, t1, c1) = proveTheoryWithCache proofMode maybeCache theory f1
         in if p1
-           then let (p2, r2, t2, c2) = proveTheoryWithCache c1 theory f2
+           then let (p2, r2, t2, c2) = proveTheoryWithCache proofMode c1 theory f2
                 in (p2, if p2 then "Both conjuncts proved: " ++ r1 ++ " AND " ++ r2 else "Failed on second conjunct: " ++ r2, t1 { steps = steps t1 ++ steps t2 }, c2)
            else (False, "Failed on first conjunct: " ++ r1, t1, c1)
-      
+
       Or f1 f2 ->
-        let (p1, r1, t1, c1) = proveTheoryWithCache maybeCache theory f1
-        in if p1 
+        let (p1, r1, t1, c1) = proveTheoryWithCache proofMode maybeCache theory f1
+        in if p1
            then (True, "Proved first disjunct: " ++ r1, t1, c1)
-           else let (p2, r2, t2, c2) = proveTheoryWithCache c1 theory f2
+           else let (p2, r2, t2, c2) = proveTheoryWithCache proofMode c1 theory f2
                 in if p2
                    then (True, "Proved second disjunct: " ++ r2, t2, c2)
                    else (False, "Failed to prove either disjunct: (" ++ r1 ++ ") OR (" ++ r2 ++ ")", t1, c2)
@@ -451,7 +456,7 @@ proveTheoryWithCache maybeCache theoryRaw formulaRaw =
                 hasNestedQuant = containsQuantifier inner
                 polyOk = all isPolyFormula (inner : theory)
             in if hasIntForm || hasDivForm || hasSqrtForm || not polyOk || hasNestedQuant
-                 then fallThrough maybeCache theory formula baseTrace
+                 then fallThrough proofMode maybeCache theory formula baseTrace
                  else 
                    let (holds, msg) =
                          case traverse boundsFromQ qs of 
@@ -495,10 +500,10 @@ proveTheoryWithCache maybeCache theoryRaw formulaRaw =
 
       Forall _ _ -> (False, "Unsupported universal quantifier.", baseTrace, maybeCache)
 
-      _ -> fallThrough maybeCache theory formula baseTrace
+      _ -> fallThrough proofMode maybeCache theory formula baseTrace
 
-fallThrough :: Maybe GroebnerCache -> Theory -> Formula -> ProofTrace -> (Bool, String, ProofTrace, Maybe GroebnerCache)
-fallThrough maybeCache theory formula baseTrace =
+fallThrough :: ProofMode -> Maybe GroebnerCache -> Theory -> Formula -> ProofTrace -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+fallThrough proofMode maybeCache theory formula baseTrace =
   let hasInt = containsIntFormula formula || any containsIntFormula theory
       hasDiv = containsDivFormula formula || any containsDivFormula theory
       hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
@@ -519,7 +524,7 @@ fallThrough maybeCache theory formula baseTrace =
             Nothing    -> 
               case formula of
                 Eq _ _ -> 
-                  let (gProved, gReason, gTrace, gCache) = groebnerFallback buchberger maybeCache theory formula
+                  let (gProved, gReason, gTrace, gCache) = groebnerFallback proofMode buchberger maybeCache theory formula
                   in if gProved 
                      then (True, "Proved by Algebraic Solver: " ++ gReason, gTrace, gCache)
                      else (False, "Int Solver Incomplete & Algebraic Solver failed: " ++ gReason, gTrace, gCache)
@@ -528,7 +533,7 @@ fallThrough maybeCache theory formula baseTrace =
        let (th', goal', _) = eliminateRational theory formula
            hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
            (th'', goal'', _) = if hasSqrt' then eliminateSqrt th' goal' else (th', goal', M.empty)
-       in proveTheoryWithCache maybeCache th'' goal''
+       in proveTheoryWithCache proofMode maybeCache th'' goal''
      else if hasSqrt then
        let (th', goal', _) = eliminateSqrt theory formula
            proved = proveFormulaCAD th' goal'
@@ -540,7 +545,7 @@ fallThrough maybeCache theory formula baseTrace =
            msg = if proved then "Proved by CAD (QE)." else "Refuted by CAD (QE)."
        in (proved, msg, baseTrace, maybeCache)
      else 
-       let (gProved, gMsg, gTrace, gCache) = groebnerFallback buchberger maybeCache theory formula
+       let (gProved, gMsg, gTrace, gCache) = groebnerFallback proofMode buchberger maybeCache theory formula
        in if gProved
           then (True, gMsg, gTrace, gCache)
           else case formula of
@@ -550,32 +555,32 @@ fallThrough maybeCache theory formula baseTrace =
                  Lt _ _ -> tryCAD gMsg gTrace gCache
                  _      -> (False, gMsg, gTrace, gCache)
 
-proveTheoryWithOptions :: ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
-proveTheoryWithOptions customBuchberger maybeCache theoryRaw formulaRaw =
+proveTheoryWithOptions :: ProofMode -> ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory -> Formula -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+proveTheoryWithOptions proofMode customBuchberger maybeCache theoryRaw formulaRaw =
   let theory = map expandFiniteDomain theoryRaw
       formula = expandFiniteDomain formulaRaw
       baseTrace = emptyTrace { usedAssumptions = theory }
   in case formula of
       And f1 f2 ->
-        let (p1, r1, t1, c1) = proveTheoryWithOptions customBuchberger maybeCache theory f1
+        let (p1, r1, t1, c1) = proveTheoryWithOptions proofMode customBuchberger maybeCache theory f1
         in if p1
-           then let (p2, r2, t2, c2) = proveTheoryWithOptions customBuchberger c1 theory f2
+           then let (p2, r2, t2, c2) = proveTheoryWithOptions proofMode customBuchberger c1 theory f2
                 in (p2, if p2 then "Both conjuncts proved: " ++ r1 ++ " AND " ++ r2 else "Failed on second conjunct: " ++ r2, t1 { steps = steps t1 ++ steps t2 }, c2)
            else (False, "Failed on first conjunct: " ++ r1, t1, c1)
       
       Or f1 f2 ->
-        let (p1, r1, t1, c1) = proveTheoryWithOptions customBuchberger maybeCache theory f1
-        in if p1 
+        let (p1, r1, t1, c1) = proveTheoryWithOptions proofMode customBuchberger maybeCache theory f1
+        in if p1
            then (True, "Proved first disjunct: " ++ r1, t1, c1)
-           else let (p2, r2, t2, c2) = proveTheoryWithOptions customBuchberger c1 theory f2
+           else let (p2, r2, t2, c2) = proveTheoryWithOptions proofMode customBuchberger c1 theory f2
                 in if p2
                    then (True, "Proved second disjunct: " ++ r2, t2, c2)
                    else (False, "Failed to prove either disjunct.", t1, c2)
 
-      _ -> fallThroughWithOptions customBuchberger maybeCache theory formula baseTrace
+      _ -> fallThroughWithOptions proofMode customBuchberger maybeCache theory formula baseTrace
 
-fallThroughWithOptions :: ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory -> Formula -> ProofTrace -> (Bool, String, ProofTrace, Maybe GroebnerCache)
-fallThroughWithOptions customBuchberger maybeCache theory formula _baseTrace =
+fallThroughWithOptions :: ProofMode -> ([Poly] -> [Poly]) -> Maybe GroebnerCache -> Theory -> Formula -> ProofTrace -> (Bool, String, ProofTrace, Maybe GroebnerCache)
+fallThroughWithOptions proofMode customBuchberger maybeCache theory formula _baseTrace =
   let hasDiv = containsDivFormula formula || any containsDivFormula theory
       hasSqrt = containsSqrtFormula formula || any containsSqrtFormula theory
 
@@ -589,7 +594,7 @@ fallThroughWithOptions customBuchberger maybeCache theory formula _baseTrace =
        let (th', goal', _) = eliminateRational theory formula
            hasSqrt' = containsSqrtFormula goal' || any containsSqrtFormula th'
            (th'', goal'', _) = if hasSqrt' then eliminateSqrt th' goal' else (th', goal', M.empty)
-       in proveTheoryWithOptions customBuchberger maybeCache th'' goal''
+       in proveTheoryWithOptions proofMode customBuchberger maybeCache th'' goal''
      else if hasSqrt then
        let (th', goal', _) = eliminateSqrt theory formula
            proved = proveFormulaCAD th' goal'
@@ -597,7 +602,7 @@ fallThroughWithOptions customBuchberger maybeCache theory formula _baseTrace =
            trace = emptyTrace { usedAssumptions = th' }
        in (proved, msg, trace, maybeCache)
      else 
-       let (gProved, gMsg, gTrace, gCache) = groebnerFallback customBuchberger maybeCache theory formula
+       let (gProved, gMsg, gTrace, gCache) = groebnerFallback proofMode customBuchberger maybeCache theory formula
        in if gProved
           then (True, gMsg, gTrace, gCache)
           else case formula of
@@ -610,25 +615,32 @@ fallThroughWithOptions customBuchberger maybeCache theory formula _baseTrace =
 -- | Original proveTheory function (no caching)
 proveTheory :: Theory -> Formula -> (Bool, String, ProofTrace)
 proveTheory theory formula =
-  let (isProved, reason, trace, _) = proveTheoryWithCache Nothing theory formula
+  let (isProved, reason, trace, _) = proveTheoryWithCache defaultProofMode Nothing theory formula
   in (isProved, reason, trace)
 
 -- | Either-based proveTheory
 proveTheoryE :: Theory -> Formula -> Either ProverError ProofResult
 proveTheoryE theory formula =
-  let (isProved, reason, trace, _) = proveTheoryWithCache Nothing theory formula
+  let (isProved, reason, trace, _) = proveTheoryWithCache defaultProofMode Nothing theory formula
   in Right $ ProofResult isProved reason trace
 
 -- | Enhanced Positivity Checker
-checkPositivity :: Poly -> Bool -> (Bool, String)
-checkPositivity p allowZero =
-  let result = checkPositivityEnhanced p allowZero
-      confidenceStr = case confidence result of 
+checkPositivity :: ProofMode -> Poly -> Bool -> (Bool, String)
+checkPositivity proofMode p allowZero =
+  let result = checkPositivityEnhancedWithHeuristics (proofMode == Unsafe) p allowZero
+      confidenceStr = case confidence result of
                         Proven -> "[PROVEN]"
                         HighConfidence -> "[HIGH CONFIDENCE]"
                         Heuristic -> "[HEURISTIC]"
       methodStr = show (method result)
-  in (isPositive result, confidenceStr ++ " " ++ explanation result ++ " (Method: " ++ methodStr ++ ")")
+      accepted = case proofMode of
+                   Sound -> confidence result == Proven
+                   Unsafe -> True
+      baseMsg = confidenceStr ++ " " ++ explanation result ++ " (Method: " ++ methodStr ++ ")"
+      msg = if isPositive result && not accepted
+            then baseMsg ++ " [rejected in sound mode]"
+            else baseMsg
+  in (isPositive result && accepted, msg)
 
 -- Prove universal integer goals
 proveForallInt :: Theory -> Formula -> (Bool, String)
@@ -813,9 +825,8 @@ proveByInduction _theory _formula = (False, "Not implemented.", emptyTrace)
 
 
 extractInequalities :: Theory -> [Poly]
-extractInequalities theory = 
-  let subM = buildSubMap theory -- Reuse sub map logic? Or assume reduced?
-      -- Reduced theory has simple forms.
+extractInequalities theory =
+  let -- Reduced theory has simple forms.
       -- Convert Ge/Gt/Le/Lt to Poly >= 0
       toP (Ge l r) = Just (toPolySub M.empty (Sub l r))
       toP (Gt l r) = Just (toPolySub M.empty (Sub l r))

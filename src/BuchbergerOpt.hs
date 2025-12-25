@@ -13,6 +13,8 @@ module BuchbergerOpt
 
 import Expr
 import Timeout
+import Error (TimeoutErrorType(..))
+import Control.Monad.Except (throwError)
 import qualified Data.Map.Strict as M
 import Data.List (nub, minimumBy, delete, sortBy)
 import Data.Ord (comparing)
@@ -204,10 +206,8 @@ buchbergerWithStrategyT ord strategy polys =
     go :: MonomialOrder -> [Poly] -> [CriticalPair] -> [CriticalPair] -> TimeoutM [Poly]
     go _ basis [] _ = return (interreduceBasis ord basis)
     go cmp basis pairs processed = do
-      timedOut <- checkTimeout
-      if timedOut
-        then error "Buchberger computation timeout exceeded"
-        else case selectPair strategy pairs of
+      throwTimeoutError BuchbergerTimeout  -- Throws if timeout exceeded
+      case selectPair strategy pairs of
           Nothing -> return (interreduceBasis ord basis)
           Just (pair, remaining) ->
             let (f, g) = pairPolys pair
