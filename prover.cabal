@@ -25,6 +25,13 @@ executable prover-int
     hs-source-dirs:   src
     other-modules:
         Core.GB
+        Core.Types
+        Core.Problem
+        Core.Solver
+        Core.Orchestrator
+        Solvers.Wu
+        Solvers.Groebner
+        Solvers.Algebraic
         AreaMethod
         BuchbergerOpt
         CAD
@@ -38,9 +45,11 @@ executable prover-int
         Lagrange
         Modular
         Parser
+        Polynomial
         PolynomialFactor
         Positivity
         Preprocessing
+        ProofMode
         ProblemAnalyzer
         Prover
         RationalElim
@@ -82,6 +91,12 @@ test-suite prover-test
     hs-source-dirs: test, src
     other-modules:
         Core.GB
+        Core.Types
+        Core.Problem
+        Core.Solver
+        Core.Orchestrator
+        Solvers.Groebner
+        Solvers.Wu
         AreaMethod
         BuchbergerOpt
         CAD
@@ -95,9 +110,11 @@ test-suite prover-test
         Lagrange
         Modular
         Parser
+        Polynomial
         PolynomialFactor
         Positivity
         Preprocessing
+        ProofMode
         ProblemAnalyzer
         Prover
         RationalElim
@@ -120,6 +137,7 @@ test-suite prover-test
         Positivity.SOSTypes
         Positivity.FacialReduction
         Positivity.SymmetricSOS
+        Positivity.GeneralizedSturm
         ExamplesSpec
         IntegrationSpec
     build-depends:
@@ -145,6 +163,7 @@ test-suite f5-test
     main-is:          TestF5.hs
     hs-source-dirs:   test, src
     other-modules:
+        Core.Types
         F5
         Expr
         TermOrder

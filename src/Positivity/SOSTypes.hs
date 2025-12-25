@@ -7,10 +7,8 @@ module Positivity.SOSTypes
 
 import Expr
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import Data.Ratio
-import Data.List (sort, nub, permutations)
-import Debug.Trace (trace)
+import Data.List (nub)
 
 -- | Certificate showing that a polynomial is a sum of squares.
 data SOSCertificate = SOSCertificate
@@ -32,19 +30,17 @@ data SOSPattern
   | Custom String          
   deriving (Eq, Show)
 
--- | Try to decompose polynomial using heuristic pattern matching
+-- | Try to decompose polynomial using heuristic pattern matching.
+-- Attempts patterns in order: trivial square, sum of squares, AM-GM, triangle inequality.
 trySOSHeuristic :: Poly -> [Formula] -> Maybe SOSCertificate
 trySOSHeuristic poly theory =
-  let _ = trace ("SOS: trySOSHeuristic on poly with " ++ show (Map.size (case poly of Poly m -> m)) ++ " terms.") ()
-  in case tryTrivialSquare poly of
+  case tryTrivialSquare poly of
     Just cert -> Just cert
     Nothing -> case trySimpleSumOfSquares poly of
       Just cert -> Just cert
       Nothing -> case tryAMGMPattern poly theory of
         Just cert -> Just cert
-        Nothing -> case tryTriangleInequalityPattern poly of
-          Just cert -> Just cert
-          Nothing -> Nothing
+        Nothing -> tryTriangleInequalityPattern poly
 
 -- | Check if polynomial is already a perfect square
 tryTrivialSquare :: Poly -> Maybe SOSCertificate
@@ -184,11 +180,6 @@ matchAMGM3 poly =
                   Nothing -> Nothing
            _ -> Nothing
     Nothing -> Nothing
-
--- | Check if a monomial is a product of three other monomials m1*m2*m3
--- In our case, we check if it matches the cube root's components' product.
-isProductOfThree :: Monomial -> Bool
-isProductOfThree (Monomial vars) = all (\e -> e `mod` 1 == 0) (Map.elems vars) -- Trivial check
 
 -- | Find cubic root of a polynomial if it exists
 cubicRoot :: Poly -> Maybe Poly
