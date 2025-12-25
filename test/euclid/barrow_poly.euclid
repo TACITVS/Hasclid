@@ -1,0 +1,46 @@
+-- Barrow's Inequality - Polynomial Form (no division)
+:set-timeout 120
+
+-- Triangle with interior point P
+-- WLOG: A at origin, B on positive x-axis, C in upper half plane
+:assume (> bx 0)
+:assume (> cy 0)
+:assume (> cx 0)  -- For a well-positioned triangle
+
+-- Point P inside the triangle
+:assume (> px 0)
+:assume (> py 0)
+
+-- Distances are positive
+:assume (> PA 0)
+:assume (> PB 0)
+:assume (> PC 0)
+:assume (> PU 0)
+:assume (> PV 0)
+:assume (> PW 0)
+
+-- Distance squared constraints (polynomial form)
+:assume (= (^ PA 2) (+ (^ px 2) (^ py 2)))
+:assume (= (^ PB 2) (+ (^ (- px bx) 2) (^ py 2)))
+:assume (= (^ PC 2) (+ (^ (- px cx) 2) (^ (- py cy) 2)))
+
+-- Side lengths squared
+:assume (= (^ BC 2) (+ (^ (- bx cx) 2) (^ cy 2)))
+:assume (= (^ CA 2) (+ (^ cx 2) (^ cy 2)))
+:assume (= (^ AB 2) (^ bx 2))
+
+-- Angle bisector constraint in polynomial form:
+-- PU^2 * (PB + PC)^2 = PB * PC * ((PB + PC)^2 - BC^2)
+-- This is the angle bisector length formula without division
+
+:assume (= (* (^ PU 2) (^ (+ PB PC) 2)) (* (* PB PC) (- (^ (+ PB PC) 2) (^ BC 2))))
+:assume (= (* (^ PV 2) (^ (+ PC PA) 2)) (* (* PC PA) (- (^ (+ PC PA) 2) (^ CA 2))))
+:assume (= (* (^ PW 2) (^ (+ PA PB) 2)) (* (* PA PB) (- (^ (+ PA PB) 2) (^ AB 2))))
+
+-- Feasibility: (PB+PC)^2 > BC^2 (angle bisector exists)
+:assume (> (- (^ (+ PB PC) 2) (^ BC 2)) 0)
+:assume (> (- (^ (+ PC PA) 2) (^ CA 2)) 0)
+:assume (> (- (^ (+ PA PB) 2) (^ AB 2)) 0)
+
+-- Goal: PA + PB + PC >= 2*(PU + PV + PW)
+:auto (>= (+ PA (+ PB PC)) (* 2 (+ PU (+ PV PW))))

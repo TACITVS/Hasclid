@@ -1,9 +1,11 @@
 {-# LANGUAGE BangPatterns #-}
 module Positivity.SymmetricSOS
   ( checkOnoInequality
+  , checkBarrowInequality
   , checkSymmetricAMGM
   , decomposeAMGM3
   , OnoResult(..)
+  , BarrowResult(..)
   , SymmetricPattern(..)
   ) where
 
@@ -11,14 +13,24 @@ import Expr
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List (sort, nub, permutations, sortBy)
-import Data.Maybe (mapMaybe, listToMaybe, isJust)
+import Data.Maybe (mapMaybe, listToMaybe, isJust, catMaybes)
 import Data.Ratio (numerator, denominator, (%))
+
+import qualified Positivity.GeneralizedSturm as GS
+import Positivity.GeneralizedSturm (ProofResult(..))
 
 -- | Result of Ono inequality check
 data OnoResult
   = OnoProved String           -- ^ Proved with explanation
   | OnoNotApplicable String    -- ^ Pattern doesn't match
   | OnoFailed String           -- ^ Pattern matched but proof failed
+  deriving (Eq, Show)
+
+-- | Result of Barrow/generic inequality check
+data BarrowResult
+  = BarrowProved String        -- ^ Proved with explanation
+  | BarrowNotApplicable String -- ^ Method doesn't apply
+  | BarrowFailed String        -- ^ Found counterexample
   deriving (Eq, Show)
 
 -- | Symmetric polynomial patterns
@@ -29,6 +41,96 @@ data SymmetricPattern
   | PatternSchur              -- ^ Schur's inequality
   | PatternCauchy             -- ^ Cauchy-Schwarz variants
   deriving (Eq, Show)
+
+-- =============================================================================
+-- Generic Inequality Prover (Barrow-style)
+-- =============================================================================
+
+-- | Try to prove ANY polynomial inequality using generic methods
+-- This is a GENERIC prover - no pattern-specific hardcoding
+checkBarrowInequality :: [Formula] -> Formula -> BarrowResult
+checkBarrowInequality theory goal
+  -- Skip if too many constraints
+  | length theory > 30 = BarrowNotApplicable "Too many constraints"
+  | otherwise =
+    case extractPolynomialSystem theory goal of
+      Nothing -> BarrowNotApplicable "Could not extract polynomial system"
+      Just (eqConstraints, posConstraints, goalPoly) ->
+        -- Check variable count (allow up to 30 variables for complex geometric proofs)
+        let vars = S.toList $ S.unions $ map getVars (goalPoly : eqConstraints ++ posConstraints)
+            nVars = length vars
+            nEq = length eqConstraints
+            nPos = length posConstraints
+        in if nVars > 30
+           then BarrowNotApplicable $ "Too many variables: " ++ show nVars
+           else case GS.tryGenericProof eqConstraints posConstraints goalPoly of
+                     GS.Proved msg -> BarrowProved msg
+                     GS.Disproved msg -> BarrowFailed msg
+                     GS.Unknown msg -> BarrowNotApplicable msg
+
+-- | Extract polynomial constraints from theory
+extractPolynomialSystem :: [Formula] -> Formula -> Maybe ([Poly], [Poly], Poly)
+extractPolynomialSystem theory goal =
+  case goal of
+    Ge lhs rhs
+      | containsDiv lhs || containsDiv rhs -> Nothing  -- Can't handle division in goal
+      | otherwise ->
+          let goalPoly = toPolySub M.empty (Sub lhs rhs)
+              (eqPolys, posPolys) = partitionConstraints theory
+          in Just (eqPolys, posPolys, goalPoly)
+    Gt lhs rhs
+      | containsDiv lhs || containsDiv rhs -> Nothing
+      | otherwise ->
+          let goalPoly = toPolySub M.empty (Sub lhs rhs)
+              (eqPolys, posPolys) = partitionConstraints theory
+          in Just (eqPolys, posPolys, goalPoly)
+    _ -> Nothing
+
+-- | Partition theory into equality and positivity constraints
+-- Converts all constraints to polynomial form (skips non-polynomial expressions)
+partitionConstraints :: [Formula] -> ([Poly], [Poly])
+partitionConstraints formulas =
+  let processFormula f = case f of
+        -- Equality constraints (skip if contains division)
+        Eq lhs rhs -> if containsDiv lhs || containsDiv rhs
+                      then (Nothing, Nothing)
+                      else (safeToPolySub (Sub lhs rhs), Nothing)
+        -- Positivity: x > 0 or expr > 0
+        Gt lhs (Const 0) -> if containsDiv lhs
+                           then (Nothing, Nothing)
+                           else (Nothing, safeToPolySub lhs)
+        -- Non-negativity: x >= 0 or expr >= 0
+        Ge lhs (Const 0) -> if containsDiv lhs
+                           then (Nothing, Nothing)
+                           else (Nothing, safeToPolySub lhs)
+        -- Upper bounds: x <= k becomes k - x >= 0
+        Le lhs rhs -> if containsDiv lhs || containsDiv rhs
+                      then (Nothing, Nothing)
+                      else (Nothing, safeToPolySub (Sub rhs lhs))
+        Lt lhs rhs -> if containsDiv lhs || containsDiv rhs
+                      then (Nothing, Nothing)
+                      else (Nothing, safeToPolySub (Sub rhs lhs))
+        _ -> (Nothing, Nothing)
+      results = map processFormula formulas
+      eqs = mapMaybe fst results
+      pos = mapMaybe snd results
+  in (eqs, pos)
+
+-- | Check if expression contains division
+containsDiv :: Expr -> Bool
+containsDiv (Div _ _) = True
+containsDiv (Add a b) = containsDiv a || containsDiv b
+containsDiv (Sub a b) = containsDiv a || containsDiv b
+containsDiv (Mul a b) = containsDiv a || containsDiv b
+containsDiv (Pow e _) = containsDiv e
+containsDiv (Sqrt e) = containsDiv e
+containsDiv _ = False
+
+-- | Safely convert expression to polynomial (returns Nothing for non-polynomial)
+safeToPolySub :: Expr -> Maybe Poly
+safeToPolySub expr
+  | containsDiv expr = Nothing
+  | otherwise = Just $ toPolySub M.empty expr
 
 -- =============================================================================
 -- Ono's Inequality Direct Check
