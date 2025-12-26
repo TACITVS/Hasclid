@@ -4,7 +4,7 @@
 -- WLOG: P=(1,0), Vertices A, B, C on unit circle.
 
 :reset
-:set-timeout 300
+:set-timeout 180
 
 -- Readable Breakdown:
 -- Foot F = N / D

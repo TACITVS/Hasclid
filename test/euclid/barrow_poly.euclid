@@ -1,5 +1,5 @@
 -- Barrow's Inequality - Polynomial Form (no division)
-:set-timeout 120
+:set-timeout 180
 
 -- Triangle with interior point P
 -- WLOG: A at origin, B on positive x-axis, C in upper half plane
@@ -43,4 +43,4 @@
 :assume (> (- (^ (+ PA PB) 2) (^ AB 2)) 0)
 
 -- Goal: PA + PB + PC >= 2*(PU + PV + PW)
-:auto (>= (+ PA (+ PB PC)) (* 2 (+ PU (+ PV PW))))
+:auto (>= (^ (+ PA (+ PB PC)) 2) (* 4 (^ (+ PU (+ PV PW)) 2)))

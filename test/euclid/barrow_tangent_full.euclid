@@ -14,7 +14,7 @@
 
 :set-timeout 120
 :optimize on
-
+:verbose
 -- Tangent variables (positive for acute half-angles)
 :assume (> x 0)
 :assume (> y 0)

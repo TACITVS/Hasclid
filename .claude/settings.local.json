@@ -47,7 +47,11 @@
       "WebSearch",
       "Bash(ghci:*)",
       "WebFetch(domain:arxiv.org)",
-      "Bash(./test_f5_bounds.exe:*)"
+      "Bash(./test_f5_bounds.exe:*)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:files.ele-math.com)",
+      "WebFetch(domain:www.math.pku.edu.cn)",
+      "Bash(dist-newstyle/build/x86_64-windows/ghc-9.12.2/prover-0.1.0.0/t/prover-test/build/prover-test/prover-test.exe:*)"
     ],
     "deny": [],
     "ask": []

@@ -7,7 +7,7 @@
 -- This is the KEY constraint that makes Barrow work!
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 -- Use normalized distances: a + b + c = 1
@@ -28,4 +28,5 @@
 -- Goal: 1 >= (1-a)*cx + (1-b)*cy + (1-c)*cz
 
 :auto (>= 1 (+ (* (- 1 a) cx) (+ (* (- 1 b) cy) (* (- 1 c) cz))))
+
 

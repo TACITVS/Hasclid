@@ -324,27 +324,35 @@ extractVarsFromExpr (Div e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr 
 extractVarsFromExpr (Mod e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
 extractVarsFromExpr (Pow e _) = extractVarsFromExpr e
 extractVarsFromExpr (Sqrt e) = extractVarsFromExpr e
-extractVarsFromExpr (Dist2 p1 p2) = [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y"]
+extractVarsFromExpr (Dist2 p1 p2) =
+  ["x" ++ p1, "y" ++ p1, "z" ++ p1, "x" ++ p2, "y" ++ p2, "z" ++ p2]
 extractVarsFromExpr (Collinear p1 p2 p3) =
-  [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y", p3 ++ "x", p3 ++ "y"]
+  ["x" ++ p1, "y" ++ p1, "x" ++ p2, "y" ++ p2, "x" ++ p3, "y" ++ p3]
 extractVarsFromExpr (Dot p1 p2 p3 p4) =
-  [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y",
-   p3 ++ "x", p3 ++ "y", p4 ++ "x", p4 ++ "y"]
-extractVarsFromExpr (Circle p1 p2 _) = [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y"]
+  ["x" ++ p1, "y" ++ p1, "z" ++ p1, "x" ++ p2, "y" ++ p2, "z" ++ p2,
+   "x" ++ p3, "y" ++ p3, "z" ++ p3, "x" ++ p4, "y" ++ p4, "z" ++ p4]
+extractVarsFromExpr (Circle p1 p2 _) =
+  ["x" ++ p1, "y" ++ p1, "z" ++ p1, "x" ++ p2, "y" ++ p2, "z" ++ p2]
 extractVarsFromExpr (Midpoint p1 p2 p3) =
-  [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y", p3 ++ "x", p3 ++ "y"]
+  ["x" ++ p1, "y" ++ p1, "z" ++ p1,
+   "x" ++ p2, "y" ++ p2, "z" ++ p2,
+   "x" ++ p3, "y" ++ p3, "z" ++ p3]
 extractVarsFromExpr (Perpendicular p1 p2 p3 p4) =
-  [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y",
-   p3 ++ "x", p3 ++ "y", p4 ++ "x", p4 ++ "y"]
+  ["x" ++ p1, "y" ++ p1, "z" ++ p1,
+   "x" ++ p2, "y" ++ p2, "z" ++ p2,
+   "x" ++ p3, "y" ++ p3, "z" ++ p3,
+   "x" ++ p4, "y" ++ p4, "z" ++ p4]
 extractVarsFromExpr (Parallel p1 p2 p3 p4) =
-  [p1 ++ "x", p1 ++ "y", p2 ++ "x", p2 ++ "y",
-   p3 ++ "x", p3 ++ "y", p4 ++ "x", p4 ++ "y"]
+  ["x" ++ p1, "y" ++ p1, "z" ++ p1,
+   "x" ++ p2, "y" ++ p2, "z" ++ p2,
+   "x" ++ p3, "y" ++ p3, "z" ++ p3,
+   "x" ++ p4, "y" ++ p4, "z" ++ p4]
 extractVarsFromExpr (AngleEq2D a b c d e f) =
-  [a ++ "x", a ++ "y", b ++ "x", b ++ "y", c ++ "x", c ++ "y",
-   d ++ "x", d ++ "y", e ++ "x", e ++ "y", f ++ "x", f ++ "y"]
+  ["x" ++ a, "y" ++ a, "x" ++ b, "y" ++ b, "x" ++ c, "y" ++ c,
+   "x" ++ d, "y" ++ d, "x" ++ e, "y" ++ e, "x" ++ f, "y" ++ f]
 extractVarsFromExpr (AngleEq2DAbs a b c d e f) =
-  [a ++ "x", a ++ "y", b ++ "x", b ++ "y", c ++ "x", c ++ "y",
-   d ++ "x", d ++ "y", e ++ "x", e ++ "y", f ++ "x", f ++ "y"]
+  ["x" ++ a, "y" ++ a, "x" ++ b, "y" ++ b, "x" ++ c, "y" ++ c,
+   "x" ++ d, "y" ++ d, "x" ++ e, "y" ++ e, "x" ++ f, "y" ++ f]
 extractVarsFromExpr (Determinant rows) = concatMap extractVarsFromExpr (concat rows)
 
 -- =============================================

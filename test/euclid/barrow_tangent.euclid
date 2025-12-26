@@ -13,7 +13,7 @@
 -- For an acute-angle configuration (all angles < π/2), x, y, z > 0.
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 -- Tangent variables for half-angles at P
@@ -81,4 +81,5 @@
 
 -- Basic check: the identity is consistent
 :auto (= (+ x (+ y z)) (* x (* y z)))
+
 

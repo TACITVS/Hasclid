@@ -20,7 +20,7 @@
 -- Key geometric insight: ∠BPC/2 + ∠CPA/2 + ∠APB/2 = π
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 -- =============================================================================
@@ -67,4 +67,5 @@
 
 -- This is getting complex. Let me try a simpler numerical verification first.
 :auto (> (* x (* y z)) 0)
+
 

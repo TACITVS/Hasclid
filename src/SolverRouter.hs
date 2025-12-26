@@ -1,7 +1,9 @@
 {-|
 Module: SolverRouter
-Description: Intelligent routing system for automatic solver selection
+Description: Intelligent routing system using Unified Core Architecture
 -}
+
+{-# LANGUAGE ExistentialQuantification #-}
 
 module SolverRouter
   ( autoSolve
@@ -27,36 +29,43 @@ import Error
 import Preprocessing (preprocess, preprocessGeometry, PreprocessingResult(..), applySubstitutionsFormula, applySubstitutionsExpr)
 import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..))
-import Wu (wuProve, wuProveWithTrace, formatWuTrace, proveExistentialWu, reduceWithWu)
-import qualified Wu (WuTrace(..))
-import Prover (proveTheoryWithOptions, formatProofTrace, buchberger, subPoly, intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, reasonOutcome, proveExistentialConstructive, intBoundsFromQ, promoteIntVars)
-import CADLift (evaluateInequalityCAD, solveQuantifiedFormulaCAD)
-import CADLift (proveFormulaCAD)
-import Positivity (checkPositivityEnhanced, isPositive, explanation, PositivityResult(..), Confidence(..))
+import qualified Wu (wuProveWithTrace, formatWuTrace, isProved, proofReason)
+import qualified Prover (intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, proveExistentialConstructive, ProofTrace)
+import qualified CADLift (proveFormulaCAD)
+import Positivity.SOS (SOSCertificate(..), getSOSCertificate)
+import qualified Positivity.Numerical as NumSOS
+import qualified Positivity.SDP as SDP
+import qualified Positivity.SymmetricSOS as SymSOS
 import SqrtElim (eliminateSqrt)
 import RationalElim (eliminateRational)
-import BuchbergerOpt (buchbergerWithStrategy, SelectionStrategy(..))
+import BuchbergerOpt (SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
-import F4Lite (f4LiteGroebner, f4ReduceModular, reduceWithF4, reduceWithBasis)
-import qualified F5 (f5Solve, f5SolveBounded, F5Config(..), F5Result(..), defaultF5Config, conservativeF5Config, f5Basis, f5Completed, f5AbortReason)
-import Geometry.WLOG (applyWLOG, detectPoints, parsePointVar)
-import Geometry.Barycentric (applyBarycentric)
+import F4Lite (f4LiteGroebner, reduceWithBasis)
+import qualified F5 (f5SolveBounded, F5Config(..), F5Result(..), defaultF5Config, conservativeF5Config, f5Basis, f5Completed)
+import qualified Geometry.WLOG
+import qualified Geometry.Barycentric
 import Heuristics
-import Positivity.SOS (checkSOS, checkSOSWithLemmas, SOSCertificate(..), getSOSCertificate)
-import Positivity.Numerical (checkSOSNumeric, reconstructPoly, PolyD, safeFromRational)
-import Positivity.SDP (checkSOS_SDP)
-import Positivity.SOSTypes (trySOSHeuristic)
-import Positivity.SymmetricSOS (checkOnoInequality, checkBarrowInequality, OnoResult(..), BarrowResult(..))
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
-import Data.List (delete, find, isSuffixOf, sort, foldl', isPrefixOf, intercalate, nub, partition)
-import Data.Maybe (isJust, mapMaybe)
+import Data.List (intercalate, isPrefixOf, isSuffixOf, partition, nub, isInfixOf)
+import Data.Maybe (isJust, listToMaybe, mapMaybe)
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Control.Exception as CE
 import Control.Exception (try, evaluate, ArithException(..))
-import System.IO.Unsafe (unsafePerformIO)
-import Data.Ratio (numerator, denominator)
-import Debug.Trace (trace)
+import ProofMode (ProofMode(..), defaultProofMode)
+
+-- Unified Core Imports
+import Core.Types
+import Core.Problem
+import Core.Solver
+import Core.Orchestrator
+import qualified Solvers.Wu as SW
+import qualified Solvers.Groebner as SG
+
+-- =============================================
+-- Legacy / Compatibility Types
+-- =============================================
 
 data SolverChoice = UseGeoSolver | UseWu | UseGroebner | UseConstructiveWu | UseCAD | UseAreaMethod | UseSOS | Unsolvable deriving (Show, Eq)
 data ProofEvidence = EvidenceSOS SOSCertificate [String] deriving (Show, Eq)
@@ -75,55 +84,69 @@ data AutoSolveResult = AutoSolveResult
   deriving (Show, Eq)
 
 data SolverOptions = SolverOptions
-  { intOptions :: IntSolveOptions
+  { intOptions :: Prover.IntSolveOptions
   , useOptimizedGroebner :: Bool
   , selectionStrategyOpt :: SelectionStrategy
   , groebnerBackend :: GroebnerBackend
   , f4UseBatch :: Bool
+  , proofMode :: ProofMode
   }
   deriving (Show, Eq)
 
 data GroebnerBackend = BuchbergerBackend | F4Backend | F5Backend deriving (Show, Eq)
 
 defaultSolverOptions :: SolverOptions
-defaultSolverOptions = SolverOptions defaultIntSolveOptions True SugarStrategy F5Backend True
+defaultSolverOptions = SolverOptions Prover.defaultIntSolveOptions True SugarStrategy F5Backend True defaultProofMode
 
-selectGroebner :: ProblemProfile -> SolverOptions -> Formula -> [Poly] -> [Poly]
-selectGroebner profile opts _goal =
-  let params = symbolicParams profile
-      allVars = variables profile
-      activeVars = filter (`notElem` params) allVars
-      ord = compareMonomials (if null params then GrevLex else Block [(activeVars, GrevLex), (params, GrevLex)])
-  in case groebnerBackend opts of
-       F4Backend -> f4LiteGroebner ord (selectionStrategyOpt opts) (f4UseBatch opts)
-       BuchbergerBackend -> buchbergerWithStrategy ord (selectionStrategyOpt opts)
-       F5Backend -> \polys -> f5SolveWithBounds ord polys
-
--- | F5 with memory bounds and fallback
-f5SolveWithBounds :: (Monomial -> Monomial -> Ordering) -> [Poly] -> [Poly]
-f5SolveWithBounds ord polys =
-  -- First try with conservative bounds
-  let result = F5.f5SolveBounded F5.conservativeF5Config ord polys
-  in if F5.f5Completed result
-     then F5.f5Basis result
-     else
-       -- If conservative bounds failed, try with default (more generous) bounds
-       let result2 = F5.f5SolveBounded F5.defaultF5Config ord polys
-       in if F5.f5Completed result2
-          then F5.f5Basis result2
-          else
-            -- Return partial basis (best effort)
-            F5.f5Basis result2
+-- Re-exports for Main.hs compatibility
+intSolve :: Prover.IntSolveOptions -> Theory -> Formula -> Prover.IntSolveOutcome
+intSolve = Prover.intSolve
+intSat :: Prover.IntSolveOptions -> Theory -> Prover.IntSolveOutcome
+intSat = Prover.intSat
+proveExistentialConstructive :: Theory -> Formula -> (Bool, String, Prover.ProofTrace)
+proveExistentialConstructive = Prover.proveExistentialConstructive
 
 -- =============================================
--- Main Automatic Solving Functions
+-- Local Solvers (Wrappers for Legacy Logic)
+-- =============================================
+
+-- Wrapper for SOS Logic
+data LocalSOSSolver = LocalSOSSolver [String] SolverOptions
+instance Solver LocalSOSSolver where
+  name _ = "Sum-of-Squares"
+  solve (LocalSOSSolver pts opts) prob = do
+    let (proved, reason, trace, _, _) = proveInequalitySOS pts opts (assumptions prob) (goal prob)
+    return $ ProofResult (if proved then Proved else Failed reason) (maybe [] return trace) 0.0
+
+-- Wrapper for CAD Logic
+data LocalCADSolver = LocalCADSolver
+instance Solver LocalCADSolver where
+  name _ = "CAD"
+  solve _ prob = do
+    let (proved, reason, trace, _) = runCadRational (assumptions prob) (goal prob)
+    return $ ProofResult (if proved then Proved else Failed reason) (maybe [] return trace) 0.0
+
+-- Wrapper for Geometric Solver
+data LocalGeoSolver = LocalGeoSolver
+instance Solver LocalGeoSolver where
+  name _ = "Geometric Solver"
+  solve _ prob = do
+    case solveGeoWithTrace (assumptions prob) (goal prob) of
+      GeoProved r s -> return $ ProofResult Proved (r:s) 0.0
+      GeoDisproved r s -> return $ ProofResult (Disproved r) (r:s) 0.0
+      GeoUnknown r -> return $ ProofResult (Failed r) [] 0.0
+
+-- =============================================
+-- Main Automatic Solving Functions (Refactored)
 -- =============================================
 
 autoSolve :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
 autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
   let safeProfile = analyzeProblem theoryRaw goalRaw
       pts = Geometry.WLOG.detectPoints (goalRaw : theoryRaw)
-  result <- try $ evaluate $ autoSolveInternal pts True opts pointSubs theoryRaw goalRaw
+  
+  result <- try $ evaluate $ autoSolveInternal pts opts pointSubs theoryRaw goalRaw
+  
   case result of
     Left Underflow -> return $ errorResult safeProfile "Solver limit reached (Numerical precision boundary)"
     Left Overflow  -> return $ errorResult safeProfile "Solver limit reached (Numerical overflow)"
@@ -132,158 +155,92 @@ autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
   where
     errorResult profile msg = AutoSolveResult Unsolvable msg profile goalRaw False msg Nothing Nothing M.empty
 
-autoSolveInternal :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
-autoSolveInternal pts allowSplit opts pointSubs theoryRaw goalRaw =
-  -- EARLY CHECK: Try generic polynomial prover before expensive preprocessing
-  case checkBarrowInequality theoryRaw goalRaw of
-    BarrowProved proof ->
-      let rawProfile = analyzeProblem theoryRaw goalRaw
-      in AutoSolveResult UseGroebner "Generic polynomial methods (early)" rawProfile goalRaw True ("Proved via generic polynomial methods\n" ++ proof) Nothing Nothing M.empty
-    _ -> autoSolveInternalFull pts allowSplit opts pointSubs theoryRaw goalRaw
-
--- | Full solver with preprocessing (called after early check fails)
-autoSolveInternalFull :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
-autoSolveInternalFull pts allowSplit opts pointSubs theoryRaw goalRaw =
-  let (theoryG, goalG, _logG) = preprocessGeometry pointSubs theoryRaw goalRaw
-
-      -- Apply Heuristics (Heron, Cotangent, Ravi, Tangent, Symmetry, Homogeneous, HalfAngle)
-      (theoryH1, goalH1, logH1) = tryHeronSubstitution theoryG goalG
-      (theoryH2, goalH2, logH2) = tryCotangentSubstitution theoryH1 goalH1
-      (theoryH3, goalH3, logH3) = tryRaviSubstitution theoryH2 goalH2
-      (theoryH4, goalH4, logH4) = tryTangentSubstitution theoryH3 goalH3
-      (theoryH5, goalH5, logH5) = trySymmetryBreaking theoryH4 goalH4
-      (theoryH6, goalH6, logH6) = tryParameterSubstitution theoryH5 goalH5
-      (theoryH7, goalH7, logH7) = tryHomogeneousNormalization theoryH6 goalH6
-      (theoryH8, goalH8, logH8) = tryHalfAngleTangent theoryH7 goalH7
-
-      heuristicLogs = logH1 ++ logH2 ++ logH3 ++ logH4 ++ logH5 ++ logH6 ++ logH7 ++ logH8
-
-      (theoryS, goalS, varDefsS) = eliminateSqrt theoryH8 goalH8
+autoSolveInternal :: [String] -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
+autoSolveInternal pts opts pointSubs theoryRaw goalRaw =
+  -- Preprocessing Phase
+  let (theoryG, goalG, _) = preprocessGeometry pointSubs theoryRaw goalRaw
+      
+      -- Heuristics (Keeping existing pipeline)
+      (theoryH, goalH, logsH) = applyHeuristics (proofMode opts) theoryG goalG
+      
+      -- Elimination
+      (theoryS, goalS, varDefsS) = eliminateSqrt theoryH goalH
       (theoryP, goalP, varDefsP) = eliminateRational theoryS goalS
       varDefs = M.union varDefsS varDefsP
-      preprocessResult = preprocess pointSubs theoryP goalP
-      theory' = preprocessedTheory preprocessResult
-      goal' = preprocessedGoal preprocessResult
-
+      
+      prepRes = preprocess pointSubs theoryP goalP
+      theory' = preprocessedTheory prepRes
+      goal' = preprocessedGoal prepRes
+      
       profile = analyzeProblem theory' goal'
-      baseResult = case goal' of
-          And f1 f2 ->
-            let r1 = autoSolveInternal pts False opts pointSubs theory' f1
-                r2 = if isProved r1 then autoSolveInternal pts False opts pointSubs theory' f2 else r1 
-                combinedTrace = case (detailedTrace r1, detailedTrace r2) of
-                                  (Just t1, Just t2) -> Just (t1 ++ "\n\nAND\n\n" ++ t2)
-                                  (Just t1, Nothing) -> Just t1
-                                  (Nothing, Just t2) -> Just t2
-                                  (Nothing, Nothing) -> Nothing
-            in AutoSolveResult (selectedSolver r1) "Conjunction decomposed" profile goal' (isProved r1 && isProved r2) (if isProved r1 then proofReason r2 else proofReason r1) Nothing combinedTrace varDefs
-          Or f1 f2 ->
-            let r1 = autoSolveInternal pts False opts pointSubs theory' f1
-            in if isProved r1 then r1 { preprocessedGoalExpr = goal' }
-               else let r2 = autoSolveInternal pts False opts pointSubs theory' f2
-                        combinedTrace = case (detailedTrace r1, detailedTrace r2) of
-                                          (Just t1, Just t2) -> Just ("---" ++ " Attempt 1 ---" ++ "\n" ++ t1 ++ "\n\n---" ++ " Attempt 2 ---" ++ "\n" ++ t2)
-                                          (Just t1, Nothing) -> Just t1
-                                          (Nothing, Just t2) -> Just t2
-                                          (Nothing, Nothing) -> Nothing
-                    in if isProved r2 then r2 { preprocessedGoalExpr = goal', detailedTrace = combinedTrace, varDefinitions = varDefs }
-                       else r2 { preprocessedGoalExpr = goal', isProved = False, detailedTrace = combinedTrace, varDefinitions = varDefs }
-          Exists qs inner | all (\q -> qvType q == QuantInt) qs ->
-                let intNames = map qvName qs
-                    theoryInt = map (promoteIntVars intNames) theory'
-                    outcome = intSat (intOptions opts) (theoryInt ++ map (promoteIntVars intNames) (concatMap intBoundsFromQ qs) ++ [promoteIntVars intNames inner])
-                    proved = intResult outcome == Just True
-                in AutoSolveResult UseGroebner "Integer existential" profile goal' proved (reasonOutcome outcome proved) Nothing Nothing varDefs
-          Forall qs _ | all (\q -> qvType q == QuantInt) qs && not (any containsQuantifier theory') ->
-                let intNames = map qvName qs
-                    (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts (promoteIntVars intNames goal')) Nothing (map (promoteIntVars intNames) theory') (promoteIntVars intNames goal')
-                in AutoSolveResult UseGroebner "Integer universal" profile goal' proved reason Nothing Nothing varDefs
-          Exists qs _ | all (\q -> qvType q == QuantReal) qs && not (any containsQuantifier theory') ->
-                let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
-                in AutoSolveResult UseGroebner "Real existential" profile goal' proved reason Nothing Nothing varDefs
-          Forall qs _ | all (\q -> qvType q == QuantReal) qs && all (\q -> isJust (qvLower q) && isJust (qvUpper q)) qs && not (any containsQuantifier theory') ->
-                let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
-                in AutoSolveResult { selectedSolver = UseGroebner, solverReason = "Bounded real universal", problemProfile = profile, preprocessedGoalExpr = goal', isProved = proved, proofReason = reason, proofEvidence = Nothing, detailedTrace = Nothing, varDefinitions = varDefs }
-          Forall qs _ | all (\q -> qvType q == QuantReal) qs && not (any containsQuantifier theory') ->
-                let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal') Nothing theory' goal'
-                in AutoSolveResult { selectedSolver = UseGroebner, solverReason = "Real universal", problemProfile = profile, preprocessedGoalExpr = goal', isProved = proved, proofReason = reason, proofEvidence = Nothing, detailedTrace = Nothing, varDefinitions = varDefs }
-          
-          _ | (isInequality goal') && (problemType profile == Geometric || problemType profile == PureInequality || ((problemType profile == PureAlgebraic || problemType profile == Mixed) && numVariables profile > 2)) ->
-            let (proved, reason, trace, defs, evidence) = proveInequalitySOS pts opts theory' goal'
-            in if proved then AutoSolveResult UseGroebner "Inequality (Fast Path)" profile goal' True reason evidence (mergeWithHeuristic heuristicLogs trace) (M.union varDefs defs)
-               else let (proved', reason', trace', defs') = executeSolver pts UseCAD opts profile theory' goal'
-                        combinedTrace = case (trace, trace') of
-                                          (Just t1, Just t2) -> Just (t1 ++ "\n\n---" ++ " FALLBACK TO CAD ---" ++ "\n\n" ++ t2)
-                                          (Just t1, Nothing) -> Just t1
-                                          (Nothing, Just t2) -> Just t2
-                                          (Nothing, Nothing) -> Nothing
-                    in AutoSolveResult UseCAD "Inequality (Fallback)" profile goal' proved' reason' Nothing (mergeWithHeuristic heuristicLogs combinedTrace) (M.unions [varDefs, defs', varDefs])
-          Ge _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
-            let (proved, reason, trace, defs) = executeSolver pts UseCAD opts profile theory' goal'
-            in AutoSolveResult UseCAD "Inequality goal" profile goal' proved reason Nothing (mergeWithHeuristic heuristicLogs trace) (M.union varDefs defs)
-          Gt _ _ | problemType profile == PureInequality || problemType profile == SinglePositivity ->
-            let (proved, reason, trace, defs) = executeSolver pts UseCAD opts profile theory' goal'
-            in AutoSolveResult UseCAD "Strict inequality goal" profile goal' proved reason Nothing (mergeWithHeuristic heuristicLogs trace) (M.union varDefs defs)
-          _ | containsQuantifier goal' || any containsQuantifier theory' ->
-                let (proved, reason, trace, defs) = executeSolver pts UseCAD opts profile theory' goal'
-                in AutoSolveResult { selectedSolver = UseCAD, solverReason = "Quantified formula", problemProfile = profile, preprocessedGoalExpr = goal', isProved = proved, proofReason = reason, proofEvidence = Nothing, detailedTrace = mergeWithHeuristic heuristicLogs trace, varDefinitions = M.union varDefs defs }
-          _ ->
-            case solveGeoWithTrace theory' goal' of
-              GeoProved reason steps -> AutoSolveResult UseGeoSolver "Fast geometric propagation" profile goal' True reason Nothing (Just (unlines (heuristicLogs ++ steps))) varDefs
-              GeoDisproved reason steps -> AutoSolveResult UseGeoSolver "Fast geometric propagation" profile goal' False reason Nothing (Just (unlines (heuristicLogs ++ steps))) varDefs
-              GeoUnknown _ ->
-                let isAreaMethodApplicable = isEquality goal' && not (isInequality goalRaw) && isJust (deriveConstruction theory' goal')
-                    solver = if isAreaMethodApplicable then UseAreaMethod else selectAlgebraicSolver profile goal'
-                    (proved, proofMsg, trace, defs) = executeSolver pts solver opts profile theory' goal'
-                in AutoSolveResult solver ("PHASE 2: " ++ explainSolverChoice solver profile) profile goal' proved proofMsg Nothing (mergeWithHeuristic heuristicLogs trace) (M.union varDefs defs)
-  in applyInsideSplit pts allowSplit opts pointSubs theoryRaw goalRaw baseResult
+      
+      -- UNIFIED ORCHESTRATION START
+      problem = mkProblem theory' goal'
+      
+      -- Determine Strategy based on Profile
+      strategy = determineStrategy profile pts opts goal'
+      
+  in unsafePerformIO $ do
+       outcome <- proveSequential strategy problem
+       return $ mapResultToAuto outcome profile goal' varDefs logsH
 
-mergeWithHeuristic :: [String] -> Maybe String -> Maybe String
-mergeWithHeuristic [] t = t
-mergeWithHeuristic logs Nothing = Just (unlines logs)
-mergeWithHeuristic logs (Just t) = Just (unlines logs ++ "\n" ++ t)
+applyHeuristics :: ProofMode -> Theory -> Formula -> (Theory, Formula, [String])
+applyHeuristics mode theory goal
+  | mode == Sound = (theory, goal, [])
+  | otherwise =
+      let (t1, g1, l1) = tryHeronSubstitution theory goal
+          (t2, g2, l2) = tryCotangentSubstitution t1 g1
+          (t3, g3, l3) = tryRaviSubstitution t2 g2
+          (t4, g4, l4) = tryTangentSubstitution t3 g3
+          (t5, g5, l5) = trySymmetryBreaking t4 g4
+          (t6, g6, l6) = tryParameterSubstitution t5 g5
+          (t7, g7, l7) = tryHomogeneousNormalization t6 g6
+          (t8, g8, l8) = tryHalfAngleTangent t7 g7
+      in (t8, g8, l1++l2++l3++l4++l5++l6++l7++l8)
 
-applyInsideSplit :: [String] -> Bool -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult -> AutoSolveResult
-applyInsideSplit pts allowSplit opts pointSubs theoryRaw goalRaw baseResult =
-  if not allowSplit || isProved baseResult || not (shouldSplitInside pointSubs theoryRaw goalRaw)
-  then baseResult
-  else
-    let cases = insideSplitCases
-        results = [ (label, autoSolveInternal pts False opts pointSubs (constraints ++ theoryRaw) goalRaw) | (label, constraints) <- cases ]
-        allProved = all (isProved . snd) results
-        failed = [label | (label, res) <- results, not (isProved res)]
-        traceStr = "Boundary Split Result:\n" ++ intercalate "\n" (map (\(l,r) -> l ++ ": " ++ if isProved r then "PROVED" else "NOT PROVED") results)
-    in if allProved then baseResult { isProved = True, proofReason = "Proved by boundary case split", detailedTrace = mergeTrace (detailedTrace baseResult) traceStr }
-       else baseResult { proofReason = proofReason baseResult ++ " (failed on: " ++ intercalate ", " failed ++ ")", detailedTrace = mergeTrace (detailedTrace baseResult) traceStr }
+determineStrategy :: ProblemProfile -> [String] -> SolverOptions -> Formula -> [AnySolver]
+determineStrategy profile pts opts goal
+  | problemType profile == Geometric = 
+      if isInequality goal 
+      then [AnySolver (LocalSOSSolver pts opts), AnySolver LocalCADSolver]
+      else [AnySolver LocalGeoSolver, AnySolver SW.WuSolver, AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts))]
+  | isInequality goal = [AnySolver (LocalSOSSolver pts opts), AnySolver LocalCADSolver]
+  | otherwise = [AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts)), AnySolver SW.WuSolver]
 
-shouldSplitInside :: M.Map String Expr -> [Formula] -> Formula -> Bool
-shouldSplitInside subs theory goal = isInequality goal && M.member "ba_u" subs && any (\f -> case f of Ge (Var "ba_v") _ -> True; Gt (Var "ba_v") _ -> True; _ -> False) theory
+mapResultToAuto :: ProofOutcome -> ProblemProfile -> Formula -> M.Map String Expr -> [String] -> AutoSolveResult
+mapResultToAuto outcome profile goal defs logs =
+  let res = outcomeResult outcome
+      solverName = outcomeSolver outcome
+      (status, reason) = case resultStatus res of
+        Proved -> (True, "Proved")
+        Disproved r -> (False, "Disproved: " ++ r)
+        Failed r -> (False, "Failed: " ++ r)
+      choice = solverChoiceFromName solverName
+      traceStr = unlines logs ++ "\n" ++ unlines (resultTrace res)
+  in AutoSolveResult choice ("Unified Orchestrator (" ++ solverName ++ ")") profile goal status reason Nothing (Just traceStr) defs
 
-insideSplitCases :: [(String, [Formula])]
-insideSplitCases = let v = Var "ba_v"; w = Var "ba_w"; u = Sub (Const 1) (Add v w) in [("u=0", [Eq u (Const 0)]), ("v=0", [Eq v (Const 0)]), ("w=0", [Eq w (Const 0)]), ("interior", [Gt u (Const 0), Gt v (Const 0), Gt w (Const 0)])]
+solverChoiceFromName :: String -> SolverChoice
+solverChoiceFromName name
+  | "Sum-of-Squares" `isInfixOf` name = UseSOS
+  | "CAD" `isInfixOf` name = UseCAD
+  | "Wu" `isInfixOf` name = UseWu
+  | "Groebner" `isInfixOf` name = UseGroebner
+  | "Geometric" `isInfixOf` name = UseGeoSolver
+  | otherwise = Unsolvable
 
-mergeTrace :: Maybe String -> String -> Maybe String
-mergeTrace Nothing extra = Just extra
-mergeTrace (Just base) extra = Just (base ++ "\n\n" ++ extra)
-
-formatSOSCertificate :: SOSCertificate -> String
-formatSOSCertificate cert =
-  let terms = sosTerms cert; lemmas = sosLemmas cert
-      formatTerm (c, p) = (if c == 1 then "" else prettyRational c ++ "*") ++ "(" ++ prettyPolyNice p ++ ")^2"
-      sumParts = map formatTerm (reverse terms) ++ map prettyPolyNice lemmas
-  in if null sumParts then "0" else intercalate " + " sumParts ++ (if sosRemainder cert == polyZero then "" else " + [" ++ prettyPolyNice (sosRemainder cert) ++ "]")
-
-autoSolveE :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> Either String AutoSolveResult
-autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory goal
+-- =============================================
+-- Legacy Logic (Moved/Kept for Local Wrappers)
+-- =============================================
 
 proveInequalitySOS :: [String] -> SolverOptions -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr, Maybe ProofEvidence)
 proveInequalitySOS pts opts theoryRaw goalRaw =
-  -- First, try direct Ono inequality check (bypasses Gröbner for this pattern)
-  case checkOnoInequality theoryRaw goalRaw of
-    OnoProved proof -> (True, "Proved via Ono's inequality (AM-GM)", Just proof, M.empty, Nothing)
+  -- First, try direct Ono inequality check (bypasses Gröbner for this pattern)    
+  case SymSOS.checkOnoInequality theoryRaw goalRaw of
+    SymSOS.OnoProved proof -> (True, "Proved via Ono's inequality (AM-GM)", Just proof, M.empty, Nothing)
     _ ->
       -- Second, try generic Barrow/polynomial prover
-      case checkBarrowInequality theoryRaw goalRaw of
-        BarrowProved proof -> (True, "Proved via generic polynomial methods", Just proof, M.empty, Nothing)
+      case SymSOS.checkBarrowInequality (proofMode opts) theoryRaw goalRaw of
+        SymSOS.BarrowProved proof -> (True, "Proved via generic polynomial methods", Just proof, M.empty, Nothing)
         _ ->
           -- Standard path
           let geomLemmas = generateGeometricLemmas theoryRaw goalRaw
@@ -299,182 +256,125 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
   where
 
     trySOS theory goalFull goalOriginal profileFinal =
-      let (thWLOG, wlogLog) = applyWLOG theory goalFull
-          (thBary, goalBary, baryLog) = applyBarycentric pts thWLOG goalFull
+      let (thWLOG, wlogLog) = Geometry.WLOG.applyWLOG theory goalFull
+          (thBary, goalBary, baryLog) = Geometry.Barycentric.applyBarycentric pts thWLOG goalFull       
           fullLog = wlogLog ++ baryLog
           allVarsSet = extractPolyVarsList (formulaToPolysLocal goalBary ++ concatMap formulaToPolysLocal thBary)
-          isCoord v = any (`isPrefixOf` v) ["x", "y", "z", "cx", "ux", "uy"]
-          isSide v  = (v `elem` ["a", "b", "c", "a2", "b2", "c2", "s", "p", "q", "r"]) || 
+          isCoord v = any (`isPrefixOf` v) ["x", "y", "z", "cx", "ux", "uy"]       
+          isSide v  = (v `elem` ["a", "b", "c", "a2", "b2", "c2", "s", "p", "q", "r"]) ||
                       (any (`isSuffixOf` v) ["2", "s"] && not (isCoord v))
           groupCoords = S.filter isCoord allVarsSet
           groupSides  = S.filter (\v -> isSide v && not (S.member v groupCoords)) allVarsSet
-          groupRest   = S.difference allVarsSet (S.union groupCoords groupSides)
+          groupRest   = S.difference allVarsSet (S.union groupCoords groupSides)   
           ordType = Block [ (S.toList groupCoords, Lex)
                           , (S.toList groupSides,  Lex)
                           , (S.toList groupRest,   GrevLex)
                           ]
           ord = compareMonomials ordType
-          
+
           isDefinition (Eq (Var _) _) = True
           isDefinition _ = False
-          
+
           posVars = [ v | v <- variables profileFinal
                     , "zz_sqrt_aux" `isPrefixOf` v || "ba_" `isPrefixOf` v || isAlwaysNonNeg v thBary ]
-          
-          sqSub = M.fromList [ (v, Pow (Var (v ++ "_sq")) 2) | v <- posVars ]
-          
+
+          sqSub = M.fromList [ (v, Pow (Var (v ++ "_sq")) 2) | v <- posVars ]      
+
           theoryTransformed = map (applySubstitutionsFormula sqSub) thBary
           goalTransformed = applySubstitutionsFormula sqSub goalBary
-          
+
           subMapTransformed = buildSubMap theoryTransformed
           targetPoly = toPolySub subMapTransformed (case goalTransformed of Ge l r -> Sub l r; Gt l r -> Sub l r; _ -> Const 0)
-          
-          eqConstraintsTransformed = [ toPolySub subMapTransformed (Sub l r) 
-                                     | eq@(Eq l r) <- theoryTransformed 
-                                     , not (isDefinition eq) 
+
+          eqConstraintsTransformed = [ toPolySub subMapTransformed (Sub l r)       
+                                     | eq@(Eq l r) <- theoryTransformed
+                                     , not (isDefinition eq)
                                      ]
-          
+
           eqConstraintsSOS = filter (not . isSumConstraint) eqConstraintsTransformed
-          isSumConstraint p = 
+          isSumConstraint p =
              let vars = extractPolyVars p
              in S.member "ba_u" vars && S.member "ba_v" vars && S.member "ba_w" vars && polyDegreeIn p "ba_u" == 1
 
           basis = f4LiteGroebner ord SugarStrategy True eqConstraintsSOS
-          reducer = F4Lite.reduceWithBasis ord basis
+          reducer = reduceWithBasis ord basis
+
+          knownLemmas = mapMaybe (listToMaybe . formulaToPolysLocal)
+            [Ge (Var v) (Const 0) | v <- posVars]
           
-          knownLemmas = map (\f -> head (formulaToPolysLocal f)) [Ge (Var v) (Const 0) | v <- posVars]
+          -- Collect other inequalities from theory (e.g. triangle inequalities)
+          otherIneqsFormula = filter (not . isVarPositivity) [ f | f <- theoryTransformed, isInequality f ]
+          otherIneqs = concatMap formulaToPolysLocal otherIneqsFormula
+          
+          isVarPositivity (Ge (Var _) (Const 0)) = True
+          isVarPositivity (Gt (Var _) (Const 0)) = True
+          isVarPositivity _ = False
+
           maybeCert = getSOSCertificate knownLemmas reducer targetPoly
-          
-          sdpVerified = if isJust maybeCert then False else checkSOS_SDP (reducer targetPoly)
-          
+
+          sdpVerified =
+            if isJust maybeCert
+            then False
+            else case proofMode opts of
+                   Unsafe ->
+                     if SDP.checkSOS_SDP (reducer targetPoly) then True
+                     else SDP.checkSOS_Constrained (reducer targetPoly) (map reducer (knownLemmas ++ otherIneqs))
+                   Sound -> False
+
           success = isJust maybeCert || sdpVerified
           evidence = fmap (\c -> EvidenceSOS c fullLog) maybeCert
-          intro = "\nALGEBRAIC PROOF DEVELOPMENT:\n" ++ replicate 40 '-' ++ "\n"
+          intro = "\nALGEBRAIC PROOF DEVELOPMENT:\n" ++ replicate 40 '-' ++ "\n"   
           step1 = "[1] Goal: " ++ prettyFormula goalOriginal ++ "\n"
           setup = if null fullLog then "" else "[2] Geometric Setup:\n" ++ unlines (map ("    * " ++) fullLog)
           step2 = "[3] Polynomial Transformation:\n    Mapping: " ++ (if null posVars then "Identity" else intercalate ", " [ v ++ " -> " ++ v ++ "_sq^2" | v <- posVars ]) ++ "\n    Goal: " ++ prettyFormula goalFull ++ " >= 0\n"
           reductionStep = "[4] Canonical Reduction:\n    Identity: " ++ prettyPolyNice (reducer targetPoly) ++ " >= 0\n"
-          step4 = "[5] SOS Decomposition:\n    " ++ (case maybeCert of 
+          step4 = "[5] SOS Decomposition:\n    " ++ (case maybeCert of
                                Just c -> formatSOSCertificate c
-                               Nothing -> if sdpVerified then "SDP-Based Feasibility Verified" else "0") ++ " >= 0\n"
+                               Nothing ->
+                                 if sdpVerified then "SDP-Based Feasibility Verified"
+                                 else if proofMode opts == Sound then "No SOS certificate (SDP disabled)"
+                                      else "0") ++ " >= 0\n"
           fullTrace = intro ++ step1 ++ setup ++ step2 ++ reductionStep ++ step4 ++ (replicate 40 '-' ++ "\nCONCLUSION: IDENTITY VERIFIED.")
       in (success, if success then "Proved via compositional Sum-of-Squares" else "SOS check failed", Just fullTrace, evidence)
 
     isAlwaysNonNeg v theory = any (\f -> case f of Ge (Var x) _ -> x == v; Gt (Var x) _ -> x == v; _ -> False) theory
     polyDegreeIn (Poly m) var = if M.null m then 0 else maximum ((0 :: Int) : [ fromIntegral (M.findWithDefault 0 var vars) | (mono, _) <- M.toList m, let Monomial vars = mono ])
 
-autoSolveWithTrace :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> Maybe String -> AutoSolveResult
-autoSolveWithTrace opts pointSubs theory goal _ = autoSolve opts pointSubs theory goal
-
-selectAlgebraicSolver :: ProblemProfile -> Formula -> SolverChoice
-selectAlgebraicSolver profile goal
-  | containsSqrtFormula goal = UseCAD
-  | containsDivFormula goal = UseCAD  
-  | containsIntFormula goal = UseGroebner
-  | problemType profile == Geometric && isInequality goal && numVariables profile > 2 = UseSOS
-  | otherwise = UseGroebner
-
-isEquality :: Formula -> Bool
-isEquality (Eq _ _) = True
-isEquality (Forall _ f) = isEquality f
-isEquality (Exists _ f) = isEquality f
-isEquality _ = False
-
-isInequality :: Formula -> Bool
-isInequality (Ge _ _) = True
-isInequality (Gt _ _) = True
-isInequality (Le _ _) = True
-isInequality (Lt _ _) = True
-isInequality _ = False
-
-executeSolver :: [String] -> SolverChoice -> SolverOptions -> ProblemProfile -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
-executeSolver pts solver opts profile theory goal =
-  case solver of
-    UseSOS -> let (proved, reason, trace, defs, _) = proveInequalitySOS pts opts theory goal in (proved, reason, trace, defs)
-    UseCAD -> let (proved, reason, trace, defs) = runCadRational theory goal in (proved, reason, trace, defs)
-    UseWu ->
-      case wuProveWithTrace theory goal of
-        Left _err -> (False, "Wu's method failed", Nothing, M.empty)
-        Right trace -> (Wu.isProved trace, Wu.proofReason trace, Just (formatWuTrace trace), M.empty)
-    UseGroebner ->
-      -- For equalities, try Wu first then Groebner
-      if isEquality goal
-      then case wuProveWithTrace theory goal of
-             Right trace | Wu.isProved trace ->
-               (True, Wu.proofReason trace, Just (formatWuTrace trace), M.empty)
-             _ ->
-               let (gbProved, gbReason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal) Nothing theory goal
-               in (gbProved, gbReason, Nothing, M.empty)
-      else let (proved, reason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal) Nothing theory goal
-           in (proved, reason, Nothing, M.empty)
-    UseAreaMethod ->
-      -- Try area method, fallback to Wu/Groebner if it fails
-      case deriveConstruction theory goal of
-        Just (construction, geoExpr) ->
-          let (proved, trace) = proveArea construction geoExpr
-          in if proved
-             then (True, "Proved by Area Method", Just trace, M.empty)
-             else -- Fallback to Wu for equalities
-               if isEquality goal
-               then case wuProveWithTrace theory goal of
-                      Right wuTrace | Wu.isProved wuTrace ->
-                        (True, Wu.proofReason wuTrace, Just (formatWuTrace wuTrace), M.empty)
-                      _ ->
-                        let (gbProved, gbReason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal) Nothing theory goal
-                        in (gbProved, gbReason, Nothing, M.empty)
-               else (False, trace, Nothing, M.empty)
-        Nothing ->
-          -- Can't construct for area method, use Wu/Groebner directly
-          if isEquality goal
-          then case wuProveWithTrace theory goal of
-                 Right trace | Wu.isProved trace ->
-                   (True, Wu.proofReason trace, Just (formatWuTrace trace), M.empty)
-                 _ ->
-                   let (gbProved, gbReason, _, _) = proveTheoryWithOptions (selectGroebner profile opts goal) Nothing theory goal
-                   in (gbProved, gbReason, Nothing, M.empty)
-          else (False, "Area method not applicable", Nothing, M.empty)
-    UseGeoSolver -> (False, "GeoSolver pass-through", Nothing, M.empty)
-    UseConstructiveWu -> (False, "Not implemented", Nothing, M.empty)
-    Unsolvable -> (False, "Problem classified as unsolvable", Nothing, M.empty)
-
-extractPolyVars :: Poly -> S.Set String
-extractPolyVars (Poly m) = S.fromList $ concatMap (\(mono, _) -> let Monomial vars = mono in M.keys vars) (M.toList m)
-
 runCadRational :: [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
-runCadRational theory goal = 
+runCadRational theory goal =
   let (th', goal', varDefs) = eliminateSqrt theory goal
       (eqs, ineqs) = partition isEquality th'
-      
+
       eqPolys = concatMap formulaToPolysLocal eqs
-      
+
       allVarsSet = extractPolyVarsList (eqPolys ++ concatMap formulaToPolysLocal ineqs ++ formulaToPolysLocal goal')
       isCoord v = any (`isPrefixOf` v) ["x", "y", "z", "cx", "ux", "uy"]
-      isSide v  = (v `elem` ["a", "b", "c", "a2", "b2", "c2", "s", "p", "q", "r"]) || 
+      isSide v  = (v `elem` ["a", "b", "c", "a2", "b2", "c2", "s", "p", "q", "r"]) ||
                   (any (`isSuffixOf` v) ["2", "s"] && not (isCoord v))
       groupCoords = S.filter isCoord allVarsSet
       groupSides  = S.filter (\v -> isSide v && not (S.member v groupCoords)) allVarsSet
-      groupRest   = S.difference allVarsSet (S.union groupCoords groupSides)
+      groupRest   = S.difference allVarsSet (S.union groupCoords groupSides)       
       ord = compareMonomials (Block [ (S.toList groupCoords, Lex)
                                    , (S.toList groupSides,  Lex)
                                    , (S.toList groupRest,   GrevLex)
                                    ])
-      
+
       basis = f4LiteGroebner ord SugarStrategy True eqPolys
-      reducer = F4Lite.reduceWithBasis ord basis
-      
+      reducer = reduceWithBasis ord basis
+
       reducedGoal = case goal' of
         Ge l r -> Ge (polyToExpr (reducer (toPolySub M.empty (Sub l r)))) (Const 0)
         Gt l r -> Gt (polyToExpr (reducer (toPolySub M.empty (Sub l r)))) (Const 0)
         _      -> goal'
-      
+
       reduceIneq :: Formula -> Formula
       reduceIneq f = case f of
         Ge l r -> Ge (polyToExpr (reducer (toPolySub M.empty (Sub l r)))) (Const 0)
         Gt l r -> Gt (polyToExpr (reducer (toPolySub M.empty (Sub l r)))) (Const 0)
         _      -> f
-        
+
       reducedIneqs = map reduceIneq ineqs
-      
+
       vars = S.toList (extractPolyVarsList (formulaToPolysLocal reducedGoal ++ concatMap formulaToPolysLocal reducedIneqs))
       traceMsg = unlines
         ["Hybrid Groebner-CAD Strategy:",
@@ -483,9 +383,9 @@ runCadRational theory goal =
          "  3. Reduced System Variables: " ++ show vars,
          "  4. Invoking CAD on reduced system..."
         ]
-      
-      proved = proveFormulaCAD reducedIneqs reducedGoal
-      
+
+      proved = CADLift.proveFormulaCAD reducedIneqs reducedGoal
+
   in (proved, "Hybrid Groebner-CAD", Just traceMsg, varDefs)
 
 formulaToPolysLocal :: Formula -> [Poly]
@@ -506,21 +406,66 @@ formulaToPolysLocal formula =
 extractPolyVarsList :: [Poly] -> S.Set String
 extractPolyVarsList = foldr (S.union . extractPolyVars) S.empty
 
-explainSolverChoice :: SolverChoice -> ProblemProfile -> String
-explainSolverChoice _ _ = "Automatic Solver"
+generateGeometricLemmas :: [Formula] -> Formula -> [Formula]
+generateGeometricLemmas theory goal = let pts = Geometry.WLOG.detectPoints (goal : theory) in [ Ge (Add (Sqrt (Dist2 a b)) (Sqrt (Dist2 b c))) (Sqrt (Dist2 a c)) | a <- pts, b <- pts, c <- pts, a < b, b < c ]
 
-replaceString :: String -> String -> String -> String
-replaceString _ _ "" = ""
-replaceString old new s@(c:cs) | old `isPrefixOf` s = new ++ replaceString old new (drop (length old) s) | otherwise = c : replaceString old new cs
+autoSolveE :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> Either String AutoSolveResult
+autoSolveE opts pointSubs theory goal = Right $ autoSolve opts pointSubs theory goal
+
+autoSolveWithTrace :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> Maybe String -> AutoSolveResult
+autoSolveWithTrace opts pointSubs theory goal _ = autoSolve opts pointSubs theory goal
+
+explainSolverChoice :: SolverChoice -> ProblemProfile -> String
+explainSolverChoice _ _ = "Unified Solver Strategy"
 
 formatAutoSolveResult :: AutoSolveResult -> Bool -> String
 formatAutoSolveResult result verbose =
   let header = "=== HASCLID AUTOMATIC PROOF SYSTEM ==="
-      analysis = "PROBLEM ANALYSIS:\n  Structure: " ++ show (problemType (problemProfile result)) ++ "\n  Variables: " ++ show (numVariables (problemProfile result))
-      defs = varDefinitions result
-      beautify s = M.foldlWithKey (\acc var expr -> replaceString var ("[" ++ prettyExpr expr ++ "]") acc) s defs
-      traceStr = if verbose then case detailedTrace result of Just t -> "\nPROOF DEVELOPMENT:" ++ beautify t; Nothing -> "" else ""
-  in unlines [header, "", analysis, "SOLVER SELECTION: " ++ solverReason result, "", "VERDICT: " ++ if isProved result then "PROVED" else "NOT PROVED", proofReason result, traceStr]
+      analysis = "PROBLEM ANALYSIS:\n  Structure: " ++ show (problemType (problemProfile result))
+      traceStr = if verbose then case detailedTrace result of Just t -> "\nPROOF DEVELOPMENT:\n" ++ t; Nothing -> "" else ""
+  in unlines [header, "", analysis, "VERDICT: " ++ if isProved result then "PROVED" else "NOT PROVED", proofReason result, traceStr]
 
-generateGeometricLemmas :: [Formula] -> Formula -> [Formula]
-generateGeometricLemmas theory goal = let pts = Geometry.WLOG.detectPoints (goal : theory) in [ Ge (Add (Sqrt (Dist2 a b)) (Sqrt (Dist2 b c))) (Sqrt (Dist2 a c)) | a <- pts, b <- pts, c <- pts, a < b, b < c ]
+isInequality :: Formula -> Bool
+isInequality (Ge _ _) = True
+isInequality (Gt _ _) = True
+isInequality (Le _ _) = True
+isInequality (Lt _ _) = True
+isInequality _ = False
+
+-- | Legacy API for direct solver execution (Adapted to Unified Core)
+executeSolver :: [String] -> SolverChoice -> SolverOptions -> ProblemProfile -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
+executeSolver pts choice opts _profile theory goal = unsafePerformIO $ do        
+  let problem = mkProblem theory goal
+      -- Map choice to AnySolver
+      solver = case choice of
+        UseWu -> AnySolver SW.WuSolver
+        UseGroebner -> AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts))
+        UseSOS -> AnySolver (LocalSOSSolver pts opts)
+        UseCAD -> AnySolver LocalCADSolver
+        UseGeoSolver -> AnySolver LocalGeoSolver
+        UseAreaMethod -> AnySolver LocalGeoSolver -- Placeholder mapping
+        _ -> AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts)) -- Fallback        
+
+  outcome <- proveSequential [solver] problem
+  let res = outcomeResult outcome
+      (status, reason) = case resultStatus res of
+        Proved -> (True, "Proved")
+        Disproved r -> (False, r)
+        Failed r -> (False, r)
+  return (status, reason, Just (unlines (resultTrace res)), M.empty)
+
+extractPolyVars :: Poly -> S.Set String
+extractPolyVars (Poly m) = S.fromList $ concatMap (\(mono, _) -> let Monomial vars = mono in M.keys vars) (M.toList m)
+
+isEquality :: Formula -> Bool
+isEquality (Eq _ _) = True
+isEquality (Forall _ f) = isEquality f
+isEquality (Exists _ f) = isEquality f
+isEquality _ = False
+
+formatSOSCertificate :: SOSCertificate -> String
+formatSOSCertificate cert =
+  let terms = sosTerms cert; lemmas = sosLemmas cert
+      formatTerm (c, p) = (if c == 1 then "" else prettyRational c ++ "*") ++ "(" ++ prettyPolyNice p ++ ")^2"
+      sumParts = map formatTerm (reverse terms) ++ map prettyPolyNice lemmas       
+  in if null sumParts then "0" else intercalate " + " sumParts ++ (if sosRemainder cert == polyZero then "" else " + [" ++ prettyPolyNice (sosRemainder cert) ++ "]")

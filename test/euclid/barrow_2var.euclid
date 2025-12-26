@@ -1,0 +1,8 @@
+-- Minimal Barrow test case
+:set-timeout 120
+
+:assume (> a 0)
+:assume (> cx 0)
+:assume (<= cx 1)
+
+:auto (>= a (* a cx))

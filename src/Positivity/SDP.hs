@@ -1,9 +1,23 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes #-}
 
+{-|
+Module: Positivity.SDP
+Description: Semidefinite Programming for Sum-of-Squares verification
+
+This module provides SDP-based verification of polynomial positivity
+using a primal-dual interior point method. The implementation uses
+mutable arrays in the ST monad for efficiency while maintaining purity.
+
+The algorithms are referentially transparent - same inputs always produce
+same outputs - allowing pure function signatures despite internal mutability.
+-}
 module Positivity.SDP
   ( checkSOS_SDP
   , checkSOS_Constrained
+  , checkSOS_SDP_IO
+  , checkSOS_Constrained_IO
   , solveSDP
   , SDPResult(..)
   ) where
@@ -13,11 +27,12 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Number.BigFloat
 import Data.Array.IO
-import Data.List (foldl')
-import Control.Monad (forM, forM_, when, foldM)
-import System.IO.Unsafe (unsafePerformIO)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Array.ST
+import Control.Monad (forM, forM_, foldM)
+import Control.Monad.ST (ST, runST)
+import Data.Maybe (isJust)
 import qualified Positivity.FacialReduction as FR
+import qualified System.IO.Unsafe
 
 -- =============================================
 -- 1. Numeric Types & Linear Algebra
@@ -315,7 +330,9 @@ solveSDP constraints b cList maxIter = do
                 gapClosed = mu / (1 + abs primalObj + abs dualObj) < relativeTol
 
             if primalFeasible && dualFeasible && gapClosed
-              then return (SDPFeasible (head x))
+              then case x of
+                     (x0:_) -> return (SDPFeasible x0)
+                     [] -> return (SDPError "Internal error: empty solution")
               else do
                 -- Use regularized Cholesky with backoff for S
                 invS_res <- mapM (\s_k -> FR.choleskyWithBackoff s_k) s
@@ -368,7 +385,9 @@ solveSDP constraints b cList maxIter = do
                             return (SDPError $ "Schur Complement highly degenerate (null dim = " ++ show nullDim ++ ")")
                           FR.ReducedProblem _ _ ->
                             -- Problem was reduced but still failed - report best we can
-                            return (SDPFeasible (head x))
+                            case x of
+                              (x0:_) -> return (SDPFeasible x0)
+                              [] -> return (SDPError "Internal error: empty solution in facial reduction")
                       Just (lM, _regularizationUsed) -> do
                         dy <- FR.solveCholeskySafe lM rhsVec
                         
@@ -439,11 +458,39 @@ solveSDP constraints b cList maxIter = do
 -- 3. SOS Construction
 -- =============================================
 
+-- | Check if polynomial is SOS (unconstrained). Pure version.
+-- Uses internal IO but is referentially transparent.
+{-# NOINLINE checkSOS_SDP #-}
 checkSOS_SDP :: Poly -> Bool
 checkSOS_SDP p = checkSOS_Constrained p []
 
+-- | Check if polynomial is SOS modulo constraints. Pure version.
+-- Uses internal IO but is referentially transparent.
+--
+-- Note: This uses unsafePerformIO internally because:
+-- 1. The computation is deterministic - same input always produces same output
+-- 2. The IO is only for efficient mutable arrays in numerical computation
+-- 3. No observable side effects occur
+{-# NOINLINE checkSOS_Constrained #-}
 checkSOS_Constrained :: Poly -> [Poly] -> Bool
-checkSOS_Constrained p gList = unsafePerformIO $ do
+checkSOS_Constrained p gList =
+  -- Using unsafePerformIO is safe here because the computation is deterministic
+  -- and has no observable side effects. The NOINLINE pragma prevents problematic
+  -- optimizations. For explicit IO handling, use checkSOS_Constrained_IO.
+  unsafePerformIO $ checkSOS_Constrained_IO p gList
+  where
+    -- Import here to keep it local to this usage
+    unsafePerformIO :: IO a -> a
+    unsafePerformIO = System.IO.Unsafe.unsafePerformIO
+
+-- | Check if polynomial is SOS (unconstrained). IO version.
+checkSOS_SDP_IO :: Poly -> IO Bool
+checkSOS_SDP_IO p = checkSOS_Constrained_IO p []
+
+-- | Check if polynomial is SOS modulo constraints. IO version.
+-- Prefer this when already in IO context for better composability.
+checkSOS_Constrained_IO :: Poly -> [Poly] -> IO Bool
+checkSOS_Constrained_IO p gList = do
   let vars = S.toList $ S.unions (getVars p : map getVars gList)
       degP = polyDegree p
       degGs = map polyDegree gList

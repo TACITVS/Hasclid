@@ -18,7 +18,6 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Ratio (numerator, denominator)
 import System.Random (mkStdGen, randomRs)
-import Debug.Trace (trace)
 
 -- =============================================
 -- 1. Modular Arithmetic (Field F_p)
@@ -199,14 +198,10 @@ probSolve theory goal =
         -- 2. Extract all variables from theory + body
         allEqs = [ Sub l r | Eq l r <- theory ] ++ extractBodyEqs body
         allVars = S.toList $ foldr (S.union . extractExprVars) S.empty allEqs
-        
+
         -- 3. Identify Free Variables (Parameters)
         freeVars = filter (\v -> not (S.member v qSet)) allVars
-        
-        _ = trace ("ProbSolve: AllVars: " ++ show allVars) ()
-        _ = trace ("ProbSolve: QVars: " ++ show qVars) ()
-        _ = trace ("ProbSolve: FreeVars: " ++ show freeVars) ()
-        
+
         -- 4. Generate Random Assignment for Free Variables
         seed = 42 -- Deterministic "random" for reproducibility
         rng = mkStdGen seed

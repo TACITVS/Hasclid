@@ -2,6 +2,7 @@
 
 module Positivity
   ( checkPositivityEnhanced
+  , checkPositivityEnhancedWithHeuristics
   , PositivityResult(..)
   , PositivityMethod(..)
   , Confidence(..)
@@ -47,7 +48,11 @@ data Confidence
 
 -- | Enhanced positivity checker with multiple strategies
 checkPositivityEnhanced :: Poly -> Bool -> PositivityResult
-checkPositivityEnhanced p allowZero =
+checkPositivityEnhanced = checkPositivityEnhancedWithHeuristics True
+
+-- | Enhanced positivity checker with optional heuristics
+checkPositivityEnhancedWithHeuristics :: Bool -> Poly -> Bool -> PositivityResult
+checkPositivityEnhancedWithHeuristics allowHeuristics p allowZero =
   -- Try methods in order of confidence
   case tryUnivariate p allowZero of
     Just result -> result
@@ -57,20 +62,24 @@ checkPositivityEnhanced p allowZero =
         Just result -> result
         Nothing -> case tryAdvancedSOS p of
           Just result -> result
-          Nothing -> case trySDP p of
-            Just result -> result
-            Nothing -> case tryIntervalArithmetic p allowZero of
+          Nothing ->
+            if allowHeuristics
+            then case trySDP p of
               Just result -> result
-              Nothing -> trySamplingHeuristic p allowZero
+              Nothing -> case tryIntervalArithmetic p allowZero of
+                Just result -> result
+                Nothing -> trySamplingHeuristic p allowZero
+            else trySamplingHeuristic p allowZero
 
 -- =============================================
 -- Method 4.5: SDP Sum of Squares
 -- =============================================
 
 trySDP :: Poly -> Maybe PositivityResult
-trySDP p = 
+trySDP p =
   if checkSOS_SDP p
-  then Just $ PositivityResult True Proven SDPSolver "Verified Sum-of-Squares via Numeric SDP"
+  then Just $ PositivityResult True Heuristic SDPSolver
+       "Verified Sum-of-Squares via numeric SDP (unsound)"
   else Nothing
 
 -- =============================================

@@ -1,0 +1,6 @@
+:verbose
+:assume (= a2 1)
+:assume (= b2 1)
+:assume (= c2 1)
+:assume (= S16 3)
+:auto (>= S16 0)

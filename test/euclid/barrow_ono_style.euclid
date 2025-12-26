@@ -14,7 +14,7 @@
 -- And: PU² ≤ PB*PC/(1 + x²)
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 -- Define tangent variables with the identity
@@ -75,4 +75,5 @@
 :assume (= lhs (+ a (+ b c)))
 
 :auto (>= lhs rhs)
+
 

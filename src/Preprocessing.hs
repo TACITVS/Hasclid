@@ -81,7 +81,7 @@ preprocess initialSubs theory goal =
 
     -- Step 3: Add dimension-specific substitutions (e.g., all z-coords = 0 for 2D)
     subs' = case dim of
-              Dimension2D -> addZeroZCoordinates theory subs
+              Dimension2D -> addZeroZCoordinates theoryNN goalB subs
               _ -> subs
     log3 = if dim == Dimension2D && M.size subs' > M.size subs
            then log2 ++ ["2D detected: eliminated " ++ show (M.size subs' - M.size subs) ++ " z-coordinates"]
@@ -323,7 +323,8 @@ detectDimension :: M.Map String Expr -> Theory -> Formula -> GeometryDimension
 detectDimension subs theory goal =
   let
     allFormulas = goal : theory
-    zVars = filter (isPrefixOf "z") $ nub $ concatMap varsInFormula allFormulas
+    allVars = nub (concatMap varsInFormula allFormulas ++ M.keys subs)
+    zVars = [ v | v <- allVars, isZCoordVarName v ]
 
     -- Check if all z-variables are explicitly set to 0 (in theory or substitutions)
     allZerosAre0 = all (\zv -> hasConstraint zv (Const 0) theory || hasSubstitution zv (Const 0) subs) zVars
@@ -337,7 +338,7 @@ detectDimension subs theory goal =
     else DimensionUnknown
 
   where
-    isPrefixOf pre str = take (length pre) str == pre
+    isZCoordVarName v = isCoordVarName v && take 1 v == "z"
 
     hasConstraint var val formulas =
       any (\f -> case f of
@@ -384,11 +385,11 @@ extractSubstitutions theory =
     isConstantExpr _ = False
 
 -- | For 2D geometry, add z-coordinate = 0 substitutions
-addZeroZCoordinates :: Theory -> M.Map String Expr -> M.Map String Expr
-addZeroZCoordinates theory subs =
+addZeroZCoordinates :: Theory -> Formula -> M.Map String Expr -> M.Map String Expr
+addZeroZCoordinates theory goal subs =
   let
-    allVars = nub $ concatMap varsInFormula theory
-    zVars = filter (\v -> take 1 v == "z" && length v > 1) allVars
+    allVars = nub $ concatMap varsInFormula (goal : theory)
+    zVars = [ v | v <- allVars, isCoordVarName v && take 1 v == "z" ]
     zeroSubs = [(zv, Const 0) | zv <- zVars, not (M.member zv subs)]
   in M.union subs (M.fromList zeroSubs)
 
@@ -496,5 +497,6 @@ varsInExpr (Midpoint p1 p2 p3) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1,
 varsInExpr (Perpendicular p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3, p4]
 varsInExpr (Parallel p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3, p4]
 varsInExpr (AngleEq2D p1 p2 p3 p4 p5 p6) = concatMap (\p -> ["x"++p, "y"++p]) [p1, p2, p3, p4, p5, p6]
+varsInExpr (AngleEq2DAbs p1 p2 p3 p4 p5 p6) = concatMap (\p -> ["x"++p, "y"++p]) [p1, p2, p3, p4, p5, p6]
 varsInExpr (Determinant rows) = concatMap (concatMap varsInExpr) rows
 varsInExpr _ = []

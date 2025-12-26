@@ -8,12 +8,12 @@ module Positivity.SOS
   ) where
 
 import Expr
+import Polynomial (fromMonomial, scale)
 import qualified Data.Map.Strict as M
 import Data.List (sortBy, nub, sort, delete)
 import Data.Ratio (numerator, denominator, (%))
 import Data.Maybe (isJust, mapMaybe)
 import TermOrder (compareMonomials, TermOrder(..))
-import Positivity.SDP (checkSOS_SDP)
 import Positivity.SOSTypes (trySOSHeuristic, SOSPattern(..), SOSCertificate(..), sqrtRational)
 
 emptyCert :: SOSCertificate
@@ -22,7 +22,7 @@ emptyCert = SOSCertificate [] [] polyZero Nothing
 -- | Check if polynomial is a Sum of Squares, potentially modulo an ideal (via reducer)
 -- and potentially using a list of known non-negative lemmata.
 checkSOS :: (Poly -> Poly) -> Poly -> Bool
-checkSOS reducer p = isJust (getSOSCertificate [] reducer p) || checkSOS_SDP p
+checkSOS reducer p = isJust (getSOSCertificate [] reducer p)
 
 -- | Get SOS certificate if it exists, using known non-negative variables and lemmata.
 getSOSCertificate :: [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate
@@ -177,11 +177,13 @@ polyDivMonomial (Poly mapping) m =
      then Nothing
      else Just (Poly (M.fromList [ (r, c) | (Just r, c) <- dividedList ]))
 
+-- Use scale from Polynomial module (local alias for backwards compatibility)
 _polyScale :: Poly -> Rational -> Poly
-_polyScale (Poly m) s = Poly (M.map (*s) m)
+_polyScale p s = scale s p
 
+-- Use fromMonomial from Polynomial module (local alias for backwards compatibility)
 polyFromMonomial :: Monomial -> Rational -> Poly
-polyFromMonomial m c = Poly (M.singleton m c)
+polyFromMonomial = fromMonomial
 
 isSquareMono :: Monomial -> Bool
 isSquareMono (Monomial m) = all even (M.elems m)

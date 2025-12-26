@@ -7,7 +7,7 @@
 -- =============================================================================
 
 :set-timeout 120
-
+:verbose
 -- Let's use a concrete value approach
 -- PA = 2, so PA² = 4
 -- PU = 1 (half of PA), so PU² = 1

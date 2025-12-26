@@ -11,7 +11,7 @@
 ; B is at (-1, 0).
 ; P(x,y) is inside.
 
-:set-timeout 300
+:set-timeout 180
 :verbose
 
 ; ---------------------------------------------------------

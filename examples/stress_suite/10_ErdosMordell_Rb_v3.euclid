@@ -4,7 +4,7 @@
 ; This is a difficult inequality. Let's try with :auto to let the solver
 ; pick the best strategy.
 
-:set-timeout 300
+:set-timeout 180
 
 :assume (= (^ s 2) 3)
 :assume (> s 0)
@@ -25,3 +25,4 @@
 ; Squared form: Rb^2 >= (da + dc)^2
 :auto (>= (^ Rb 2) (^ (+ da dc) 2))
 :q
+

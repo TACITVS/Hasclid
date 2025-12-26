@@ -8,7 +8,7 @@
 ; 3. Keep Incenter implicit (avoiding square roots).
 ; 4. Solve only for the Thebault Circle parameters (x, r) and Incenter (ix, iy).
 
-:set-timeout 300  ; Give it 5 minutes just in case
+:set-timeout 180  ; Give it 5 minutes just in case
 :verbose
 
 ; ---------------------------------------------------------

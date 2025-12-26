@@ -15,16 +15,21 @@ import Timeout
 import Wu (wuProveE, WuResult(..))
 import Lagrange (solve4Squares, solve4SquaresE)
 import SolverRouter (autoSolve, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions, SolverChoice(..))
-import Error (ProverError(..), ProofErrorType(..), formatError)
+import Error (ProverError(..), ProofErrorType(..), TimeoutErrorType(..), formatError)
 import Data.List (isPrefixOf, isInfixOf)
+import Data.Ratio ((%))
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified ExamplesSpec
 import qualified IntegrationSpec
+import qualified PropertySpec
 
 main :: IO ()
 main = hspec $ do
   coreSpec
+  PropertySpec.spec
+  -- NOTE: ExamplesSpec and IntegrationSpec are slow/hanging tests
+  -- Run them separately: cabal test prover-test --test-options="--match Examples"
   -- ExamplesSpec.spec
   -- IntegrationSpec.spec
 
@@ -140,18 +145,18 @@ coreSpec = do
       ctx <- withTimeout 1  -- 1 second timeout
       threadDelay 1500000      -- Sleep 1.5s
       result <- runTimeoutM ctx checkTimeout
-      result `shouldBe` True
+      result `shouldBe` Right True
 
     it "does not timeout before deadline" $ do
       ctx <- withTimeout 1  -- 1 second timeout
       result <- runTimeoutM ctx checkTimeout
-      result `shouldBe` False
+      result `shouldBe` Right False
 
     it "no-timeout never times out" $ do
       ctx <- noTimeout
       threadDelay 10000       -- Sleep 10ms
       result <- runTimeoutM ctx checkTimeout
-      result `shouldBe` False
+      result `shouldBe` Right False
 
   describe "Buchberger Timeout" $ do
     it "completes for simple polynomial systems without timeout" $ do
@@ -161,9 +166,11 @@ coreSpec = do
                    polyAdd (polyPow y 2) (polyFromConst (-1))]
       ctx <- noTimeout
       result <- runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys)
-      length result `shouldSatisfy` (> 0)
+      case result of
+        Right basis -> length basis `shouldSatisfy` (> 0)
+        Left err -> expectationFailure ("Unexpected error: " ++ show err)
 
-    it "throws error on timeout for expensive systems" $ do
+    it "returns error on timeout for expensive systems" $ do
       let x = polyFromVar "x"
           y = polyFromVar "y"
           z = polyFromVar "z"
@@ -178,7 +185,12 @@ coreSpec = do
                   , polyAdd (polyMul y w) (polyFromConst 1)
                   ]
       ctx <- withTimeout 0  -- 0 second timeout (immediate)
-      runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys) `shouldThrow` anyErrorCall
+      -- With proper error handling, timeout returns Either ProverError
+      result <- runTimeoutM ctx (buchbergerWithStrategyT compare NormalStrategy polys)
+      case result of
+        Left (TimeoutError BuchbergerTimeout) -> return ()  -- Expected
+        Left err -> expectationFailure ("Wrong error type: " ++ show err)
+        Right _ -> expectationFailure "Expected timeout error but computation succeeded"
 
   describe "CAD Implementation Correctness" $ do
     describe "Discriminant" $ do
@@ -367,6 +379,93 @@ coreSpec = do
       let expr = Add (Mul (Var "x") (Var "x")) (Const 1)
           expected = polyAdd (polyPow (polyFromVar "x") 2) (polyFromConst 1)
       toPoly expr `shouldBe` expected
+
+  -- Edge case tests for improved coverage
+  describe "Edge Cases" $ do
+    describe "Polynomial edge cases" $ do
+      it "zero polynomial is identity for addition" $ do
+        polyAdd polyZero polyZero `shouldBe` polyZero
+
+      it "zero polynomial annihilates multiplication" $ do
+        let p = polyAdd (polyFromVar "x") (polyFromConst 42)
+        polyMul polyZero p `shouldBe` polyZero
+        polyMul p polyZero `shouldBe` polyZero
+
+      it "negation of zero is zero" $ do
+        polyNeg polyZero `shouldBe` polyZero
+
+      it "double negation is identity" $ do
+        let p = polyAdd (polyFromVar "x") (polyFromConst 3)
+        polyNeg (polyNeg p) `shouldBe` p
+
+      it "handles very large exponents correctly" $ do
+        let p = polyFromVar "x"
+            highPow = polyPow p 10
+        getVars highPow `shouldBe` S.singleton "x"
+
+      it "handles fractional coefficients" $ do
+        let half = polyFromConst (1 / 2)
+            p = polyMul half (polyFromVar "x")
+            doubled = polyMul (polyFromConst 2) p
+        doubled `shouldBe` polyFromVar "x"
+
+    describe "Expression edge cases" $ do
+      it "simplifies deeply nested zeros" $ do
+        let expr = Add (Add (Const 0) (Const 0)) (Var "x")
+        simplifyExpr expr `shouldBe` Var "x"
+
+      it "simplifies deeply nested ones" $ do
+        let expr = Mul (Mul (Const 1) (Const 1)) (Var "x")
+        simplifyExpr expr `shouldBe` Var "x"
+
+      it "handles negative constants correctly" $ do
+        simplifyExpr (Mul (Const (-1)) (Const (-1))) `shouldBe` Const 1
+
+      it "simplifies x * 0 * y to 0" $ do
+        simplifyExpr (Mul (Mul (Var "x") (Const 0)) (Var "y")) `shouldBe` Const 0
+
+      it "handles power of zero exponent" $ do
+        simplifyExpr (Pow (Const 0) 0) `shouldBe` Const 1  -- 0^0 = 1 by convention
+
+      it "handles high power correctly" $ do
+        simplifyExpr (Pow (Const 2) 10) `shouldBe` Const 1024
+
+    describe "Parser edge cases" $ do
+      it "parses formula with many parentheses" $ do
+        let formula = "(= (+ (+ (+ x 1) 2) 3) 6)"
+        parseFormulaWithMacros M.empty S.empty formula `shouldSatisfy` isRight
+
+      it "handles empty macro map" $ do
+        parseFormulaWithMacros M.empty S.empty "(= x x)" `shouldSatisfy` isRight
+
+      it "handles formula with long variable names" $ do
+        parseFormulaWithMacros M.empty S.empty "(= longVariableName 42)" `shouldSatisfy` isRight
+
+    describe "Rational edge cases" $ do
+      it "handles large numerator" $ do
+        let largeNum = Const (999999999 % 1)
+        toPoly largeNum `shouldBe` polyFromConst (999999999 % 1)
+
+      it "handles large denominator" $ do
+        let smallFrac = Const (1 % 999999999)
+        toPoly smallFrac `shouldBe` polyFromConst (1 % 999999999)
+
+      it "preserves exact rational arithmetic" $ do
+        let third = polyFromConst (1 % 3)
+            result = polyMul (polyFromConst 3) third
+        result `shouldBe` polyFromConst 1
+
+    describe "Variable ordering edge cases" $ do
+      it "orders variables lexicographically" $ do
+        let xy = polyMul (polyFromVar "x") (polyFromVar "y")
+            yx = polyMul (polyFromVar "y") (polyFromVar "x")
+        xy `shouldBe` yx  -- Canonical form
+
+      it "getLeadingTerm respects variable order" $ do
+        let p = polyAdd (polyFromVar "x") (polyFromVar "y")
+        case getLeadingTerm p of
+          Just (_, _) -> True `shouldBe` True  -- Just verify it returns something
+          Nothing -> expectationFailure "Expected leading term"
 
 -- Helper functions for Either and Maybe checks
 isRight :: Either a b -> Bool

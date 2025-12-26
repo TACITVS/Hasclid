@@ -16,7 +16,7 @@
 -- Using tangent: tan(α) + tan(β) + tan(γ) = tan(α)*tan(β)*tan(γ)
 -- =============================================================================
 
-:set-timeout 300
+:set-timeout 180
 :optimize on
 
 -- Tangent variables for half-angles (positive for angles in (0, π/2))
@@ -51,4 +51,5 @@
 
 -- Goal: a + b + c >= (b+c)*cx + (c+a)*cy + (a+b)*cz
 :auto (>= (+ a (+ b c)) (+ (* (+ b c) cx) (+ (* (+ c a) cy) (* (+ a b) cz))))
+
 

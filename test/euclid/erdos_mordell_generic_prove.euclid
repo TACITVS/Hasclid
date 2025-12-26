@@ -1,4 +1,4 @@
-:set-timeout 300
+:set-timeout 180
 :optimize on
 :set-strategy normal
 
