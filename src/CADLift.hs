@@ -25,7 +25,6 @@ import CAD (completeProjection, mcCallumProjection)
 import Sturm (isolateRoots)
 import Timeout
 import Error (TimeoutErrorType(..))
-import Debug.Trace (trace)
 import GHC.Stack (HasCallStack, renderStack, callStack)
 import qualified Control.Exception as CE
 import Control.Exception (try, evaluate, ArithException(..))
@@ -170,24 +169,20 @@ cadDecomposeTree polys vars =
 --   Expected speedup: 2-10x for provable theorems (stops early)
 cadDecomposeEarlyStop :: [Poly] -> [String] -> Theory -> Formula -> Maybe Bool
 cadDecomposeEarlyStop polys vars theory goal =
-  let _ = trace ("CAD: EarlyStop with " ++ show vars) ()
-  in case vars of
+  case vars of
     [] -> Nothing  -- No variables, fall back to full decomposition
     [v] ->
-      let _ = trace ("CAD: EarlyStop Base Case 1D: " ++ v) ()
-          cells = cad1D polys v
+      let cells = cad1D polys v
       in checkCellsEarly theory goal cells
     (v:vs) ->
-      let _ = trace ("CAD: EarlyStop Recursive: " ++ v) ()
-          projectedPolys = projectPolynomials polys v
+      let projectedPolys = projectPolynomials polys v
           -- Recursively check lower dimension first
           lowerResult = cadDecomposeEarlyStop projectedPolys vs theory goal
       in case lowerResult of
            Just result -> Just result  -- Early termination from lower level
            Nothing ->
              -- Need to lift and continue checking
-             let _ = trace ("CAD: EarlyStop Lifting: " ++ v) ()
-                 lowerCells = cadDecompose projectedPolys vs
+             let lowerCells = cadDecompose projectedPolys vs
              in checkLiftedCellsEarly polys v theory goal lowerCells
 
 -- | Check cells incrementally, returning early if possible.
@@ -482,10 +477,7 @@ isRoot coeffs x = abs (evalPolyAt coeffs x) < (1 % 1000000000)
 
 -- | Evaluate polynomial at a point (for refinement)
 evalPolyAt :: [Rational] -> Rational -> Rational
-evalPolyAt coeffs x = 
-  let _ = trace "CAD: evalPolyAt START" ()
-      res = sum [ c * (x ^ i) | (i, c) <- zip [0 :: Int ..] coeffs ]
-  in trace "CAD: evalPolyAt END" res
+evalPolyAt coeffs x = sum [ c * (x ^ i) | (i, c) <- zip [0 :: Int ..] coeffs ]
 
 -- | Generate samples classified as sections (on roots) and sectors (between roots)
 generateSamplesClassified :: [Rational] -> ([Rational], [Rational])
@@ -670,19 +662,18 @@ proveWithCAD formula vars =
 --   2. Early termination: Stops when counterexample found (2-10x speedup)
 proveFormulaCAD :: Theory -> Formula -> Bool
 proveFormulaCAD theory goal = unsafePerformIO $ do
-  res <- try $ evaluate $ 
-    let polys = trace "CAD: Step 1 - Extracting polys" $ concatMap formulaToPolys (goal : theory)
-        vars = trace "CAD: Step 2 - Extracting vars" $ S.toList (extractPolyVarsList polys)
-        optimizedVars = trace "CAD: Step 3 - Optimizing variable order" $ optimizeVariableOrder polys vars
-        earlyResult = Nothing :: Maybe Bool -- trace ("CAD: Step 4 - Decomposing with " ++ show (length optimizedVars) ++ " variables") $ cadDecomposeEarlyStop polys optimizedVars theory goal
+  res <- try $ evaluate $
+    let polys = concatMap formulaToPolys (goal : theory)
+        vars = S.toList (extractPolyVarsList polys)
+        optimizedVars = optimizeVariableOrder polys vars
+        earlyResult = Nothing :: Maybe Bool
     in case earlyResult of
-         Just False -> trace "CAD: Early refutation" False
-         Just True -> trace "CAD: Early proof" True
+         Just False -> False
+         Just True -> True
          Nothing ->
-           let cells = trace "CAD: Step 5 - Full decomposition" $ cadDecompose polys optimizedVars
-               validCells = trace ("CAD: Step 6 - Checking " ++ show (length cells) ++ " cells") $ filter (\c -> all (`evaluateFormula` c) theory) cells
-               resVal = trace ("CAD: Step 7 - Found " ++ show (length validCells) ++ " valid cells") $ not (null validCells) && all (evaluateFormula goal) validCells
-           in trace ("CAD: Result = " ++ show resVal) resVal
+           let cells = cadDecompose polys optimizedVars
+               validCells = filter (\c -> all (`evaluateFormula` c) theory) cells
+           in not (null validCells) && all (evaluateFormula goal) validCells
   case res of
     Left e -> 
       let msg = show (e :: CE.SomeException)
@@ -754,8 +745,7 @@ evaluatePolyRational assignment (Poly m) =
             assignedValue = product [ (assignment M.! v) ^ exp | (v, exp) <- assignedVars ]
             newCoeff = coeff * assignedValue
             newVars = M.fromList unassignedVars
-        in
-            trace ("CAD: coeff=" ++ show coeff ++ " value=" ++ show assignedValue) (Monomial newVars, newCoeff)
+        in (Monomial newVars, newCoeff)
       evaluated = [ evalMonomial mono coeff | (mono, coeff) <- M.toList m ]
   in
       Poly (M.fromListWith (+) evaluated)

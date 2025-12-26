@@ -14,7 +14,6 @@ import Polynomial (fromMonomial)
 import Data.List (dropWhileEnd)
 import qualified Data.Map.Strict as M
 import Data.Maybe (mapMaybe)
-import Debug.Trace (trace)
 
 -- | Recursive Polynomial: Coefficients are themselves Polys
 type RecPoly = [Poly] 
@@ -115,9 +114,8 @@ pseudoRem f g = normalizeRec (go f)
 -- =============================================
 
 resultant :: Poly -> Poly -> String -> Poly
-resultant f g var = 
-    let _ = trace ("CAD: Resultant w.r.t " ++ var) ()
-        rf = toRecursive f var
+resultant f g var =
+    let rf = toRecursive f var
         rg = toRecursive g var
     in subresultantPRS rf rg
 
@@ -125,7 +123,6 @@ subresultantPRS :: RecPoly -> RecPoly -> Poly
 subresultantPRS f g =
   let f' = primitiveRec f  -- Normalize input to prevent early explosion
       g' = primitiveRec g
-      _ = trace ("CAD: subresultantPRS degrees " ++ show (degRec f') ++ ", " ++ show (degRec g')) ()
   in if length f' < length g' then subresultantPRS g' f'
      else go f' g' (polyFromConst 1) (polyFromConst 1)
   where
@@ -177,12 +174,10 @@ polyDivExact p1 p2
                Left _ -> p1
 
 discriminant :: Poly -> String -> Poly
-discriminant f var = 
-    let _ = trace ("CAD: Discriminant w.r.t " ++ var) ()
-        fRec = toRecursive f var
+discriminant f var =
+    let fRec = toRecursive f var
         fPrime = derivRec fRec
-        res = subresultantPRS fRec fPrime
-    in res
+    in subresultantPRS fRec fPrime
 
 derivRec :: RecPoly -> RecPoly
 derivRec [] = []
@@ -245,8 +240,7 @@ completeProjection polys var =
 
 mcCallumProjection :: [Poly] -> String -> [Poly]
 mcCallumProjection polys var =
-  let _ = trace ("CAD: mcCallumProjection on " ++ show (length polys) ++ " polys, var: " ++ var) ()
-      relevantPolys = filter (dependsOn var) polys
+  let relevantPolys = filter (dependsOn var) polys
       leadingCoeffs = [ leadingCoeff p var | p <- relevantPolys ]
       discriminants = [ discriminant p var | p <- relevantPolys, polyDegreeIn p var >= 2 ]
       resultants = [ resultant p q var

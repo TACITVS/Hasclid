@@ -12,7 +12,6 @@ module Heuristics
 import Expr
 import Data.List (nub, sort, find)
 import qualified Data.Map.Strict as M
-import Debug.Trace (trace)
 import Data.Ratio ((%), numerator, denominator)
 import Data.Maybe (mapMaybe, listToMaybe)
 
@@ -82,7 +81,6 @@ tryRaviSubstitution theory goal =
       hasABC = all (`elem` vars) ["a", "b", "c"]
       -- Look for a2, b2, c2 (standard squared sides)
       hasA2B2C2 = all (`elem` vars) ["a2", "b2", "c2"]
-      _ = if hasABC || hasA2B2C2 then trace ("Ravi detected: " ++ show vars) () else ()
   in if hasABC then applyRavi ["a", "b", "c"] theory goal False
      else if hasA2B2C2 then applyRavi ["a2", "b2", "c2"] theory goal True
      else (theory, goal, [])
