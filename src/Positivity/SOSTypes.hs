@@ -5,29 +5,30 @@ module Positivity.SOSTypes
   , sqrtRational
   ) where
 
-import Expr
+import Expr (Poly(..), Monomial(..), Formula, polyZero, polyFromVar, getLeadingTerm, integerSqrt)
+import Polynomial (add, sub, mul, scale, fromMonomial, monomialDegree, monomialMul, monomialDiv)
 import qualified Data.Map.Strict as Map
 import Data.Ratio
 import Data.List (nub)
 
 -- | Certificate showing that a polynomial is a sum of squares.
 data SOSCertificate = SOSCertificate
-  { sosTerms :: [(Rational, Poly)] 
-  , sosLemmas :: [Poly]            
-  , sosRemainder :: Poly           
-  , sosPattern :: Maybe SOSPattern 
+  { sosTerms :: [(Rational, Poly)]
+  , sosLemmas :: [Poly]
+  , sosRemainder :: Poly
+  , sosPattern :: Maybe SOSPattern
   } deriving (Show, Eq)
 
 -- | Common SOS patterns
 data SOSPattern
-  = TrivialSquare          
-  | SumOfSquares           
-  | CompletedSquare        
-  | CauchySchwarz          
-  | TriangleInequality     
-  | AM_GM                  
-  | Weitzenbock            
-  | Custom String          
+  = TrivialSquare
+  | SumOfSquares
+  | CompletedSquare
+  | CauchySchwarz
+  | TriangleInequality
+  | AM_GM
+  | Weitzenbock
+  | Custom String
   deriving (Eq, Show)
 
 -- | Try to decompose polynomial using heuristic pattern matching.
@@ -62,12 +63,12 @@ polynomialSqrt p
           else
             let rootM = sqrtMonomial ltM
                 rootC = sqrtRational ltC
-                rootLT = polyFromMonomial rootM rootC
+                rootLT = fromMonomial rootM rootC
             in findRoot p rootLT
 
 findRoot :: Poly -> Poly -> Maybe Poly
 findRoot target currentRoot =
-  let remainder = subPoly target (_mulPoly currentRoot currentRoot)
+  let remainder = sub target (mul currentRoot currentRoot)
   in if remainder == polyZero
      then Just currentRoot
      else
@@ -83,8 +84,8 @@ findRoot target currentRoot =
                in case nextM of
                     Nothing -> Nothing
                     Just m ->
-                      let nextTerm = polyFromMonomial m nextC
-                      in findRoot target (_addPoly currentRoot nextTerm)
+                      let nextTerm = fromMonomial m nextC
+                      in findRoot target (add currentRoot nextTerm)
 
 isSquareMonomial :: Monomial -> Bool
 isSquareMonomial (Monomial vars) = all even (Map.elems vars)
@@ -96,20 +97,17 @@ isSquareRational :: Rational -> Bool
 isSquareRational r = r >= 0 && isSquare (numerator r) && isSquare (denominator r)
 
 isSquare :: Integer -> Bool
-isSquare x | x < 0 = False | otherwise = let s = Expr.integerSqrt x in s * s == x
+isSquare x | x < 0 = False | otherwise = let s = integerSqrt x in s * s == x
 
 sqrtRational :: Rational -> Rational
 sqrtRational r = let n = numerator r; d = denominator r
-                 in Expr.integerSqrt n % Expr.integerSqrt d
-
-polyFromMonomial :: Monomial -> Rational -> Poly
-polyFromMonomial m c = Poly (Map.singleton m c)
+                 in integerSqrt n % integerSqrt d
 
 -- | Check if polynomial is a simple sum of squares
 trySimpleSumOfSquares :: Poly -> Maybe SOSCertificate
 trySimpleSumOfSquares (Poly m) =
   let terms = Map.toList m
-      squares = [ (c, Poly (Map.singleton (sqrtMonomial mon) 1)) 
+      squares = [ (c, Poly (Map.singleton (sqrtMonomial mon) 1))
                 | (mon, c) <- terms, c > 0, isSquareMonomial mon ]
   in if length squares == Map.size m && not (null squares)
      then Just $ SOSCertificate squares [] polyZero (Just SumOfSquares)
@@ -121,7 +119,7 @@ tryTriangleInequalityPattern poly =
   case matchTrianglePattern poly of
     Just (varA, varB, varC) ->
       let polyA = polyFromVar varA; polyB = polyFromVar varB; polyC = polyFromVar varC
-          comp1 = subPoly polyA polyB; comp2 = subPoly polyB polyC; comp3 = subPoly polyC polyA
+          comp1 = sub polyA polyB; comp2 = sub polyB polyC; comp3 = sub polyC polyA
           terms = [(1/2, comp1), (1/2, comp2), (1/2, comp3)]
       in Just $ SOSCertificate terms [] polyZero (Just TriangleInequality)
     Nothing -> Nothing
@@ -146,7 +144,7 @@ looksLikeTrianglePattern m a b c =
 
 -- | Try AM-GM pattern for n=3: (xy+yz+zx)^3 - 27x^2y^2z^2 >= 0
 tryAMGMPattern :: Poly -> [Formula] -> Maybe SOSCertificate
-tryAMGMPattern p _theory = 
+tryAMGMPattern p _theory =
   case matchAMGM3 p of
     Just _ -> Just $ SOSCertificate [] [] polyZero (Just AM_GM)
     Nothing -> Nothing
@@ -154,27 +152,24 @@ tryAMGMPattern p _theory =
 -- | Robust AM-GM matcher for n=3
 -- Matches k * ((a+b+c)^3 - 27abc)
 -- Note: Expansion of (a+b+c)^3 has a 6abc term, so the coefficient of abc in the final poly is -21k.
--- | Robust AM-GM matcher for n=3
--- Matches k * ((a+b+c)^3 - 27abc)
--- Note: Expansion of (a+b+c)^3 has a 6abc term, so the coefficient of abc in the final poly is -21k.
 matchAMGM3 :: Poly -> Maybe (Poly, Poly, Poly)
 matchAMGM3 poly =
   case getLeadingTerm poly of
-    Just (ltM, k) -> 
-      let rootCandidateCube = _polyScale poly (1/k) -- Should be (a+b+c)^3 - 21abc
+    Just (ltM, k) ->
+      let rootCandidateCube = scale (1/k) poly -- Should be (a+b+c)^3 - 21abc
           -- The product term in rootCandidateCube should be -21abc
           terms = Map.toList (case rootCandidateCube of Poly m -> m)
-          productCandidates = filter (\(m, c) -> c == -21) terms
+          productCandidates = filter (\(_, c) -> c == -21) terms
       in case productCandidates of
-           ((mon, _):_) -> 
+           ((mon, _):_) ->
              let abc = Poly (Map.singleton mon 1)
-                 maybeRoot = cubicRoot (_addPoly rootCandidateCube (_polyScale abc 21))
+                 maybeRoot = cubicRoot (add rootCandidateCube (scale 21 abc))
              in case maybeRoot of
-                  Just root -> 
+                  Just root ->
                     case Map.toList (case root of Poly m -> m) of
-                      [(m1, 1), (m2, 1), (m3, 1)] -> 
-                        if combineMonomial m1 (combineMonomial m2 m3) == mon 
-                        then Just (Poly (Map.singleton m1 1), Poly (Map.singleton m2 1), Poly (Map.singleton m3 1)) 
+                      [(m1, 1), (m2, 1), (m3, 1)] ->
+                        if monomialMul m1 (monomialMul m2 m3) == mon
+                        then Just (Poly (Map.singleton m1 1), Poly (Map.singleton m2 1), Poly (Map.singleton m3 1))
                         else Nothing
                       _ -> Nothing
                   Nothing -> Nothing
@@ -193,8 +188,8 @@ cubicRoot p =
                isCubicComponent (m, c) = c == 1 && (monomialDegree m == monomialDegree ltM) && isCubeMonomial m
                components = filter isCubicComponent terms
            in if not (null components)
-                 then let root = foldl _addPoly polyZero (map (\(m, _) -> Poly (Map.singleton (cubeRootMonomial m) 1)) components)
-                      in if p == _mulPoly root (_mulPoly root root) then Just root else Nothing
+                 then let root = foldl add polyZero (map (\(m, _) -> Poly (Map.singleton (cubeRootMonomial m) 1)) components)
+                      in if p == mul root (mul root root) then Just root else Nothing
                  else Nothing
 
 isCubeMonomial :: Monomial -> Bool
@@ -202,21 +197,3 @@ isCubeMonomial (Monomial vars) = all (\e -> e `mod` 3 == 0) (Map.elems vars)
 
 cubeRootMonomial :: Monomial -> Monomial
 cubeRootMonomial (Monomial vars) = Monomial (Map.map (`div` 3) vars)
-
-monomialDegree :: Monomial -> Integer
-monomialDegree (Monomial m) = fromIntegral $ Map.foldl (+) 0 m
-
-_addPoly :: Poly -> Poly -> Poly
-_addPoly (Poly m1) (Poly m2) = Poly (Map.filter (/= 0) (Map.unionWith (+) m1 m2))
-
-subPoly :: Poly -> Poly -> Poly
-subPoly (Poly m1) (Poly m2) = Poly (Map.filter (/= 0) (Map.unionWith (+) m1 (Map.map negate m2)))
-
-_mulPoly :: Poly -> Poly -> Poly
-_mulPoly (Poly m1) (Poly m2) = Poly (Map.filter (/= 0) (Map.fromListWith (+) [ (combineMonomial mon1 mon2, c1 * c2) | (mon1, c1) <- Map.toList m1, (mon2, c2) <- Map.toList m2 ]))
-
-combineMonomial :: Monomial -> Monomial -> Monomial
-combineMonomial (Monomial m1) (Monomial m2) = Monomial $ Map.unionWith (+) m1 m2
-
-_polyScale :: Poly -> Rational -> Poly
-_polyScale (Poly m) s = Poly (Map.map (*s) m)

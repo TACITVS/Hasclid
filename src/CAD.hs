@@ -10,6 +10,7 @@ module CAD
   ) where
 
 import Expr
+import Polynomial (fromMonomial)
 import Data.List (dropWhileEnd)
 import qualified Data.Map.Strict as M
 import Data.Maybe (mapMaybe)
@@ -168,15 +169,12 @@ polyDivExact p1 p2
                           Nothing -> Left remainder
                           Just m ->
                             let qCoeff = cRem / cDiv
-                                qPoly = polyFromMonomial m qCoeff
+                                qPoly = fromMonomial m qCoeff
                                 newRemainder = polySub remainder (polyMul qPoly p2)
                             in go newRemainder (polyAdd acc qPoly)
           in case go p1 polyZero of
                Right q -> q
                Left _ -> p1
-
-polyFromMonomial :: Monomial -> Rational -> Poly
-polyFromMonomial m c = Poly (M.singleton m c)
 
 discriminant :: Poly -> String -> Poly
 discriminant f var = 

@@ -8,6 +8,7 @@ module Positivity.SOS
   ) where
 
 import Expr
+import Polynomial (fromMonomial, scale)
 import qualified Data.Map.Strict as M
 import Data.List (sortBy, nub, sort, delete)
 import Data.Ratio (numerator, denominator, (%))
@@ -176,11 +177,13 @@ polyDivMonomial (Poly mapping) m =
      then Nothing
      else Just (Poly (M.fromList [ (r, c) | (Just r, c) <- dividedList ]))
 
+-- Use scale from Polynomial module (local alias for backwards compatibility)
 _polyScale :: Poly -> Rational -> Poly
-_polyScale (Poly m) s = Poly (M.map (*s) m)
+_polyScale p s = scale s p
 
+-- Use fromMonomial from Polynomial module (local alias for backwards compatibility)
 polyFromMonomial :: Monomial -> Rational -> Poly
-polyFromMonomial m c = Poly (M.singleton m c)
+polyFromMonomial = fromMonomial
 
 isSquareMono :: Monomial -> Bool
 isSquareMono (Monomial m) = all even (M.elems m)

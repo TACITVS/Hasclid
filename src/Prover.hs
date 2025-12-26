@@ -28,6 +28,7 @@ module Prover
 where
 
 import Expr
+import Polynomial (sub)
 import Error
 import IntSolver
 import Sturm (sturmSequence, rootsInInterval, samplePoints, evalPoly)
@@ -124,9 +125,9 @@ formatProofTrace trace = unlines $
 -- Substitution Logic
 -- =============================================
 
--- subPoly uses polyAdd/Neg
+-- Alias for sub from Polynomial module (for backwards compatibility)
 subPoly :: Poly -> Poly -> Poly
-subPoly p1 p2 = polyAdd p1 (polyNeg p2)
+subPoly = sub
 
 -- =============================================
 -- GROEBNER BASIS ENGINE (Buchberger's Algorithm)

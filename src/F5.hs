@@ -10,7 +10,7 @@ module F5
     isSyzygy,
     isRewritable,
     Rules,
-    polyFromMonomial,
+    polyFromMonomial,  -- Re-exported from Polynomial
     polyIsZero,
     -- Memory bounds
     F5Config (..),
@@ -23,6 +23,7 @@ module F5
 where
 
 import Expr (Poly (..), Monomial (..), monomialLCM, monomialMul, monomialDiv, getLeadingTermByOrder, monomialGCD, monomialOne, polyAdd, polySub, polyMul, getLeadingTerm, polyScale, polyZero, polyNeg, polyPrimitive)
+import Polynomial (fromMonomial)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.List (sortBy, foldl', nub, partition, minimumBy, find)
@@ -582,8 +583,9 @@ mkLabeledPoly ord p s n hypo =
 polyIsZero :: Poly -> Bool
 polyIsZero p = p == polyZero
 
+-- | Alias for fromMonomial from Polynomial module (for backwards compatibility)
 polyFromMonomial :: Monomial -> Rational -> Poly
-polyFromMonomial m c = if c == 0 then polyZero else Poly (M.singleton m c)
+polyFromMonomial = fromMonomial
 
 polyScaleMonomial :: Monomial -> Poly -> Poly
 polyScaleMonomial m (Poly mm) =
