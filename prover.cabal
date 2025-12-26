@@ -174,6 +174,7 @@ test-suite f5-test
         Geometry.Barycentric
         Error
         Timeout
+        Polynomial
     build-depends:    base, hspec, containers, vector, numbers, array, deepseq, random, mtl, time
     default-language: GHC2021
 

@@ -1,6 +1,100 @@
 {-# LANGUAGE DeriveGeneric #-}
 
-module Core.Types where
+-- | Core types and operations for the theorem prover.
+-- This module provides the fundamental data types for representing
+-- mathematical expressions, formulas, polynomials, and their operations.
+module Core.Types
+  ( -- * Expression Types
+    Expr(..)
+  , Formula(..)
+  , QuantVar(..)
+  , QuantType(..)
+  , Theory
+
+    -- * Polynomial Types
+  , Poly(..)
+  , Monomial(..)
+
+    -- * Pretty Printing
+  , prettyExpr
+  , prettyFormula
+  , prettyPoly
+  , prettyPolyNice
+  , prettyMonomial
+  , prettyRational
+  , prettyQuantVar
+  , prettyBounds
+
+    -- * Monomial Operations
+  , monomialOne
+  , monomialMul
+  , monomialDiv
+  , monomialLCM
+  , monomialGCD
+
+    -- * Polynomial Construction
+  , polyZero
+  , polyFromConst
+  , polyFromVar
+
+    -- * Polynomial Arithmetic
+  , polyAdd
+  , polyNeg
+  , polySub
+  , polyMul
+  , polyPow
+  , polyScale
+
+    -- * Polynomial Queries
+  , getLeadingTerm
+  , getLeadingTermByOrder
+  , getVars
+  , getMainVar
+  , isConstPoly
+  , polyContent
+  , polyPrimitive
+  , polyDerivative
+
+    -- * Expression Manipulation
+  , simplifyExpr
+  , substituteExpr
+  , substituteAll
+  , normalizeCommAssoc
+  , mapExpr
+
+    -- * Conversion Functions
+  , toPoly
+  , polyToExpr
+  , toUnivariate
+  , fromUnivariate
+  , buildSubMap
+  , evaluatePoly
+  , toPolySub
+
+    -- * Predicates
+  , containsSqrtExpr
+  , containsSqrtFormula
+  , containsDivExpr
+  , containsDivFormula
+  , containsIntExpr
+  , containsIntFormula
+  , containsQuantifier
+  , hasNonPolynomial
+  , exprEqualsSymbolic
+
+    -- * Integer/Formula Operations
+  , substituteInts
+  , substituteIntsExpr
+
+    -- * Helper Functions
+  , collectAdd
+  , collectMul
+  , partitionConsts
+  , transpose
+  , hasDuplicates
+  , integerSqrt
+  , rationalGCD
+  ) where
 
 import Data.List (intercalate, sortBy, nub, maximumBy)
 import qualified Data.Map.Strict as M
