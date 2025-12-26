@@ -21,10 +21,12 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified ExamplesSpec
 import qualified IntegrationSpec
+import qualified PropertySpec
 
 main :: IO ()
 main = hspec $ do
   coreSpec
+  PropertySpec.spec
   ExamplesSpec.spec
   IntegrationSpec.spec
 
