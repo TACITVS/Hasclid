@@ -1,8 +1,47 @@
 {-# LANGUAGE DeriveGeneric #-}
 
--- | Core types and operations for the theorem prover.
+-- |
+-- Module      : Core.Types
+-- Description : Core types and operations for the geometric theorem prover
+-- Copyright   : (c) 2024-2025
+-- License     : MIT
+-- Stability   : stable
+--
 -- This module provides the fundamental data types for representing
 -- mathematical expressions, formulas, polynomials, and their operations.
+--
+-- = Expression Language
+--
+-- The 'Expr' type represents symbolic mathematical expressions including:
+--
+--   * Arithmetic: addition, subtraction, multiplication, division, powers
+--   * Geometry: distances, collinearity, dot products, circles
+--   * Special constructs: determinants, summations
+--
+-- = Polynomial Engine
+--
+-- The 'Poly' type represents multivariate polynomials with rational coefficients.
+-- Polynomials support standard arithmetic operations and are used as the
+-- normal form for algebraic reasoning.
+--
+-- = Formula Language
+--
+-- The 'Formula' type represents logical formulas including:
+--
+--   * Comparisons: equality, inequalities
+--   * Connectives: and, or, not
+--   * Quantifiers: forall, exists (with bounds)
+--
+-- = Usage Example
+--
+-- @
+-- -- Create a polynomial from an expression
+-- let expr = Add (Var "x") (Mul (Const 2) (Var "y"))
+-- let poly = toPoly expr  -- x + 2y
+--
+-- -- Create a formula
+-- let formula = Ge (Pow (Var "x") 2) (Const 0)  -- x^2 >= 0
+-- @
 module Core.Types
   ( -- * Expression Types
     Expr(..)
@@ -107,58 +146,110 @@ import Error (ProverError(..), formatError)
 -- Symbolic Expressions (AST)
 -- =============================================
 
+-- | Symbolic mathematical expression.
+--
+-- This is the primary AST for representing mathematical formulas before
+-- conversion to polynomial form. Supports arithmetic, geometry primitives,
+-- and high-level constructs like determinants and summations.
+--
+-- Most expressions can be converted to 'Poly' using 'toPoly', except for
+-- those containing division by variables, square roots of non-perfect-squares,
+-- or modulo operations.
 data Expr
   = Var String
+    -- ^ Real-valued variable (e.g., @Var \"x\"@ represents x)
   | Const Rational
-  | IntVar String               -- Integer domain variable
-  | IntConst Integer            -- Integer domain constant
+    -- ^ Rational constant (e.g., @Const (1 % 2)@ represents 1/2)
+  | IntVar String
+    -- ^ Integer-domain variable for Presburger arithmetic
+  | IntConst Integer
+    -- ^ Integer constant
   | Add Expr Expr
+    -- ^ Addition: @Add a b@ represents @a + b@
   | Sub Expr Expr
+    -- ^ Subtraction: @Sub a b@ represents @a - b@
   | Mul Expr Expr
+    -- ^ Multiplication: @Mul a b@ represents @a * b@
   | Div Expr Expr
-  | Mod Expr Expr               -- Modulo operation (a mod b)
+    -- ^ Division: @Div a b@ represents @a / b@ (non-polynomial if b has variables)
+  | Mod Expr Expr
+    -- ^ Modulo: @Mod a b@ represents @a mod b@
   | Pow Expr Natural
+    -- ^ Power with natural exponent: @Pow e n@ represents @e^n@
   | Sqrt Expr
+    -- ^ Square root (may not convert to polynomial)
   -- Geometric primitives
-  | Dist2 String String                    -- Squared distance between two points
-  | Collinear String String String         -- Three points are collinear
-  | Dot String String String String        -- Dot product of vectors AB and CD
-  | Circle String String Expr              -- Point on circle with center and radius
-  -- New geometry helpers
-  | Midpoint String String String          -- M is midpoint of AB: (xM = (xA+xB)/2, etc.)
-  | Perpendicular String String String String  -- AB ⊥ CD (dot product = 0)
-  | Parallel String String String String       -- AB ∥ CD (cross product = 0)
-  | AngleEq2D String String String String String String -- ∠ABC = ∠DEF (2D, oriented)
-  | AngleEq2DAbs String String String String String String -- ∠ABC ≡ ∠DEF up to reflection (2D)
+  | Dist2 String String
+    -- ^ Squared Euclidean distance: @Dist2 \"A\" \"B\"@ = |AB|^2
+  | Collinear String String String
+    -- ^ Collinearity constraint: points A, B, C lie on a line
+  | Dot String String String String
+    -- ^ Dot product: @Dot \"A\" \"B\" \"C\" \"D\"@ = AB . CD
+  | Circle String String Expr
+    -- ^ Point on circle: @Circle \"P\" \"C\" r@ means P is on circle with center C, radius r
+  -- Geometry helpers
+  | Midpoint String String String
+    -- ^ Midpoint: @Midpoint \"A\" \"B\" \"M\"@ means M is midpoint of AB
+  | Perpendicular String String String String
+    -- ^ Perpendicularity: @Perpendicular \"A\" \"B\" \"C\" \"D\"@ means AB perp CD
+  | Parallel String String String String
+    -- ^ Parallelism: @Parallel \"A\" \"B\" \"C\" \"D\"@ means AB parallel CD
+  | AngleEq2D String String String String String String
+    -- ^ Oriented angle equality in 2D: angle ABC = angle DEF
+  | AngleEq2DAbs String String String String String String
+    -- ^ Unsigned angle equality in 2D: |angle ABC| = |angle DEF|
   -- High-level algebraic primitives
-  | Determinant [[Expr]]                   -- Lazy determinant of a matrix
-  | Sum String Expr Expr Expr              -- Summation: sum index low high body
+  | Determinant [[Expr]]
+    -- ^ Matrix determinant (lazy expansion)
+  | Sum String Expr Expr Expr
+    -- ^ Summation: @Sum \"i\" lo hi body@ = sum from i=lo to hi of body
   deriving (Eq, Ord, Show)
 
--- | Quantifier domain
-data QuantType = QuantReal | QuantInt deriving (Eq, Show)
+-- | Quantifier domain: real or integer.
+data QuantType
+  = QuantReal  -- ^ Real-valued quantifier (default for geometric proofs)
+  | QuantInt   -- ^ Integer-valued quantifier (for number theory)
+  deriving (Eq, Show)
 
--- | Bound variable for quantifiers
+-- | Bound variable for quantified formulas.
+--
+-- Quantified variables can have optional lower and upper bounds,
+-- which restrict the domain of quantification.
 data QuantVar = QuantVar
-  { qvName :: String
-  , qvType :: QuantType
-  , qvLower :: Maybe Expr
-  , qvUpper :: Maybe Expr
+  { qvName  :: String      -- ^ Variable name
+  , qvType  :: QuantType   -- ^ Domain (real or integer)
+  , qvLower :: Maybe Expr  -- ^ Optional lower bound
+  , qvUpper :: Maybe Expr  -- ^ Optional upper bound
   } deriving (Eq, Show)
 
--- | Logical formulas (now with quantifiers)
+-- | Logical formula for theorem statements.
+--
+-- Formulas combine expressions with relational operators and
+-- logical connectives. The prover attempts to verify these formulas
+-- using various algebraic and geometric techniques.
 data Formula
-  = Eq Expr Expr    -- Equal (=)
-  | Ge Expr Expr    -- Greater or Equal (>=)
-  | Gt Expr Expr    -- Greater Than (>)
-  | Le Expr Expr    -- Less or Equal (<=)
-  | Lt Expr Expr    -- Less Than (<)
-  | Divides Expr Expr -- Divisibility (a | b)
+  = Eq Expr Expr
+    -- ^ Equality: @Eq a b@ means @a = b@
+  | Ge Expr Expr
+    -- ^ Greater or equal: @Ge a b@ means @a >= b@
+  | Gt Expr Expr
+    -- ^ Strictly greater: @Gt a b@ means @a > b@
+  | Le Expr Expr
+    -- ^ Less or equal: @Le a b@ means @a <= b@
+  | Lt Expr Expr
+    -- ^ Strictly less: @Lt a b@ means @a < b@
+  | Divides Expr Expr
+    -- ^ Divisibility: @Divides a b@ means @a | b@ (a divides b)
   | And Formula Formula
+    -- ^ Conjunction: both formulas must hold
   | Or Formula Formula
+    -- ^ Disjunction: at least one formula must hold
   | Not Formula
+    -- ^ Negation
   | Forall [QuantVar] Formula
+    -- ^ Universal quantifier: for all values of variables
   | Exists [QuantVar] Formula
+    -- ^ Existential quantifier: there exist values of variables
   deriving (Eq, Show)
 
 prettyExpr :: Expr -> String
@@ -224,10 +315,23 @@ prettyFormula (Exists qs f) =
 -- Polynomial Engine
 -- =============================================
 
+-- | A monomial is a product of variables raised to natural number powers.
+--
+-- Represented as a map from variable names to their exponents.
+-- The monomial @x^2 * y^3@ is @Monomial (Map.fromList [(\"x\", 2), (\"y\", 3)])@.
+--
+-- The constant monomial 1 is represented as @Monomial Map.empty@.
 newtype Monomial = Monomial (M.Map String Natural) deriving (Eq, Show)
 
--- | Lexicographic Term Order (Variable name based: z > y > x > ... > a)
--- Compares variables in descending order.
+-- | Lexicographic term order for monomials.
+--
+-- Variables are compared in descending alphabetical order (z > y > x > ... > a).
+-- This ordering is used for Groebner basis computations and polynomial normalization.
+--
+-- ==== Examples
+--
+-- >>> compare (Monomial (Map.singleton "x" 2)) (Monomial (Map.singleton "y" 1))
+-- LT  -- because y > x in the variable ordering
 instance Ord Monomial where
   compare (Monomial m1) (Monomial m2) =
     let vars = sortBy (flip compare) (nub (M.keys m1 ++ M.keys m2))
@@ -241,6 +345,22 @@ instance Ord Monomial where
              EQ -> go vs
              other -> other
 
+-- | A multivariate polynomial with rational coefficients.
+--
+-- Represented as a map from monomials to their coefficients.
+-- Zero coefficients are automatically removed to maintain canonical form.
+--
+-- ==== Examples
+--
+-- The polynomial @3x^2 + 2xy - 5@ would be:
+--
+-- @
+-- Poly (Map.fromList
+--   [ (Monomial (Map.singleton \"x\" 2), 3)
+--   , (Monomial (Map.fromList [(\"x\", 1), (\"y\", 1)]), 2)
+--   , (Monomial Map.empty, -5)
+--   ])
+-- @
 newtype Poly = Poly (M.Map Monomial Rational) deriving (Eq, Ord, Show)
 
 monomialOne :: Monomial
