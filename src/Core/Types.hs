@@ -54,7 +54,7 @@ module Core.Types
   , Poly(..)
   , Monomial(..)
 
-    -- * Pretty Printing
+    -- * Pretty Printing (ASCII)
   , prettyExpr
   , prettyFormula
   , prettyPoly
@@ -63,6 +63,13 @@ module Core.Types
   , prettyRational
   , prettyQuantVar
   , prettyBounds
+
+    -- * Pretty Printing (LaTeX)
+  , prettyExprLaTeX
+  , prettyFormulaLaTeX
+  , prettyPolyLaTeX
+  , prettyMonomialLaTeX
+  , prettyRationalLaTeX
 
     -- * Monomial Operations
   , monomialOne
@@ -178,6 +185,10 @@ data Expr
     -- ^ Power with natural exponent: @Pow e n@ represents @e^n@
   | Sqrt Expr
     -- ^ Square root (may not convert to polynomial)
+  | NthRoot Natural Expr
+    -- ^ Nth root: @NthRoot n e@ represents @e^(1/n)@ for n >= 2
+    -- NthRoot 2 e is semantically equivalent to Sqrt e
+    -- NthRoot 3 e is the cube root, etc.
   -- Geometric primitives
   | Dist2 String String
     -- ^ Squared Euclidean distance: @Dist2 \"A\" \"B\"@ = |AB|^2
@@ -264,6 +275,9 @@ prettyExpr (Div e1 e2)  = "(/ " ++ prettyExpr e1 ++ " " ++ prettyExpr e2 ++ ")"
 prettyExpr (Mod e1 e2)  = "(mod " ++ prettyExpr e1 ++ " " ++ prettyExpr e2 ++ ")"
 prettyExpr (Pow e n)    = "(^ " ++ prettyExpr e ++ " " ++ show n ++ ")"
 prettyExpr (Sqrt e)     = "(sqrt " ++ prettyExpr e ++ ")"
+prettyExpr (NthRoot 2 e) = "(sqrt " ++ prettyExpr e ++ ")"  -- Canonical form
+prettyExpr (NthRoot 3 e) = "(cbrt " ++ prettyExpr e ++ ")"
+prettyExpr (NthRoot n e) = "(root " ++ show n ++ " " ++ prettyExpr e ++ ")"
 prettyExpr (Dist2 p1 p2) = "(dist2 " ++ p1 ++ " " ++ p2 ++ ")"
 prettyExpr (Collinear p1 p2 p3) = "(collinear " ++ p1 ++ " " ++ p2 ++ " " ++ p3 ++ ")"
 prettyExpr (Dot a b c d) = "(dot " ++ a ++ " " ++ b ++ " " ++ c ++ " " ++ d ++ ")"
@@ -310,6 +324,150 @@ prettyFormula (Forall qs f) =
   "(forall (" ++ unwords (map prettyQuantVar qs) ++ ") " ++ prettyFormula f ++ ")"
 prettyFormula (Exists qs f) =
   "(exists (" ++ unwords (map prettyQuantVar qs) ++ ") " ++ prettyFormula f ++ ")"
+
+-- =============================================
+-- LaTeX Pretty Printing
+-- =============================================
+
+-- | Format a rational number in LaTeX.
+-- Uses \\frac{}{} for non-integer rationals, plain integer otherwise.
+prettyRationalLaTeX :: Rational -> String
+prettyRationalLaTeX r
+  | d == 1    = show n
+  | n < 0     = "-\\frac{" ++ show (abs n) ++ "}{" ++ show d ++ "}"
+  | otherwise = "\\frac{" ++ show n ++ "}{" ++ show d ++ "}"
+  where n = numerator r
+        d = denominator r
+
+-- | Format a monomial in LaTeX with proper superscripts.
+-- e.g., x^2*y^3 becomes x^{2}y^{3}
+prettyMonomialLaTeX :: Monomial -> String
+prettyMonomialLaTeX (Monomial m)
+  | M.null m = ""
+  | otherwise = concatMap formatVar (M.toAscList m)
+  where
+    formatVar (v, 1) = formatVarName v
+    formatVar (v, e) = formatVarName v ++ "^{" ++ show e ++ "}"
+    -- Format variable names: subscripts for trailing digits
+    formatVarName v =
+      let (base, suffix) = span (not . (`elem` ['0'..'9'])) v
+      in if null suffix
+         then v
+         else base ++ "_{" ++ suffix ++ "}"
+
+-- | Format a polynomial in LaTeX with inline math notation.
+prettyPolyLaTeX :: Poly -> String
+prettyPolyLaTeX (Poly m)
+  | M.null m = "0"
+  | otherwise =
+      let terms = sortTerms [ (c, mono) | (mono, c) <- M.toList m, c /= 0 ]
+      in formatTerms terms
+  where
+    sortTerms = sortBy (\(_, m1) (_, m2) ->
+      let deg1 = totalDegree m1
+          deg2 = totalDegree m2
+      in compare deg2 deg1 <> compare m2 m1)
+
+    totalDegree (Monomial vars) = sum (M.elems vars)
+
+    formatTerms [] = "0"
+    formatTerms [(c, mono)] = formatFirstTerm c mono
+    formatTerms ((c, mono):rest) = formatFirstTerm c mono ++ concatMap (uncurry formatOtherTerm) rest
+
+    formatFirstTerm c mono
+      | M.null (let Monomial mm = mono in mm) = prettyRationalLaTeX c
+      | c == 1 = prettyMonomialLaTeX mono
+      | c == -1 = "-" ++ prettyMonomialLaTeX mono
+      | otherwise = prettyRationalLaTeX c ++ " " ++ prettyMonomialLaTeX mono
+
+    formatOtherTerm c mono
+      | c < 0 = " - " ++ formatCoeff (abs c) mono
+      | otherwise = " + " ++ formatCoeff c mono
+
+    formatCoeff c mono
+      | M.null (let Monomial mm = mono in mm) = prettyRationalLaTeX c
+      | c == 1 = prettyMonomialLaTeX mono
+      | otherwise = prettyRationalLaTeX c ++ " " ++ prettyMonomialLaTeX mono
+
+-- | Format an expression in LaTeX with inline math notation.
+-- Produces proper mathematical notation with superscripts, fractions, etc.
+prettyExprLaTeX :: Expr -> String
+prettyExprLaTeX (Var x)      = formatVarNameLaTeX x
+prettyExprLaTeX (Const r)    = prettyRationalLaTeX r
+prettyExprLaTeX (IntVar x)   = formatVarNameLaTeX x
+prettyExprLaTeX (IntConst i) = show i
+prettyExprLaTeX (Add e1 e2)  = prettyExprLaTeX e1 ++ " + " ++ prettyExprLaTeX e2
+prettyExprLaTeX (Sub e1 e2)  = prettyExprLaTeX e1 ++ " - " ++ wrapIfSum e2
+  where
+    wrapIfSum e@(Add _ _) = "(" ++ prettyExprLaTeX e ++ ")"
+    wrapIfSum e@(Sub _ _) = "(" ++ prettyExprLaTeX e ++ ")"
+    wrapIfSum e = prettyExprLaTeX e
+prettyExprLaTeX (Mul e1 e2)  = wrapIfAddSub e1 ++ " \\cdot " ++ wrapIfAddSub e2
+  where
+    wrapIfAddSub e@(Add _ _) = "(" ++ prettyExprLaTeX e ++ ")"
+    wrapIfAddSub e@(Sub _ _) = "(" ++ prettyExprLaTeX e ++ ")"
+    wrapIfAddSub e = prettyExprLaTeX e
+prettyExprLaTeX (Div e1 e2)  = "\\frac{" ++ prettyExprLaTeX e1 ++ "}{" ++ prettyExprLaTeX e2 ++ "}"
+prettyExprLaTeX (Mod e1 e2)  = prettyExprLaTeX e1 ++ " \\mod " ++ prettyExprLaTeX e2
+prettyExprLaTeX (Pow e n)    = wrapIfComplex e ++ "^{" ++ show n ++ "}"
+  where
+    wrapIfComplex (Var x) = formatVarNameLaTeX x
+    wrapIfComplex (Const r) = prettyRationalLaTeX r
+    wrapIfComplex e' = "(" ++ prettyExprLaTeX e' ++ ")"
+prettyExprLaTeX (Sqrt e)     = "\\sqrt{" ++ prettyExprLaTeX e ++ "}"
+prettyExprLaTeX (NthRoot 2 e) = "\\sqrt{" ++ prettyExprLaTeX e ++ "}"
+prettyExprLaTeX (NthRoot 3 e) = "\\sqrt[3]{" ++ prettyExprLaTeX e ++ "}"
+prettyExprLaTeX (NthRoot n e) = "\\sqrt[" ++ show n ++ "]{" ++ prettyExprLaTeX e ++ "}"
+prettyExprLaTeX (Dist2 p1 p2) = "|" ++ p1 ++ p2 ++ "|^{2}"
+prettyExprLaTeX (Collinear p1 p2 p3) = "\\text{collinear}(" ++ p1 ++ ", " ++ p2 ++ ", " ++ p3 ++ ")"
+prettyExprLaTeX (Dot a b c d) = "\\vec{" ++ a ++ b ++ "} \\cdot \\vec{" ++ c ++ d ++ "}"
+prettyExprLaTeX (Circle p c r) = "\\text{circle}(" ++ p ++ ", " ++ c ++ ", " ++ prettyExprLaTeX r ++ ")"
+prettyExprLaTeX (Midpoint a b m) = m ++ " = \\text{midpoint}(" ++ a ++ ", " ++ b ++ ")"
+prettyExprLaTeX (Perpendicular a b c d) = a ++ b ++ " \\perp " ++ c ++ d
+prettyExprLaTeX (Parallel a b c d) = a ++ b ++ " \\parallel " ++ c ++ d
+prettyExprLaTeX (AngleEq2D a b c d e f) = "\\angle " ++ a ++ b ++ c ++ " = \\angle " ++ d ++ e ++ f
+prettyExprLaTeX (AngleEq2DAbs a b c d e f) = "|\\angle " ++ a ++ b ++ c ++ "| = |\\angle " ++ d ++ e ++ f ++ "|"
+prettyExprLaTeX (Determinant rows) =
+  "\\begin{vmatrix} " ++ intercalate " \\\\ " (map formatRow rows) ++ " \\end{vmatrix}"
+  where formatRow row = intercalate " & " (map prettyExprLaTeX row)
+prettyExprLaTeX (Sum v lo hi body) =
+  "\\sum_{" ++ v ++ "=" ++ prettyExprLaTeX lo ++ "}^{" ++ prettyExprLaTeX hi ++ "} " ++ prettyExprLaTeX body
+
+-- | Helper to format variable names with subscripts for numeric suffixes
+formatVarNameLaTeX :: String -> String
+formatVarNameLaTeX v =
+  let (base, suffix) = span (not . (`elem` ['0'..'9'])) v
+  in if null suffix
+     then v
+     else base ++ "_{" ++ suffix ++ "}"
+
+-- | Format a formula in LaTeX with proper logical connectives.
+prettyFormulaLaTeX :: Formula -> String
+prettyFormulaLaTeX (Eq l r) = prettyExprLaTeX l ++ " = " ++ prettyExprLaTeX r
+prettyFormulaLaTeX (Ge l r) = prettyExprLaTeX l ++ " \\geq " ++ prettyExprLaTeX r
+prettyFormulaLaTeX (Gt l r) = prettyExprLaTeX l ++ " > " ++ prettyExprLaTeX r
+prettyFormulaLaTeX (Le l r) = prettyExprLaTeX l ++ " \\leq " ++ prettyExprLaTeX r
+prettyFormulaLaTeX (Lt l r) = prettyExprLaTeX l ++ " < " ++ prettyExprLaTeX r
+prettyFormulaLaTeX (Divides l r) = prettyExprLaTeX l ++ " \\mid " ++ prettyExprLaTeX r
+prettyFormulaLaTeX (And f1 f2) = prettyFormulaLaTeX f1 ++ " \\land " ++ prettyFormulaLaTeX f2
+prettyFormulaLaTeX (Or f1 f2) = prettyFormulaLaTeX f1 ++ " \\lor " ++ prettyFormulaLaTeX f2
+prettyFormulaLaTeX (Not f) = "\\neg (" ++ prettyFormulaLaTeX f ++ ")"
+prettyFormulaLaTeX (Forall qs f) =
+  "\\forall " ++ intercalate ", " (map prettyQuantVarLaTeX qs) ++ ": " ++ prettyFormulaLaTeX f
+prettyFormulaLaTeX (Exists qs f) =
+  "\\exists " ++ intercalate ", " (map prettyQuantVarLaTeX qs) ++ ": " ++ prettyFormulaLaTeX f
+
+-- | Format a quantified variable in LaTeX
+prettyQuantVarLaTeX :: QuantVar -> String
+prettyQuantVarLaTeX (QuantVar v QuantReal lo hi) = formatVarNameLaTeX v ++ prettyBoundsLaTeX lo hi
+prettyQuantVarLaTeX (QuantVar v QuantInt lo hi)  = formatVarNameLaTeX v ++ " \\in \\mathbb{Z}" ++ prettyBoundsLaTeX lo hi
+
+-- | Format bounds in LaTeX
+prettyBoundsLaTeX :: Maybe Expr -> Maybe Expr -> String
+prettyBoundsLaTeX Nothing Nothing = ""
+prettyBoundsLaTeX (Just l) (Just u) = " \\in [" ++ prettyExprLaTeX l ++ ", " ++ prettyExprLaTeX u ++ "]"
+prettyBoundsLaTeX (Just l) Nothing  = " \\geq " ++ prettyExprLaTeX l
+prettyBoundsLaTeX Nothing (Just u)  = " \\leq " ++ prettyExprLaTeX u
 
 -- =============================================
 -- Polynomial Engine
@@ -498,6 +656,7 @@ substituteExpr var val (Div e1 e2) = Div (substituteExpr var val e1) (substitute
 substituteExpr var val (Mod e1 e2) = Mod (substituteExpr var val e1) (substituteExpr var val e2)
 substituteExpr var val (Pow e n) = Pow (substituteExpr var val e) n
 substituteExpr var val (Sqrt e) = Sqrt (substituteExpr var val e)
+substituteExpr var val (NthRoot n e) = NthRoot n (substituteExpr var val e)
 substituteExpr var val (Sum i lo hi body) =
   let lo' = substituteExpr var val lo
       hi' = substituteExpr var val hi
@@ -518,6 +677,7 @@ substituteAll subMap (Div e1 e2) = Div (substituteAll subMap e1) (substituteAll 
 substituteAll subMap (Mod e1 e2) = Mod (substituteAll subMap e1) (substituteAll subMap e2)
 substituteAll subMap (Pow e n) = Pow (substituteAll subMap e) n
 substituteAll subMap (Sqrt e) = Sqrt (substituteAll subMap e)
+substituteAll subMap (NthRoot n e) = NthRoot n (substituteAll subMap e)
 substituteAll subMap (Sum i lo hi body) =
   let lo' = substituteAll subMap lo
       hi' = substituteAll subMap hi
@@ -545,6 +705,7 @@ hasNonPolynomial :: Expr -> Bool
 hasNonPolynomial (Div _ _) = True
 hasNonPolynomial (Mod _ _) = True
 hasNonPolynomial (Sqrt _) = True
+hasNonPolynomial (NthRoot _ _) = True
 hasNonPolynomial (IntVar _) = True
 hasNonPolynomial (IntConst _) = True
 hasNonPolynomial (Add e1 e2) = hasNonPolynomial e1 || hasNonPolynomial e2
@@ -654,6 +815,33 @@ simplifyExpr (Sqrt e) =
             then Const (fromIntegral rn % fromIntegral rd)
             else Sqrt s
        _ -> Sqrt s
+
+-- NthRoot simplification: NthRoot n e represents e^(1/n)
+simplifyExpr (NthRoot 0 _) = error "NthRoot: index must be >= 2"
+simplifyExpr (NthRoot 1 e) = simplifyExpr e  -- 1st root is identity
+simplifyExpr (NthRoot 2 e) = simplifyExpr (Sqrt e)  -- Canonical: use Sqrt for n=2
+simplifyExpr (NthRoot n e) =
+  let s = simplifyExpr e
+  in case s of
+       Const 0 -> Const 0  -- 0^(1/n) = 0
+       Const 1 -> Const 1  -- 1^(1/n) = 1
+       Const r | r < 0 && even n -> NthRoot n s  -- Even root of negative: keep
+       Const r ->
+         -- Try to simplify perfect nth powers
+         let num = numerator r
+             den = denominator r
+             tryNthRoot x =
+               let candidate = round ((fromIntegral (abs x) :: Double) ** (1 / fromIntegral n))
+               in if candidate ^ n == abs x
+                  then Just (if x < 0 then -candidate else candidate)
+                  else Nothing
+         in case (tryNthRoot num, tryNthRoot den) of
+              (Just rn, Just rd) | rd /= 0 -> Const (rn % rd)
+              _ -> NthRoot n s
+       -- Simplify NthRoot n (Pow e n) = e when e >= 0 (for even n)
+       Pow base m | fromIntegral m == n -> base  -- Assumes positive base
+       _ -> NthRoot n s
+
 simplifyExpr (Sum i lo hi body) =
   let lo' = simplifyExpr lo
       hi' = simplifyExpr hi
@@ -764,6 +952,7 @@ normalizeCommAssoc (Div a b) = Div (normalizeCommAssoc a) (normalizeCommAssoc b)
 normalizeCommAssoc (Mod a b) = Mod (normalizeCommAssoc a) (normalizeCommAssoc b)
 normalizeCommAssoc (Pow e n) = Pow (normalizeCommAssoc e) n
 normalizeCommAssoc (Sqrt e) = Sqrt (normalizeCommAssoc e)
+normalizeCommAssoc (NthRoot n e) = NthRoot n (normalizeCommAssoc e)
 normalizeCommAssoc (Determinant rows) = Determinant (map (map normalizeCommAssoc) rows)
 normalizeCommAssoc e = e
 
@@ -840,6 +1029,7 @@ toPoly (Mod e1 e2) =
        _ -> toPoly simp
 toPoly (Pow e n)   = polyPow (toPoly e) n
 toPoly (Sqrt _)    = error "Sqrt Error: Square roots are not supported in polynomial expressions. Rewrite without sqrt or use a geometric/analytic solver."
+toPoly (NthRoot _ _) = error "NthRoot Error: Nth roots are not supported in polynomial expressions. Use eliminateSqrt or a geometric solver."
 toPoly (Sum i lo hi body) =
   let lo' = case simplifyExpr lo of { Const r -> numerator r; _ -> error "Sum low bound must be constant" }
       hi' = case simplifyExpr hi of { Const r -> numerator r; _ -> error "Sum high bound must be constant" }
@@ -986,8 +1176,10 @@ toPoly (Determinant rows) = detPoly rows
 -- Non-polynomial detection helpers
 -- =============================================
 
+-- | Check if expression contains any root (Sqrt or NthRoot)
 containsSqrtExpr :: Expr -> Bool
 containsSqrtExpr (Sqrt _) = True
+containsSqrtExpr (NthRoot _ _) = True
 containsSqrtExpr (Add a b) = containsSqrtExpr a || containsSqrtExpr b
 containsSqrtExpr (Sub a b) = containsSqrtExpr a || containsSqrtExpr b
 containsSqrtExpr (Mul a b) = containsSqrtExpr a || containsSqrtExpr b
@@ -1012,6 +1204,7 @@ containsIntExpr (Div a b) = containsIntExpr a || containsIntExpr b
 containsIntExpr (Mod a b) = containsIntExpr a || containsIntExpr b
 containsIntExpr (Pow e _) = containsIntExpr e
 containsIntExpr (Sqrt e) = containsIntExpr e
+containsIntExpr (NthRoot _ e) = containsIntExpr e
 containsIntExpr (Determinant rows) = any containsIntExpr (concat rows)
 containsIntExpr (Circle _ _ e) = containsIntExpr e
 containsIntExpr _ = False
@@ -1046,6 +1239,7 @@ substituteIntsExpr sub (Div a b) = Div (substituteIntsExpr sub a) (substituteInt
 substituteIntsExpr sub (Mod a b) = Mod (substituteIntsExpr sub a) (substituteIntsExpr sub b)
 substituteIntsExpr sub (Pow e n) = Pow (substituteIntsExpr sub e) n
 substituteIntsExpr sub (Sqrt e) = Sqrt (substituteIntsExpr sub e)
+substituteIntsExpr sub (NthRoot n e) = NthRoot n (substituteIntsExpr sub e)
 substituteIntsExpr _ e = e
 
 containsSqrtFormula :: Formula -> Bool
@@ -1070,6 +1264,7 @@ containsDivExpr (Sub a b) = containsDivExpr a || containsDivExpr b
 containsDivExpr (Mul a b) = containsDivExpr a || containsDivExpr b
 containsDivExpr (Pow e _) = containsDivExpr e
 containsDivExpr (Sqrt e) = containsDivExpr e
+containsDivExpr (NthRoot _ e) = containsDivExpr e
 containsDivExpr (Determinant rows) = any containsDivExpr (concat rows)
 containsDivExpr (Circle _ _ e) = containsDivExpr e
 containsDivExpr _ = False
@@ -1254,6 +1449,7 @@ mapExpr f expr = f $ case expr of
   Mod a b -> Mod (mapExpr f a) (mapExpr f b)
   Pow a n -> Pow (mapExpr f a) n
   Sqrt a  -> Sqrt (mapExpr f a)
+  NthRoot n a -> NthRoot n (mapExpr f a)
   Sum i l h b -> Sum i (mapExpr f l) (mapExpr f h) (mapExpr f b)
   Determinant m -> Determinant (map (map (mapExpr f)) m)
   Circle p c r -> Circle p c (mapExpr f r)

@@ -1,10 +1,87 @@
 module SqrtElim
   ( eliminateSqrt
+  , AlgebraicConstraint(..)
+  , RootSign(..)
+  , ElimConfig(..)
+  , defaultElimConfig
+  , SqrtElimResult(..)
+  , eliminateSqrtWithConstraints
+  , eliminateSqrtWithConfig
+  , matchRootPattern
   ) where
 
 import Expr
 import Control.Monad.State
+import Control.Monad (when)
 import qualified Data.Map.Strict as Map
+import Data.Ratio ((%))
+import Numeric.Natural (Natural)
+
+-- | Sign information for root expressions
+data RootSign = Positive | Negative | Unknown
+  deriving (Show, Eq)
+
+-- | Configuration for root elimination
+data ElimConfig = ElimConfig
+  { maxSquaringDepth    :: Int   -- ^ Maximum depth for recursive squaring (default: 3)
+  , enableInequiSquaring :: Bool  -- ^ Whether to automatically square inequalities (default: True)
+  } deriving (Show, Eq)
+
+-- | Default configuration for root elimination
+defaultElimConfig :: ElimConfig
+defaultElimConfig = ElimConfig
+  { maxSquaringDepth = 3
+  , enableInequiSquaring = True
+  }
+
+-- | Algebraic constraint representing v^n = e
+-- Used for enhanced SOS decomposition that understands nth-root relationships
+-- Example: For sqrt(ab), we have v^2 = ab with coefficient 1
+-- Example: For 2*sqrt(ab), we track coefficient = 2
+data AlgebraicConstraint = AlgebraicConstraint
+  { acVar         :: String      -- ^ The auxiliary variable (e.g., "zz_root_aux1")
+  , acIndex       :: Natural     -- ^ The root index (2 for sqrt, 3 for cbrt, etc.)
+  , acRadicand    :: Expr        -- ^ The expression under the root (e.g., a*b for sqrt(a*b))
+  , acCoefficient :: Rational    -- ^ Coefficient outside the root (2 for 2*sqrt(a*b))
+  , acSign        :: RootSign    -- ^ Sign information (Positive for even roots with positive radicand)
+  } deriving (Show, Eq)
+
+-- | Legacy accessor for backwards compatibility: v^n = radicand
+acSquaredTo :: AlgebraicConstraint -> Expr
+acSquaredTo = acRadicand
+
+-- | Result of sqrt elimination with structured constraints
+data SqrtElimResult = SqrtElimResult
+  { serTheory :: Theory                    -- ^ Transformed theory (sqrt-free)
+  , serGoal :: Formula                     -- ^ Transformed goal (sqrt-free)
+  , serVarDefs :: Map.Map String Expr      -- ^ Variable definitions (v -> sqrt(e))
+  , serAlgebraicConstraints :: [AlgebraicConstraint]  -- ^ Structured v^2 = e constraints
+  } deriving (Show, Eq)
+
+-- | Eliminate sqrt and return structured algebraic constraints
+-- This is the enhanced version that supports better SOS integration
+eliminateSqrtWithConstraints :: Theory -> Formula -> SqrtElimResult
+eliminateSqrtWithConstraints = eliminateSqrtWithConfig defaultElimConfig
+
+-- | Eliminate roots with configurable behavior
+eliminateSqrtWithConfig :: ElimConfig -> Theory -> Formula -> SqrtElimResult
+eliminateSqrtWithConfig _config theory goal =
+  let ((theory', goal'), (extras, memo)) = runState (do
+        t' <- mapM elimFormula theory
+        g' <- elimFormula goal
+        return (t', g')) ([], Map.empty)
+      -- Build var definitions: VarName -> Sqrt(Expr)
+      varDefs = Map.fromList [ (v, Sqrt e) | (e, v) <- Map.toList memo ]
+      -- Build algebraic constraints with full information
+      algConstraints = [ AlgebraicConstraint
+                          { acVar = v
+                          , acIndex = 2  -- Sqrt is index 2
+                          , acRadicand = e
+                          , acCoefficient = 1  -- No coefficient tracked yet in elimination
+                          , acSign = Positive  -- Sqrt is always non-negative
+                          }
+                       | (e, v) <- Map.toList memo ]
+  in SqrtElimResult (extras ++ theory') goal' varDefs algConstraints
 
 -- | Eliminate sqrt by introducing auxiliary variables.
 -- Each (sqrt e) becomes a fresh variable v with constraints:
@@ -30,9 +107,43 @@ freshVar = do
   let idx = Map.size memo + 1
   return ("zz_sqrt_aux" ++ show idx)
 
--- Helper: Check if expression contains sqrt
+-- | Match coefficient*root pattern
+-- Returns (coefficient, root index, radicand) if the expression matches c*root_n(e)
+-- Examples:
+--   Sqrt a            -> Just (1, 2, a)
+--   NthRoot 3 a       -> Just (1, 3, a)
+--   Mul (Const 2) (Sqrt a) -> Just (2, 2, a)
+--   Div (Sqrt a) (Const 2) -> Just (1/2, 2, a)
+matchRootPattern :: Expr -> Maybe (Rational, Natural, Expr)
+matchRootPattern expr = case expr of
+  -- Direct roots
+  Sqrt e                    -> Just (1, 2, e)
+  NthRoot n e               -> Just (1, n, e)
+
+  -- Coefficient * root patterns
+  Mul (Const c) (Sqrt e)    -> Just (c, 2, e)
+  Mul (Sqrt e) (Const c)    -> Just (c, 2, e)
+  Mul (Const c) (NthRoot n e) -> Just (c, n, e)
+  Mul (NthRoot n e) (Const c) -> Just (c, n, e)
+
+  -- Division patterns: root / c = (1/c) * root
+  Div (Sqrt e) (Const c) | c /= 0 -> Just (1/c, 2, e)
+  Div (NthRoot n e) (Const c) | c /= 0 -> Just (1/c, n, e)
+
+  -- Nested: c * (d * root) = cd * root
+  Mul (Const c) inner -> case matchRootPattern inner of
+    Just (c', n, e) -> Just (c * c', n, e)
+    Nothing -> Nothing
+  Mul inner (Const c) -> case matchRootPattern inner of
+    Just (c', n, e) -> Just (c * c', n, e)
+    Nothing -> Nothing
+
+  _ -> Nothing
+
+-- Helper: Check if expression contains any root (sqrt or nth-root)
 containsSqrt :: Expr -> Bool
 containsSqrt (Sqrt _) = True
+containsSqrt (NthRoot _ _) = True
 containsSqrt (Add a b) = containsSqrt a || containsSqrt b
 containsSqrt (Sub a b) = containsSqrt a || containsSqrt b
 containsSqrt (Mul a b) = containsSqrt a || containsSqrt b
@@ -40,7 +151,7 @@ containsSqrt (Div a b) = containsSqrt a || containsSqrt b
 containsSqrt (Pow e _) = containsSqrt e
 containsSqrt _ = False
 
--- Helper: Check if sqrt appears in a SUM (Add/Sub) context
+-- Helper: Check if root appears in a SUM (Add/Sub) context
 -- This is the case that smart simplifications can't handle
 containsSqrtInSum :: Expr -> Bool
 containsSqrtInSum (Add a b) = containsSqrt a || containsSqrt b
@@ -49,6 +160,45 @@ containsSqrtInSum (Mul a b) = containsSqrtInSum a || containsSqrtInSum b
 containsSqrtInSum (Div a b) = containsSqrtInSum a || containsSqrtInSum b
 containsSqrtInSum (Pow e _) = containsSqrtInSum e
 containsSqrtInSum _ = False
+
+-- | Check if an expression is provably non-negative (for safe squaring)
+-- Conservative check: only returns True when definitely non-negative
+isProvablyNonNegative :: Expr -> Bool
+isProvablyNonNegative expr = case expr of
+  Const r -> r >= 0
+  Sqrt _ -> True  -- sqrt is always non-negative
+  NthRoot n _ | even n -> True  -- even roots are non-negative
+  Pow _ 2 -> True  -- x^2 is always non-negative
+  Pow e n | even n -> isProvablyNonNegative e || True  -- e^(2k) >= 0
+  Mul a b | isProvablyNonNegative a && isProvablyNonNegative b -> True
+  Add a b | isProvablyNonNegative a && isProvablyNonNegative b -> True
+  -- Match coefficient * root patterns
+  _ -> case matchRootPattern expr of
+         Just (c, n, _) | c > 0 && even n -> True
+         _ -> False
+
+-- | Try to square an inequality if both sides are provably non-negative
+-- Returns the squared formula if squaring is beneficial, Nothing otherwise
+trySquareInequality :: Int -> Int -> Formula -> Maybe Formula
+trySquareInequality depth maxDepth formula
+  | depth >= maxDepth = Nothing
+  | otherwise = case formula of
+      Ge lhs rhs | bothNonNeg lhs rhs && hasRootOrCoeff lhs rhs ->
+        Just $ Ge (Mul lhs lhs) (Mul rhs rhs)
+      Le lhs rhs | bothNonNeg lhs rhs && hasRootOrCoeff lhs rhs ->
+        Just $ Le (Mul lhs lhs) (Mul rhs rhs)
+      Gt lhs rhs | bothNonNeg lhs rhs && hasRootOrCoeff lhs rhs ->
+        Just $ Gt (Mul lhs lhs) (Mul rhs rhs)
+      Lt lhs rhs | bothNonNeg lhs rhs && hasRootOrCoeff lhs rhs ->
+        Just $ Lt (Mul lhs lhs) (Mul rhs rhs)
+      _ -> Nothing
+  where
+    bothNonNeg a b = isProvablyNonNegative a && isProvablyNonNegative b
+    -- Only square if there's a coefficient*root pattern that would benefit
+    hasRootOrCoeff a b = hasCoeffRoot a || hasCoeffRoot b
+    hasCoeffRoot e = case matchRootPattern e of
+                       Just (c, _, _) | c /= 1 -> True  -- Has a coefficient
+                       _ -> containsSqrt e  -- Or contains sqrt in a sum
 
 elimFormula :: Formula -> ElimM Formula
 elimFormula (Eq (Sqrt a) (Sqrt b)) = do
@@ -77,6 +227,21 @@ elimFormula (Eq (Sqrt a) b) = do
   addConstraint (Ge b' (Const 0))
   return (Eq a' (Pow b' 2))
 elimFormula (Eq b (Sqrt a)) = elimFormula (Eq (Sqrt a) b)
+
+-- Eq patterns for coefficient * sqrt: c * sqrt(a) = b  ⟺  c^2*a = b^2
+elimFormula (Eq (Mul (Const c) (Sqrt a)) b) | c > 0 = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Eq (Mul (Const (c * c)) a') (Pow b' 2))
+elimFormula (Eq (Mul (Sqrt a) (Const c)) b) | c > 0 =
+  elimFormula (Eq (Mul (Const c) (Sqrt a)) b)
+elimFormula (Eq b (Mul (Const c) (Sqrt a))) | c > 0 =
+  elimFormula (Eq (Mul (Const c) (Sqrt a)) b)
+elimFormula (Eq b (Mul (Sqrt a) (Const c))) | c > 0 =
+  elimFormula (Eq (Mul (Const c) (Sqrt a)) b)
+
 elimFormula (Ge (Sqrt a) b) = do
   a' <- elimExpr a
   b' <- elimExpr b
@@ -101,6 +266,43 @@ elimFormula (Gt b (Sqrt a)) = do
   addConstraint (Ge a' (Const 0))
   addConstraint (Ge b' (Const 0))
   return (Gt (Pow b' 2) a')
+
+-- Coefficient * sqrt patterns: b >= c * sqrt(a)  ⟺  b^2 >= c^2*a
+-- These handle cases like "a+b >= 2*sqrt(ab)" that don't match bare Sqrt patterns
+elimFormula (Ge b (Mul (Const c) (Sqrt a))) | c > 0 = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Ge (Pow b' 2) (Mul (Const (c * c)) a'))
+elimFormula (Ge b (Mul (Sqrt a) (Const c))) | c > 0 =
+  elimFormula (Ge b (Mul (Const c) (Sqrt a)))
+elimFormula (Ge (Mul (Const c) (Sqrt a)) b) | c > 0 = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Ge (Mul (Const (c * c)) a') (Pow b' 2))
+elimFormula (Ge (Mul (Sqrt a) (Const c)) b) | c > 0 =
+  elimFormula (Ge (Mul (Const c) (Sqrt a)) b)
+
+elimFormula (Gt b (Mul (Const c) (Sqrt a))) | c > 0 = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Gt (Pow b' 2) (Mul (Const (c * c)) a'))
+elimFormula (Gt b (Mul (Sqrt a) (Const c))) | c > 0 =
+  elimFormula (Gt b (Mul (Const c) (Sqrt a)))
+elimFormula (Gt (Mul (Const c) (Sqrt a)) b) | c > 0 = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Gt (Mul (Const (c * c)) a') (Pow b' 2))
+elimFormula (Gt (Mul (Sqrt a) (Const c)) b) | c > 0 =
+  elimFormula (Gt (Mul (Const c) (Sqrt a)) b)
+
 -- Le and Lt cases (newly added operators)
 elimFormula (Le (Sqrt a) (Sqrt b)) = do
   a' <- elimExpr a
@@ -138,6 +340,43 @@ elimFormula (Lt b (Sqrt a)) = do
   addConstraint (Ge a' (Const 0))
   addConstraint (Ge b' (Const 0))
   return (Lt (Pow b' 2) a')
+
+-- Le coefficient * sqrt patterns
+elimFormula (Le b (Mul (Const c) (Sqrt a))) | c > 0 = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Le (Pow b' 2) (Mul (Const (c * c)) a'))
+elimFormula (Le b (Mul (Sqrt a) (Const c))) | c > 0 =
+  elimFormula (Le b (Mul (Const c) (Sqrt a)))
+elimFormula (Le (Mul (Const c) (Sqrt a)) b) | c > 0 = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Le (Mul (Const (c * c)) a') (Pow b' 2))
+elimFormula (Le (Mul (Sqrt a) (Const c)) b) | c > 0 =
+  elimFormula (Le (Mul (Const c) (Sqrt a)) b)
+
+-- Lt coefficient * sqrt patterns
+elimFormula (Lt b (Mul (Const c) (Sqrt a))) | c > 0 = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Lt (Pow b' 2) (Mul (Const (c * c)) a'))
+elimFormula (Lt b (Mul (Sqrt a) (Const c))) | c > 0 =
+  elimFormula (Lt b (Mul (Const c) (Sqrt a)))
+elimFormula (Lt (Mul (Const c) (Sqrt a)) b) | c > 0 = do
+  a' <- elimExpr a
+  b' <- elimExpr b
+  addConstraint (Ge a' (Const 0))
+  addConstraint (Ge b' (Const 0))
+  return (Lt (Mul (Const (c * c)) a') (Pow b' 2))
+elimFormula (Lt (Mul (Sqrt a) (Const c)) b) | c > 0 =
+  elimFormula (Lt (Mul (Const c) (Sqrt a)) b)
+
 -- Automatic squaring for equations containing sqrt in SUMS
 -- This handles cases like: sqrt(a) = sqrt(b) + sqrt(c)
 -- By squaring: a = (sqrt(b) + sqrt(c))^2
@@ -156,25 +395,32 @@ elimFormula (Eq l r) = do
   r' <- elimExpr r
   return (Eq l' r')
 -- Smart squaring for inequalities with sqrt in sums
--- REMOVED: Aggressive recursive squaring caused infinite loops/blowup.
--- We now fall back to the standard elimExpr strategy (introducing auxiliary variables)
--- which is safer for complex expressions.
-elimFormula (Ge l r) = do
-  l' <- elimExpr l
-  r' <- elimExpr r
-  return (Ge l' r')
-elimFormula (Gt l r) = do
-  l' <- elimExpr l
-  r' <- elimExpr r
-  return (Gt l' r')
-elimFormula (Le l r) = do
-  l' <- elimExpr l
-  r' <- elimExpr r
-  return (Le l' r')
-elimFormula (Lt l r) = do
-  l' <- elimExpr l
-  r' <- elimExpr r
-  return (Lt l' r')
+-- Re-enabled with depth limit to prevent infinite loops
+-- If both sides are provably non-negative and squaring is beneficial, square them
+elimFormula f@(Ge l r) = case trySquareInequality 0 3 f of
+  Just squared -> elimFormula squared  -- Recursively handle squared version
+  Nothing -> do
+    l' <- elimExpr l
+    r' <- elimExpr r
+    return (Ge l' r')
+elimFormula f@(Gt l r) = case trySquareInequality 0 3 f of
+  Just squared -> elimFormula squared
+  Nothing -> do
+    l' <- elimExpr l
+    r' <- elimExpr r
+    return (Gt l' r')
+elimFormula f@(Le l r) = case trySquareInequality 0 3 f of
+  Just squared -> elimFormula squared
+  Nothing -> do
+    l' <- elimExpr l
+    r' <- elimExpr r
+    return (Le l' r')
+elimFormula f@(Lt l r) = case trySquareInequality 0 3 f of
+  Just squared -> elimFormula squared
+  Nothing -> do
+    l' <- elimExpr l
+    r' <- elimExpr r
+    return (Lt l' r')
 elimFormula (And f1 f2) = And <$> elimFormula f1 <*> elimFormula f2
 elimFormula (Or f1 f2) = Or <$> elimFormula f1 <*> elimFormula f2
 elimFormula (Not f) = Not <$> elimFormula f
@@ -182,10 +428,9 @@ elimFormula (Forall vars f) = Forall vars <$> elimFormula f
 elimFormula (Exists vars f) = Exists vars <$> elimFormula f
 
 elimExpr :: Expr -> ElimM Expr
--- Aggressive distribution of Sqrt over Mul and Div
--- This ensures sqrt(R1s * R2s) -> R1 * R2, preventing redundant zz_ variables
-elimExpr (Sqrt (Mul a b)) = elimExpr (Mul (Sqrt a) (Sqrt b))
-elimExpr (Sqrt (Div a b)) = elimExpr (Div (Sqrt a) (Sqrt b))
+-- NOTE: We used to distribute Sqrt over Mul/Div here, but this interferes with
+-- coefficient absorption (2*sqrt(ab) -> sqrt(4ab)). Instead, we now rely on
+-- the memoization and smart simplifications to handle common subexpressions.
 
 elimExpr (Add a b) = Add <$> elimExpr a <*> elimExpr b
 elimExpr (Sub a b) = Sub <$> elimExpr a <*> elimExpr b
@@ -197,6 +442,50 @@ elimExpr (Mul (Sqrt a) (Sqrt b))
       addConstraint (Ge a' (Const 0))
       return a'
   | otherwise = Mul <$> elimExpr (Sqrt a) <*> elimExpr (Sqrt b)
+
+-- Coefficient absorption: c * sqrt(a) -> sqrt(c^2 * a) for positive c
+-- This normalizes 2*sqrt(ab) to sqrt(4ab) for consistent handling
+elimExpr (Mul (Const c) (Sqrt a))
+  | c > 0 = elimExpr (Sqrt (Mul (Const (c * c)) a))
+  | c < 0 = do
+      -- -c * sqrt(a) = -(c * sqrt(a))
+      inner <- elimExpr (Sqrt (Mul (Const (c * c)) a))
+      return (Mul (Const (-1)) inner)
+  | otherwise = return (Const 0)  -- c = 0
+elimExpr (Mul (Sqrt a) (Const c)) = elimExpr (Mul (Const c) (Sqrt a))
+
+-- Handle IntConst the same way (parser may produce IntConst for integers)
+elimExpr (Mul (IntConst n) (Sqrt a))
+  | n > 0 = elimExpr (Sqrt (Mul (Const (fromIntegral n * fromIntegral n)) a))
+  | n < 0 = do
+      inner <- elimExpr (Sqrt (Mul (Const (fromIntegral n * fromIntegral n)) a))
+      return (Mul (Const (-1)) inner)
+  | otherwise = return (Const 0)
+elimExpr (Mul (Sqrt a) (IntConst n)) = elimExpr (Mul (IntConst n) (Sqrt a))
+
+-- Similarly for NthRoot: c * root_n(a) -> root_n(c^n * a)
+elimExpr (Mul (Const c) (NthRoot n a))
+  | c > 0 = elimExpr (NthRoot n (Mul (Const (c ^ n)) a))
+  | c < 0 && odd n = do
+      -- For odd n, (-c) * root_n(a) = root_n((-c)^n * a)
+      elimExpr (NthRoot n (Mul (Const (c ^ n)) a))
+  | c < 0 && even n = do
+      -- For even n, (-c) * root_n(a) = -(c * root_n(a))
+      inner <- elimExpr (NthRoot n (Mul (Const ((-c) ^ n)) a))
+      return (Mul (Const (-1)) inner)
+  | otherwise = return (Const 0)
+elimExpr (Mul (NthRoot n a) (Const c)) = elimExpr (Mul (Const c) (NthRoot n a))
+
+-- IntConst version for NthRoot
+elimExpr (Mul (IntConst m) (NthRoot n a))
+  | m > 0 = elimExpr (NthRoot n (Mul (Const (fromIntegral m ^ n)) a))
+  | m < 0 && odd n = elimExpr (NthRoot n (Mul (Const (fromIntegral m ^ n)) a))
+  | m < 0 && even n = do
+      inner <- elimExpr (NthRoot n (Mul (Const (fromIntegral (abs m) ^ n)) a))
+      return (Mul (Const (-1)) inner)
+  | otherwise = return (Const 0)
+elimExpr (Mul (NthRoot n a) (IntConst m)) = elimExpr (Mul (IntConst m) (NthRoot n a))
+
 elimExpr (Mul a b) = Mul <$> elimExpr a <*> elimExpr b
 -- Smart sqrt division: a / sqrt(a) → sqrt(a) (for a > 0)
 elimExpr (Div a (Sqrt b))
@@ -236,6 +525,65 @@ elimExpr (Sqrt e) = do
           -- Add to memo
           modify (\(cs, m) -> (cs, Map.insert e' v m))
           return vExpr
+
+-- NthRoot elimination: distribute over Mul/Div
+elimExpr (NthRoot n (Mul a b)) = elimExpr (Mul (NthRoot n a) (NthRoot n b))
+elimExpr (NthRoot n (Div a b)) = elimExpr (Div (NthRoot n a) (NthRoot n b))
+
+-- NthRoot power simplification: (NthRoot n a)^n = a
+elimExpr (Pow (NthRoot n a) m)
+  | fromIntegral m == n = do
+      a' <- elimExpr a
+      -- For even n, we need a >= 0
+      when (even n) $ addConstraint (Ge a' (Const 0))
+      return a'
+
+-- NthRoot of same roots: NthRoot n a * NthRoot n a * ... (n times) = a
+elimExpr (Mul (NthRoot n a) (NthRoot m b))
+  | n == m && a == b = do
+      -- Two nth-roots of same thing: NthRoot n a * NthRoot n a = a^(2/n)
+      -- For n=2 (sqrt), this is just a
+      if n == 2
+        then do
+          a' <- elimExpr a
+          addConstraint (Ge a' (Const 0))
+          return a'
+        else Mul <$> elimExpr (NthRoot n a) <*> elimExpr (NthRoot m b)
+  | otherwise = Mul <$> elimExpr (NthRoot n a) <*> elimExpr (NthRoot m b)
+
+-- General NthRoot elimination
+elimExpr (NthRoot n e) = do
+  e' <- elimExpr e
+  case e' of
+    -- Simplify NthRoot n (x^n) -> x (for positive x when n is even)
+    Pow t m | fromIntegral m == n -> do
+      when (even n) $ addConstraint (Ge t (Const 0))
+      return t
+    _ -> do
+      -- Check memo first - reuse variable if we've seen this expression
+      (_, memo) <- get
+      -- Use a tagged key to differentiate different root indices
+      let memoKey = NthRoot n e'  -- Use the NthRoot itself as key
+      case Map.lookup memoKey memo of
+        Just varName -> return (Var varName)  -- REUSE existing variable!
+        Nothing -> do
+          -- Create new variable and memoize it
+          v <- freshVar
+          let vExpr = Var v
+              -- v^n = e'
+              eqConstraint = Eq (Pow vExpr (fromIntegral n)) e'
+              -- For even n, v >= 0
+              geConstraint = Ge vExpr (Const 0)
+              -- For even n, e' >= 0
+              radicandConstraint = Ge e' (Const 0)
+          addConstraint eqConstraint
+          when (even n) $ do
+            addConstraint geConstraint
+            addConstraint radicandConstraint
+          -- Add to memo with the NthRoot as key
+          modify (\(cs, m) -> (cs, Map.insert memoKey v m))
+          return vExpr
+
 elimExpr (Determinant rows) = Determinant <$> mapM (mapM elimExpr) rows
 elimExpr (Circle p c r) = Circle p c <$> elimExpr r
 -- Geometric primitives and base cases

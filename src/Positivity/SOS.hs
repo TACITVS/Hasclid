@@ -4,6 +4,8 @@ module Positivity.SOS
   , checkSumOfSquares
   , isPerfectSquare
   , getSOSCertificate
+  , getSOSCertificateWithAlgebraic
+  , algebraicReducer
   , SOSCertificate(..)
   ) where
 
@@ -13,8 +15,10 @@ import qualified Data.Map.Strict as M
 import Data.List (sortBy, nub, sort, delete)
 import Data.Ratio (numerator, denominator, (%))
 import Data.Maybe (isJust, mapMaybe)
+import Numeric.Natural (Natural)
 import TermOrder (compareMonomials, TermOrder(..))
 import Positivity.SOSTypes (trySOSHeuristic, SOSPattern(..), SOSCertificate(..), sqrtRational)
+import SqrtElim (AlgebraicConstraint(..), acVar, acIndex, acRadicand)
 
 emptyCert :: SOSCertificate
 emptyCert = SOSCertificate [] [] polyZero Nothing
@@ -26,19 +30,24 @@ checkSOS reducer p = isJust (getSOSCertificate [] reducer p)
 
 -- | Get SOS certificate if it exists, using known non-negative variables and lemmata.
 getSOSCertificate :: [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate
-getSOSCertificate lemmata reducer pRaw = 
+getSOSCertificate lemmata reducer pRaw =
   let p = reducer pRaw
       -- Extract variables known to be non-negative from lemmata (e.g., v >= 0)
       posVars = mapMaybe posVarName [m | Poly m <- lemmata]
+      -- Helper to verify certificate is correct
+      verifyCert cert =
+        let terms = sosTerms cert
+            reconstructed = foldl polyAdd polyZero [scale c (polyMul q q) | (c, q) <- terms]
+        in reconstructed == p
   in case trySOSHeuristic p (map (\l -> Ge (polyToExpr l) (Const 0)) lemmata) of -- Heuristic first
-       Just cert -> Just $ cert { sosLemmas = lemmata }
-       Nothing -> 
+       Just cert | verifyCert cert -> Just $ cert { sosLemmas = lemmata }
+       _ ->
          case getPositionalSOS posVars p of
            Just cert -> Just cert
-           Nothing -> 
+           Nothing ->
              case robustCholesky reducer p emptyCert of
-               Just cert -> Just cert
-               Nothing -> tryLemmaReduction lemmata reducer p
+               Just cert | verifyCert cert -> Just cert
+               _ -> tryLemmaReduction lemmata reducer p
 
 -- | Advanced SOS check that leverages previously proven lemmata.
 checkSOSWithLemmas :: [Poly] -> (Poly -> Poly) -> Poly -> Bool
@@ -196,3 +205,95 @@ isSquareRat r = r >= 0 && isSquare (numerator r) && isSquare (denominator r)
 
 isSquare :: Integer -> Bool
 isSquare x | x < 0 = False | otherwise = let s = integerSqrt x in s * s == x
+
+-- ============================================================================
+-- Algebraic Constraint Integration for sqrt handling
+-- ============================================================================
+
+-- | Create a reducer that substitutes v^n -> e for all algebraic constraints
+-- This enables SOS to understand root relationships: if v = root_n(e), then v^n = e
+algebraicReducer :: [AlgebraicConstraint] -> (Poly -> Poly) -> (Poly -> Poly)
+algebraicReducer constraints baseReducer p =
+  let
+    -- Apply algebraic substitutions: v^n -> e
+    applyAlgConstraint :: Poly -> AlgebraicConstraint -> Poly
+    applyAlgConstraint poly ac =
+      substituteNthPower (acVar ac) (fromIntegral $ acIndex ac) (exprToPoly $ acRadicand ac) poly
+
+    -- Apply all constraints iteratively until fixed point
+    applyAllConstraints :: Poly -> Poly
+    applyAllConstraints poly =
+      let poly' = foldl applyAlgConstraint poly constraints
+      in if poly' == poly then poly else applyAllConstraints poly'
+
+    -- First apply algebraic substitutions, then the base reducer
+    reduced = baseReducer (applyAllConstraints p)
+    -- Apply algebraic substitutions again after base reduction
+    final = applyAllConstraints reduced
+  in final
+
+-- | Substitute v^n with expr in a polynomial
+-- For each monomial containing v^(n*k + r), replace with v^r * expr^k
+substituteNthPower :: String -> Int -> Poly -> Poly -> Poly
+substituteNthPower var n replacement (Poly m) =
+  let nNat = fromIntegral n :: Natural
+      substituteMonomial :: (Monomial, Rational) -> Poly
+      substituteMonomial (Monomial vars, coeff) =
+        case M.lookup var vars of
+          Nothing -> Poly (M.singleton (Monomial vars) coeff)
+          Just exponent ->
+            let (quotient, remainder) = exponent `divMod` nNat
+                -- Remove the nth power part, keep the remainder
+                newVars = if remainder == 0
+                          then M.delete var vars
+                          else M.insert var remainder vars
+                -- Multiply by replacement^quotient
+                basePoly = Poly (M.singleton (Monomial newVars) coeff)
+                repPower = polyPowLocal replacement (fromIntegral quotient)
+            in polyMul basePoly repPower
+  in foldl polyAdd polyZero (map substituteMonomial (M.toList m))
+
+-- | Compute polynomial power (p^n) - local version for SOS
+polyPowLocal :: Poly -> Int -> Poly
+polyPowLocal _ 0 = Poly (M.singleton (Monomial M.empty) 1)  -- 1
+polyPowLocal p 1 = p
+polyPowLocal p n = polyMul p (polyPowLocal p (n - 1))
+
+-- | Convert expression to polynomial (simple conversion for sqrt radicands)
+exprToPoly :: Expr -> Poly
+exprToPoly (Const r) = Poly (M.singleton (Monomial M.empty) r)
+exprToPoly (Var v) = polyFromVar v
+exprToPoly (Add a b) = polyAdd (exprToPoly a) (exprToPoly b)
+exprToPoly (Sub a b) = polySub (exprToPoly a) (exprToPoly b)
+exprToPoly (Mul a b) = polyMul (exprToPoly a) (exprToPoly b)
+exprToPoly (Pow e n) = polyPowLocal (exprToPoly e) (fromIntegral n)
+exprToPoly _ = polyZero  -- Fallback for non-polynomial expressions
+
+-- | Get SOS certificate using algebraic constraints from sqrt elimination
+-- This enables proving inequalities involving sqrt by understanding v^2 = e relationships
+getSOSCertificateWithAlgebraic :: [AlgebraicConstraint] -> [Poly] -> (Poly -> Poly) -> Poly -> Maybe SOSCertificate
+getSOSCertificateWithAlgebraic algConstraints lemmata baseReducer pRaw =
+  let
+    -- Create enhanced reducer with algebraic substitutions
+    enhancedReducer = algebraicReducer algConstraints baseReducer
+
+    -- Extract sqrt variables as known non-negative (sqrt(e) >= 0)
+    sqrtVars = map acVar algConstraints
+    sqrtLemmas = map polyFromVar sqrtVars
+
+    -- Combine with existing lemmata
+    allLemmas = lemmata ++ sqrtLemmas
+
+    -- Try with enhanced reducer
+    result = getSOSCertificate allLemmas enhancedReducer pRaw
+  in case result of
+       Just cert -> Just cert
+       Nothing ->
+         -- Fallback: try with algebraic constraints as polynomial equations
+         -- Add v^n - e = 0 to the Groebner basis implicitly
+         let algPolys = [ polySub (polyPow (polyFromVar (acVar ac)) (fromIntegral $ acIndex ac))
+                                  (exprToPoly (acRadicand ac))
+                        | ac <- algConstraints ]
+             -- Add these to lemmata (as equalities that can be used for reduction)
+             extendedLemmas = allLemmas ++ algPolys
+         in getSOSCertificate extendedLemmas enhancedReducer pRaw
