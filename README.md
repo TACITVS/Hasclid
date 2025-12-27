@@ -4,13 +4,13 @@
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)
 
-**Hasclid** (v9.3) is a next-generation Automated Theorem Prover (ATP) specialized for Euclidean Geometry and Inequality Reasoning. Built entirely in Haskell, it bridges the gap between geometric intuition and rigorous algebraic proof, offering a self-contained, high-performance reasoning kernel with zero external dependencies.
+**Hasclid** (v9.4) is a next-generation Automated Theorem Prover (ATP) specialized for Euclidean Geometry and Inequality Reasoning. Built entirely in Haskell, it bridges the gap between geometric intuition and rigorous algebraic proof, offering a self-contained, high-performance reasoning kernel with zero external dependencies.
 
-**Recent Improvements (v9.3)**:
-- ✅ **Geometric Predicate Encoding**: Optimized `Midpoint` and `Parallel` constraints using separate coordinate equations for better Gröbner basis performance
-- ✅ **Decimal Number Support**: Full support for decimal coordinates (e.g., `1.25` → exact rational `5/4`)
-- ✅ **Point Substitution Engine**: Automatic substitution of concrete point coordinates during preprocessing
-- ✅ **Stress Suite: 70% Pass Rate**: 7/10 challenging geometric theorems now prove automatically
+**Recent Improvements (v9.4)**:
+- ✅ **Robust Nth-Root Handling**: Full support for general nth-roots (sqrt, cbrt, fourth roots, etc.) with coefficient tracking
+- ✅ **AM-GM with Coefficients**: `a+b >= 2*sqrt(ab)` now proves directly (previously only `a+b >= sqrt(4ab)` worked)
+- ✅ **Smart Inequality Squaring**: Re-enabled with depth limits to prevent infinite loops
+- ✅ **Coefficient Pattern Matching**: Expressions like `2*sqrt(ab)` are properly handled in inequalities
 
 ---
 
@@ -45,7 +45,7 @@ Hasclid has conquered some of the most notorious challenges in automated geometr
 
 ---
 
-## 🎯 Stress Suite Results (v9.3)
+## 🎯 Stress Suite Results (v9.4)
 
 Hasclid is continuously tested against a comprehensive stress suite of challenging geometric theorems:
 
@@ -61,8 +61,9 @@ Hasclid is continuously tested against a comprehensive stress suite of challengi
 | 08 | **Euler's d² = R(R-2r)** | ✅ PROVED | Concrete computation |
 | 09 | **Weitzenbock Inequality** | ✅ PROVED | Geometric Solver |
 | 10 | **Erdős-Mordell Component** | ⏳ In Progress | SDP required |
+| 11 | **AM-GM Inequality** | ✅ PROVED | SOS with Root Handling |
 
-**Success Rate: 7/10 (70%)** - Proven automatically without manual intervention
+**Success Rate: 8/11 (73%)** - Proven automatically without manual intervention
 
 ---
 

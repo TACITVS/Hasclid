@@ -12,7 +12,7 @@ This list reflects what is currently missing or only partially implemented, afte
 
 ## Partial
 - CAD completeness: CAD with lifting/sign assignment exists, but not a full Collins-level, higher-dimensional QE with guarantees.
-- Positivity/SOS: Current positivity uses Sturm and basic heuristics; no SDP/interval stack or richer SOS methods.
+- Positivity/SOS: Enhanced in v9.4 with robust nth-root handling, coefficient tracking, and smart inequality squaring. SDP solver available for complex cases. Room for improvement with interval arithmetic.
 - Non-degeneracy checks: Coincident/zero-length checks are active; collinearity and broader degeneracy checks remain disabled to avoid false positives.
 
 ## Notes

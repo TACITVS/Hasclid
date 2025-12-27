@@ -18,6 +18,7 @@ module SolverRouter
   , SolverOptions(..)
   , defaultSolverOptions
   , GroebnerBackend(..)
+  , selectGroebnerAlgorithm
   , intSolve
   , intSat
   , proveExistentialConstructive
@@ -32,16 +33,19 @@ import GeoSolver (solveGeoWithTrace, GeoResult(..))
 import qualified Wu (wuProveWithTrace, formatWuTrace, isProved, proofReason)
 import qualified Prover (intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, proveExistentialConstructive, ProofTrace)
 import qualified CADLift (proveFormulaCAD)
-import Positivity.SOS (SOSCertificate(..), getSOSCertificate)
+import Positivity.SOS (SOSCertificate(..), getSOSCertificate, getSOSCertificateWithAlgebraic, algebraicReducer)
+import Positivity.SOSTypes (SOSPattern(..))
+import Data.Ratio (numerator, denominator, (%))
 import qualified Positivity.Numerical as NumSOS
 import qualified Positivity.SDP as SDP
 import qualified Positivity.SymmetricSOS as SymSOS
-import SqrtElim (eliminateSqrt)
+import SqrtElim (eliminateSqrt, eliminateSqrtWithConstraints, AlgebraicConstraint(..), SqrtElimResult(..))
 import RationalElim (eliminateRational)
+import qualified BuchbergerOpt
 import BuchbergerOpt (SelectionStrategy(..))
 import TermOrder (TermOrder(..), compareMonomials)
 import F4Lite (f4LiteGroebner, reduceWithBasis)
-import qualified F5 (f5SolveBounded, F5Config(..), F5Result(..), defaultF5Config, conservativeF5Config, f5Basis, f5Completed)
+import qualified F5 (f5Groebner, f5SolveBounded, F5Config(..), F5Result(..), defaultF5Config, conservativeF5Config, f5Basis, f5Completed)
 import qualified Geometry.WLOG
 import qualified Geometry.Barycentric
 import Heuristics
@@ -98,6 +102,26 @@ data GroebnerBackend = BuchbergerBackend | F4Backend | F5Backend deriving (Show,
 defaultSolverOptions :: SolverOptions
 defaultSolverOptions = SolverOptions Prover.defaultIntSolveOptions True SugarStrategy F5Backend True defaultProofMode
 
+-- | Select Gröbner basis algorithm based on backend configuration
+-- This dispatches to F5, F4Lite, or Buchberger based on the groebnerBackend setting
+selectGroebnerAlgorithm :: SolverOptions -> TermOrder -> [Poly] -> [Poly]
+selectGroebnerAlgorithm opts ord polys =
+  let termOrd = compareMonomials ord
+  in case groebnerBackend opts of
+    F5Backend ->
+      -- Use F5 algorithm with the specified term ordering
+      F5.f5Groebner termOrd polys
+    F4Backend ->
+      -- F4Lite uses matrix reduction + Buchberger
+      f4LiteGroebner termOrd (selectionStrategyOpt opts) (useOptimizedGroebner opts) polys
+    BuchbergerBackend ->
+      -- Direct Buchberger with strategy
+      BuchbergerOpt.buchbergerWithStrategy termOrd (selectionStrategyOpt opts) polys
+
+-- | Wrapper for use with Prover.proveTheoryWithOptions (takes [Poly] -> [Poly])
+makeGroebnerFunction :: SolverOptions -> TermOrder -> ([Poly] -> [Poly])
+makeGroebnerFunction opts ord = selectGroebnerAlgorithm opts ord
+
 -- Re-exports for Main.hs compatibility
 intSolve :: Prover.IntSolveOptions -> Theory -> Formula -> Prover.IntSolveOutcome
 intSolve = Prover.intSolve
@@ -119,11 +143,11 @@ instance Solver LocalSOSSolver where
     return $ ProofResult (if proved then Proved else Failed reason) (maybe [] return trace) 0.0
 
 -- Wrapper for CAD Logic
-data LocalCADSolver = LocalCADSolver
+data LocalCADSolver = LocalCADSolver SolverOptions
 instance Solver LocalCADSolver where
   name _ = "CAD"
-  solve _ prob = do
-    let (proved, reason, trace, _) = runCadRational (assumptions prob) (goal prob)
+  solve (LocalCADSolver opts) prob = do
+    let (proved, reason, trace, _) = runCadRational opts (assumptions prob) (goal prob)
     return $ ProofResult (if proved then Proved else Failed reason) (maybe [] return trace) 0.0
 
 -- Wrapper for Geometric Solver
@@ -157,32 +181,32 @@ autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
 
 autoSolveInternal :: [String] -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
 autoSolveInternal pts opts pointSubs theoryRaw goalRaw =
-  -- Preprocessing Phase
-  let (theoryG, goalG, _) = preprocessGeometry pointSubs theoryRaw goalRaw
-      
-      -- Heuristics (Keeping existing pipeline)
-      (theoryH, goalH, logsH) = applyHeuristics (proofMode opts) theoryG goalG
-      
-      -- Elimination
-      (theoryS, goalS, varDefsS) = eliminateSqrt theoryH goalH
-      (theoryP, goalP, varDefsP) = eliminateRational theoryS goalS
-      varDefs = M.union varDefsS varDefsP
-      
-      prepRes = preprocess pointSubs theoryP goalP
-      theory' = preprocessedTheory prepRes
-      goal' = preprocessedGoal prepRes
-      
-      profile = analyzeProblem theory' goal'
-      
-      -- UNIFIED ORCHESTRATION START
-      problem = mkProblem theory' goal'
-      
-      -- Determine Strategy based on Profile
-      strategy = determineStrategy profile pts opts goal'
-      
-  in unsafePerformIO $ do
-       outcome <- proveSequential strategy problem
-       return $ mapResultToAuto outcome profile goal' varDefs logsH
+  -- ULTRA-FAST PATH: Try direct SOS on raw goal before any preprocessing
+  -- This handles simple symmetric inequalities like a² + b² + c² >= ab + bc + ca
+  case tryDirectSOSHeuristic goalRaw of
+    Just (cert, proof) ->
+      let profile = analyzeProblem theoryRaw goalRaw
+      in AutoSolveResult UseSOS "Direct SOS (no preprocessing)" profile goalRaw True "Proved" (Just (EvidenceSOS cert [])) (Just proof) M.empty
+    Nothing ->
+      -- Preprocessing Phase
+      let (theoryG, goalG, _) = preprocessGeometry pointSubs theoryRaw goalRaw
+          -- Heuristics (Keeping existing pipeline)
+          (theoryH, goalH, logsH) = applyHeuristics (proofMode opts) theoryG goalG
+          -- Elimination
+          (theoryS, goalS, varDefsS) = eliminateSqrt theoryH goalH
+          (theoryP, goalP, varDefsP) = eliminateRational theoryS goalS
+          varDefs = M.union varDefsS varDefsP
+          prepRes = preprocess pointSubs theoryP goalP
+          theory' = preprocessedTheory prepRes
+          goal' = preprocessedGoal prepRes
+          profile = analyzeProblem theory' goal'
+          -- UNIFIED ORCHESTRATION START
+          problem = mkProblem theory' goal'
+          -- Determine Strategy based on Profile
+          strategy = determineStrategy profile pts opts goal'
+      in unsafePerformIO $ do
+           outcome <- proveSequential strategy problem
+           return $ mapResultToAuto outcome profile goal' varDefs logsH
 
 applyHeuristics :: ProofMode -> Theory -> Formula -> (Theory, Formula, [String])
 applyHeuristics mode theory goal
@@ -200,11 +224,11 @@ applyHeuristics mode theory goal
 
 determineStrategy :: ProblemProfile -> [String] -> SolverOptions -> Formula -> [AnySolver]
 determineStrategy profile pts opts goal
-  | problemType profile == Geometric = 
-      if isInequality goal 
-      then [AnySolver (LocalSOSSolver pts opts), AnySolver LocalCADSolver]
+  | problemType profile == Geometric =
+      if isInequality goal
+      then [AnySolver (LocalSOSSolver pts opts), AnySolver (LocalCADSolver opts)]
       else [AnySolver LocalGeoSolver, AnySolver SW.WuSolver, AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts))]
-  | isInequality goal = [AnySolver (LocalSOSSolver pts opts), AnySolver LocalCADSolver]
+  | isInequality goal = [AnySolver (LocalSOSSolver pts opts), AnySolver (LocalCADSolver opts)]
   | otherwise = [AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts)), AnySolver SW.WuSolver]
 
 mapResultToAuto :: ProofOutcome -> ProblemProfile -> Formula -> M.Map String Expr -> [String] -> AutoSolveResult
@@ -234,28 +258,38 @@ solverChoiceFromName name
 
 proveInequalitySOS :: [String] -> SolverOptions -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr, Maybe ProofEvidence)
 proveInequalitySOS pts opts theoryRaw goalRaw =
-  -- First, try direct Ono inequality check (bypasses Gröbner for this pattern)    
-  case SymSOS.checkOnoInequality theoryRaw goalRaw of
-    SymSOS.OnoProved proof -> (True, "Proved via Ono's inequality (AM-GM)", Just proof, M.empty, Nothing)
-    _ ->
-      -- Second, try generic Barrow/polynomial prover
-      case SymSOS.checkBarrowInequality (proofMode opts) theoryRaw goalRaw of
-        SymSOS.BarrowProved proof -> (True, "Proved via generic polynomial methods", Just proof, M.empty, Nothing)
+  -- ULTRA-FAST PATH: Try direct SOS heuristics on the goal polynomial
+  -- This handles simple symmetric patterns like a² + b² + c² - ab - bc - ca
+  case tryDirectSOSHeuristic goalRaw of
+    Just (cert, proof) -> (True, "Proved via direct SOS decomposition", Just proof, M.empty, Just (EvidenceSOS cert []))
+    Nothing ->
+      -- First, try direct Ono inequality check (bypasses Gröbner for this pattern)
+      case SymSOS.checkOnoInequality theoryRaw goalRaw of
+        SymSOS.OnoProved proof -> (True, "Proved via Ono's inequality (AM-GM)", Just proof, M.empty, Nothing)
         _ ->
-          -- Standard path
-          let geomLemmas = generateGeometricLemmas theoryRaw goalRaw
-              (thPrep, goalPrep, varDefsP) = eliminateRational (theoryRaw ++ geomLemmas) goalRaw
-              (thPoly, goalPoly, varDefsS) = eliminateSqrt thPrep goalPrep
-              varDefs = M.union varDefsP varDefsS
-              goalSquared = goalPoly
-              profileFinal = analyzeProblem thPoly goalSquared
-          in case goalSquared of
-            Ge _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
-            Gt _ _ -> let (b, r, t, ev) = trySOS thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
-            _ -> (False, "Not an inequality after preprocessing", Nothing, varDefs, Nothing)
+          -- Second, try generic Barrow/polynomial prover
+          case SymSOS.checkBarrowInequality (proofMode opts) theoryRaw goalRaw of
+            SymSOS.BarrowProved proof -> (True, "Proved via generic polynomial methods", Just proof, M.empty, Nothing)
+            _ ->
+              -- Standard path with enhanced algebraic constraint handling
+              let geomLemmas = generateGeometricLemmas theoryRaw goalRaw
+                  (thPrep, goalPrep, varDefsP) = eliminateRational (theoryRaw ++ geomLemmas) goalRaw
+                  -- Use new eliminateSqrtWithConstraints to capture algebraic constraints
+                  sqrtResult = eliminateSqrtWithConstraints thPrep goalPrep
+                  thPoly = serTheory sqrtResult
+                  goalPoly = serGoal sqrtResult
+                  varDefsS = serVarDefs sqrtResult
+                  algConstraints = serAlgebraicConstraints sqrtResult  -- v^2 = e constraints
+                  varDefs = M.union varDefsP varDefsS
+                  goalSquared = goalPoly
+                  profileFinal = analyzeProblem thPoly goalSquared
+              in case goalSquared of
+                   Ge _ _ -> let (b, r, t, ev) = trySOS algConstraints thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
+                   Gt _ _ -> let (b, r, t, ev) = trySOS algConstraints thPoly goalSquared goalPoly profileFinal in (b, r, t, varDefs, ev)
+                   _ -> (False, "Not an inequality after preprocessing", Nothing, varDefs, Nothing)
   where
 
-    trySOS theory goalFull goalOriginal profileFinal =
+    trySOS algConstraints theory goalFull goalOriginal profileFinal =
       let (thWLOG, wlogLog) = Geometry.WLOG.applyWLOG theory goalFull
           (thBary, goalBary, baryLog) = Geometry.Barycentric.applyBarycentric pts thWLOG goalFull       
           fullLog = wlogLog ++ baryLog
@@ -296,7 +330,7 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
              let vars = extractPolyVars p
              in S.member "ba_u" vars && S.member "ba_v" vars && S.member "ba_w" vars && polyDegreeIn p "ba_u" == 1
 
-          basis = f4LiteGroebner ord SugarStrategy True eqConstraintsSOS
+          basis = selectGroebnerAlgorithm opts ordType eqConstraintsSOS
           reducer = reduceWithBasis ord basis
 
           knownLemmas = mapMaybe (listToMaybe . formulaToPolysLocal)
@@ -310,7 +344,8 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
           isVarPositivity (Gt (Var _) (Const 0)) = True
           isVarPositivity _ = False
 
-          maybeCert = getSOSCertificate knownLemmas reducer targetPoly
+          -- Use enhanced SOS with algebraic constraints for sqrt handling
+          maybeCert = getSOSCertificateWithAlgebraic algConstraints knownLemmas reducer targetPoly
 
           sdpVerified =
             if isJust maybeCert
@@ -340,8 +375,8 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
     isAlwaysNonNeg v theory = any (\f -> case f of Ge (Var x) _ -> x == v; Gt (Var x) _ -> x == v; _ -> False) theory
     polyDegreeIn (Poly m) var = if M.null m then 0 else maximum ((0 :: Int) : [ fromIntegral (M.findWithDefault 0 var vars) | (mono, _) <- M.toList m, let Monomial vars = mono ])
 
-runCadRational :: [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
-runCadRational theory goal =
+runCadRational :: SolverOptions -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
+runCadRational opts theory goal =
   let (th', goal', varDefs) = eliminateSqrt theory goal
       (eqs, ineqs) = partition isEquality th'
 
@@ -353,13 +388,14 @@ runCadRational theory goal =
                   (any (`isSuffixOf` v) ["2", "s"] && not (isCoord v))
       groupCoords = S.filter isCoord allVarsSet
       groupSides  = S.filter (\v -> isSide v && not (S.member v groupCoords)) allVarsSet
-      groupRest   = S.difference allVarsSet (S.union groupCoords groupSides)       
-      ord = compareMonomials (Block [ (S.toList groupCoords, Lex)
-                                   , (S.toList groupSides,  Lex)
-                                   , (S.toList groupRest,   GrevLex)
-                                   ])
+      groupRest   = S.difference allVarsSet (S.union groupCoords groupSides)
+      ordType = Block [ (S.toList groupCoords, Lex)
+                      , (S.toList groupSides,  Lex)
+                      , (S.toList groupRest,   GrevLex)
+                      ]
+      ord = compareMonomials ordType
 
-      basis = f4LiteGroebner ord SugarStrategy True eqPolys
+      basis = selectGroebnerAlgorithm opts ordType eqPolys
       reducer = reduceWithBasis ord basis
 
       reducedGoal = case goal' of
@@ -441,7 +477,7 @@ executeSolver pts choice opts _profile theory goal = unsafePerformIO $ do
         UseWu -> AnySolver SW.WuSolver
         UseGroebner -> AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts))
         UseSOS -> AnySolver (LocalSOSSolver pts opts)
-        UseCAD -> AnySolver LocalCADSolver
+        UseCAD -> AnySolver (LocalCADSolver opts)
         UseGeoSolver -> AnySolver LocalGeoSolver
         UseAreaMethod -> AnySolver LocalGeoSolver -- Placeholder mapping
         _ -> AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts)) -- Fallback        
@@ -467,5 +503,319 @@ formatSOSCertificate :: SOSCertificate -> String
 formatSOSCertificate cert =
   let terms = sosTerms cert; lemmas = sosLemmas cert
       formatTerm (c, p) = (if c == 1 then "" else prettyRational c ++ "*") ++ "(" ++ prettyPolyNice p ++ ")^2"
-      sumParts = map formatTerm (reverse terms) ++ map prettyPolyNice lemmas       
+      sumParts = map formatTerm (reverse terms) ++ map prettyPolyNice lemmas
   in if null sumParts then "0" else intercalate " + " sumParts ++ (if sosRemainder cert == polyZero then "" else " + [" ++ prettyPolyNice (sosRemainder cert) ++ "]")
+
+-- | Try direct SOS heuristic on a goal formula without any preprocessing
+-- This is the fastest path for simple symmetric polynomials
+-- Uses trySOSHeuristic directly to avoid expensive fallbacks in getSOSCertificate
+-- NOTE: Skips goals containing sqrt (those need preprocessing first)
+tryDirectSOSHeuristic :: Formula -> Maybe (SOSCertificate, String)
+tryDirectSOSHeuristic goal
+  | containsSqrtFormula goal = Nothing  -- Sqrt needs preprocessing, skip direct path
+  | otherwise =
+      case goal of
+        Ge lhs rhs ->
+          let poly = toPolySub M.empty (Sub lhs rhs)
+          in case trySOSHeuristicDirect poly of
+               Just cert ->
+                 -- Verify the certificate is correct
+                 if verifySOSCertificate poly cert
+                 then Just (cert, formatSOSDecomposition cert)
+                 else Nothing
+               Nothing -> Nothing
+        Gt lhs rhs ->
+          let poly = toPolySub M.empty (Sub lhs rhs)
+          in case trySOSHeuristicDirect poly of
+               Just cert ->
+                 -- Verify the certificate is correct
+                 if verifySOSCertificate poly cert
+                 then Just (cert, formatSOSDecomposition cert)
+                 else Nothing
+               Nothing -> Nothing
+        _ -> Nothing
+
+-- | Direct SOS heuristic - just pattern matching, no expensive fallbacks
+trySOSHeuristicDirect :: Poly -> Maybe SOSCertificate
+trySOSHeuristicDirect poly =
+  -- Try trivial square first
+  case polynomialSqrtDirect poly of
+    Just q -> Just $ SOSCertificate [(1, q)] [] polyZero (Just TrivialSquare)
+    Nothing ->
+      -- Try simple sum of squares
+      case trySimpleSOS poly of
+        Just cert -> Just cert
+        Nothing ->
+          -- Try symmetric 3-variable pattern
+          case trySymmetric3Var poly of
+            Just cert -> Just cert
+            Nothing ->
+              -- Try cyclic 4-variable pattern
+              case tryCyclic4Var poly of
+                Just cert -> Just cert
+                Nothing ->
+                  -- Try general n-variable cyclic pattern
+                  case tryCyclicNVar poly of
+                    Just cert -> Just cert
+                    Nothing ->
+                      -- Try AM-GM 2-variable pattern
+                      case tryAMGM2Var poly of
+                        Just cert -> Just cert
+                        Nothing ->
+                          -- Try generalized Lagrange identity
+                          tryLagrangeIdentity poly
+
+-- | Try to find polynomial square root (simplified)
+polynomialSqrtDirect :: Poly -> Maybe Poly
+polynomialSqrtDirect p
+  | p == polyZero = Just polyZero
+  | otherwise =
+      case getLeadingTerm p of
+        Nothing -> Just polyZero
+        Just (ltM, ltC) ->
+          if not (isSquareMonomial ltM) || ltC < 0
+          then Nothing
+          else tryFindRoot p
+  where
+    isSquareMonomial (Monomial vars) = all even (M.elems vars)
+
+-- | Simple square root finding
+tryFindRoot :: Poly -> Maybe Poly
+tryFindRoot p =
+  case getLeadingTerm p of
+    Nothing -> Just polyZero
+    Just (ltM, ltC) ->
+      let sqrtM = sqrtMonomial ltM
+          sqrtC = sqrtRat ltC
+          candidate = Poly (M.singleton sqrtM sqrtC)
+          squared = polyMul candidate candidate
+      in if squared == p then Just candidate else Nothing
+  where
+    sqrtMonomial (Monomial vars) = Monomial (M.map (`div` 2) vars)
+    sqrtRat r = let n = numerator r; d = denominator r
+                in integerSqrt n % integerSqrt d
+
+-- | Try simple sum of squares (each term is a perfect square)
+trySimpleSOS :: Poly -> Maybe SOSCertificate
+trySimpleSOS (Poly m) =
+  let terms = M.toList m
+      squares = [ (c, Poly (M.singleton (sqrtMono mon) 1))
+                | (mon, c) <- terms, c > 0, isSquareMono mon ]
+  in if length squares == M.size m && not (null squares)
+     then Just $ SOSCertificate squares [] polyZero (Just SumOfSquares)
+     else Nothing
+  where
+    isSquareMono (Monomial vars) = all even (M.elems vars)
+    sqrtMono (Monomial vars) = Monomial (M.map (`div` 2) vars)
+
+-- | Verify that an SOS certificate correctly represents a polynomial
+verifySOSCertificate :: Poly -> SOSCertificate -> Bool
+verifySOSCertificate targetPoly cert =
+  let terms = sosTerms cert
+      -- Reconstruct: sum of c_i * p_i^2
+      reconstructed = foldl polyAdd polyZero
+        [scalePolyBy c (polyMul p p) | (c, p) <- terms]
+  in reconstructed == targetPoly
+
+-- | Helper to scale a polynomial by a rational
+scalePolyBy :: Rational -> Poly -> Poly
+scalePolyBy c (Poly m) = Poly (M.map (* c) m)
+
+-- | Try symmetric 3-variable pattern: a² + b² + c² - ab - bc - ca
+trySymmetric3Var :: Poly -> Maybe SOSCertificate
+trySymmetric3Var (Poly m)
+  | M.size m /= 6 = Nothing
+  | otherwise =
+      let terms = M.toList m
+          sqTerms = [(v, c) | (Monomial vm, c) <- terms, [(v, 2)] <- [M.toList vm]]
+          crossTerms = [(v1, v2, c) | (Monomial vm, c) <- terms
+                                    , [(v1, e1), (v2, e2)] <- [M.toList vm]
+                                    , e1 == 1, e2 == 1, v1 < v2]
+      in case (sqTerms, crossTerms) of
+           ([(a, ca), (b, cb), (c, cc)], [(_, _, c12), (_, _, c34), (_, _, c56)])
+             | ca == cb && cb == cc && ca > 0
+             , c12 == c34 && c34 == c56 && c12 < 0
+             , ca == -c12
+             -> let polyA = polyFromVar a; polyB = polyFromVar b; polyC = polyFromVar c
+                    diffAB = polySub polyA polyB
+                    diffBC = polySub polyB polyC
+                    diffCA = polySub polyC polyA
+                    cert = SOSCertificate [(ca/2, diffAB), (ca/2, diffBC), (ca/2, diffCA)] [] polyZero (Just (Custom "Symmetric3Var"))
+                -- Verify the decomposition matches the input
+                in if verifySOSCertificate (Poly m) cert then Just cert else Nothing
+           _ -> Nothing
+
+-- | Try cyclic 4-variable pattern: a² + b² + c² + d² - ab - bc - cd - da
+-- Decomposition: ½[(a-b)² + (b-c)² + (c-d)² + (d-a)²]
+tryCyclic4Var :: Poly -> Maybe SOSCertificate
+tryCyclic4Var (Poly m)
+  | M.size m /= 8 = Nothing  -- 4 squares + 4 cross terms
+  | otherwise =
+      let terms = M.toList m
+          -- Find square terms (v²)
+          sqTerms = [(v, c) | (Monomial vm, c) <- terms, [(v, 2)] <- [M.toList vm]]
+          -- Find cross terms (v1 * v2)
+          crossTerms = [(v1, v2, c) | (Monomial vm, c) <- terms
+                                    , [(v1, e1), (v2, e2)] <- [M.toList vm]
+                                    , e1 == 1, e2 == 1, v1 < v2]
+      in case sqTerms of
+           [(a, ca), (b, cb), (c, cc), (d, cd)]
+             | ca == cb && cb == cc && cc == cd && ca > 0  -- All square coefficients equal and positive
+             , length crossTerms == 4  -- Exactly 4 cross terms
+             , all (\(_, _, coef) -> coef < 0 && coef == -ca) crossTerms  -- All cross coeffs equal to -k
+             , isCyclicPattern [a, b, c, d] crossTerms  -- Cross terms form a cycle
+             -> let vars = [a, b, c, d]
+                    -- Build cyclic differences
+                    diffs = zipWith (\v1 v2 -> polySub (polyFromVar v1) (polyFromVar v2))
+                                    vars (tail vars ++ [head vars])
+                in Just $ SOSCertificate [(ca/2, diff) | diff <- diffs] [] polyZero (Just (Custom "Cyclic4Var"))
+           _ -> Nothing
+
+-- | Check if cross terms form a cyclic pattern (ab, bc, cd, da)
+isCyclicPattern :: [String] -> [(String, String, Rational)] -> Bool
+isCyclicPattern vars crossTerms =
+  let n = length vars
+      -- Expected pairs in a cycle: (v0,v1), (v1,v2), (v2,v3), (v3,v0)
+      expectedPairs = [(vars !! i, vars !! ((i + 1) `mod` n)) | i <- [0..n-1]]
+      -- Normalize pairs to have smaller element first
+      normPair (x, y) = if x < y then (x, y) else (y, x)
+      expectedNorm = map normPair expectedPairs
+      actualPairs = [(v1, v2) | (v1, v2, _) <- crossTerms]
+  in length actualPairs == n && all (`elem` expectedNorm) actualPairs
+
+-- | Try general n-variable cyclic pattern: Σvᵢ² - Σvᵢvᵢ₊₁ (cyclic)
+-- Works for any n >= 3 variables
+tryCyclicNVar :: Poly -> Maybe SOSCertificate
+tryCyclicNVar (Poly m) =
+  let terms = M.toList m
+      -- Find all square terms (v²)
+      sqTerms = [(v, c) | (Monomial vm, c) <- terms, [(v, 2)] <- [M.toList vm]]
+      -- Find all cross terms (v1 * v2)
+      crossTerms = [(v1, v2, c) | (Monomial vm, c) <- terms
+                                , [(v1, e1), (v2, e2)] <- [M.toList vm]
+                                , e1 == 1, e2 == 1, v1 < v2]
+      n = length sqTerms
+  in if n < 3 || length crossTerms /= n
+     then Nothing
+     else
+       let (vars, coeffs) = unzip sqTerms
+           k = head coeffs
+       in if all (== k) coeffs && k > 0  -- All square coefficients equal
+          && all (\(_, _, c) -> c == -k) crossTerms  -- All cross coefficients equal to -k
+          && isCyclicPatternGeneral vars crossTerms  -- Forms a cycle
+          then
+            -- Find the cyclic ordering
+            case findCyclicOrder vars crossTerms of
+              Just orderedVars ->
+                let diffs = zipWith (\v1 v2 -> polySub (polyFromVar v1) (polyFromVar v2))
+                                    orderedVars (tail orderedVars ++ [head orderedVars])
+                in Just $ SOSCertificate [(k/2, diff) | diff <- diffs] [] polyZero
+                                         (Just (Custom $ "Cyclic" ++ show n ++ "Var"))
+              Nothing -> Nothing
+          else Nothing
+
+-- | Check if cross terms can form any cyclic pattern
+isCyclicPatternGeneral :: [String] -> [(String, String, Rational)] -> Bool
+isCyclicPatternGeneral vars crossTerms =
+  let actualPairs = [(v1, v2) | (v1, v2, _) <- crossTerms]
+      -- Build adjacency: each variable should have exactly 2 neighbors
+      neighbors v = [if v1 == v then v2 else v1 | (v1, v2) <- actualPairs, v1 == v || v2 == v]
+  in all (\v -> length (neighbors v) == 2) vars
+
+-- | Find the cyclic ordering of variables from cross terms
+findCyclicOrder :: [String] -> [(String, String, Rational)] -> Maybe [String]
+findCyclicOrder [] _ = Just []
+findCyclicOrder vars crossTerms =
+  let pairs = [(v1, v2) | (v1, v2, _) <- crossTerms]
+      neighbors v = nub [if v1 == v then v2 else v1 | (v1, v2) <- pairs, v1 == v || v2 == v]
+      -- Start from first variable and follow the chain
+      start = head vars
+      followChain prev current visited
+        | length visited == length vars = Just (reverse visited)
+        | otherwise =
+            let nexts = filter (/= prev) (neighbors current)
+            in case nexts of
+                 [next] | next `notElem` visited || (length visited == length vars - 1 && next == start)
+                   -> followChain current next (current : visited)
+                 _ -> Nothing
+  in case neighbors start of
+       [n1, _] -> followChain start n1 [start]
+       _ -> Nothing
+
+-- | Try AM-GM 2-variable pattern: k*a² + k*b² - 2k*ab = k*(a-b)²
+-- Matches: c₁a² + c₂b² + c₃ab where c₁ = c₂ and c₃ = -2*c₁
+tryAMGM2Var :: Poly -> Maybe SOSCertificate
+tryAMGM2Var (Poly m)
+  | M.size m /= 3 = Nothing
+  | otherwise =
+      let terms = M.toList m
+          sqTerms = [(v, c) | (Monomial vm, c) <- terms, [(v, 2)] <- [M.toList vm]]
+          crossTerms = [(v1, v2, c) | (Monomial vm, c) <- terms
+                                    , [(v1, e1), (v2, e2)] <- [M.toList vm]
+                                    , e1 == 1, e2 == 1, v1 < v2]
+      in case (sqTerms, crossTerms) of
+           ([(a, ca), (b, cb)], [(_, _, cab)])
+             | ca == cb && ca > 0
+             , cab == -2 * ca
+             -> let diff = polySub (polyFromVar a) (polyFromVar b)
+                in Just $ SOSCertificate [(ca, diff)] [] polyZero (Just (Custom "AMGM2Var"))
+           _ -> Nothing
+
+-- | Try Lagrange identity pattern: (a²+b²)(c²+d²) - (ac+bd)² = (ad-bc)²
+-- This matches degree-4 polynomials that are differences of products
+tryLagrangeIdentity :: Poly -> Maybe SOSCertificate
+tryLagrangeIdentity poly =
+  -- Check if polynomial is already detected as a perfect square
+  case polynomialSqrtDirect poly of
+    Just q -> Just $ SOSCertificate [(1, q)] [] polyZero (Just CauchySchwarz)
+    Nothing ->
+      -- Try to factor the polynomial into a sum of squares
+      tryFactorAsSOS poly
+
+-- | Try to factor polynomial as a sum of squares by examining structure
+tryFactorAsSOS :: Poly -> Maybe SOSCertificate
+tryFactorAsSOS (Poly m) =
+  let terms = M.toList m
+      -- Look for degree-4 polynomials with specific structure
+      maxDeg = maximum (0 : [sum (M.elems vm) | (Monomial vm, _) <- terms])
+  in if maxDeg /= 4 then Nothing
+     else tryDegree4SOS (Poly m)
+
+-- | Try to decompose degree-4 polynomial as SOS
+tryDegree4SOS :: Poly -> Maybe SOSCertificate
+tryDegree4SOS (Poly m) =
+  let terms = M.toList m
+      -- Get all variables
+      allVars = nub $ concatMap (\(Monomial vm, _) -> M.keys vm) terms
+  in case allVars of
+       [a, b, c, d] -> tryLagrange4Var (Poly m) a b c d
+       _ -> Nothing
+
+-- | Try specific Lagrange identity for 4 variables
+tryLagrange4Var :: Poly -> String -> String -> String -> String -> Maybe SOSCertificate
+tryLagrange4Var poly a b c d =
+  -- Try (ad - bc)² pattern
+  let ad_bc = polySub (polyMul (polyFromVar a) (polyFromVar d))
+                      (polyMul (polyFromVar b) (polyFromVar c))
+      sq_ad_bc = polyMul ad_bc ad_bc
+  in if poly == sq_ad_bc
+     then Just $ SOSCertificate [(1, ad_bc)] [] polyZero (Just CauchySchwarz)
+     else
+       -- Try (ac - bd)² pattern
+       let ac_bd = polySub (polyMul (polyFromVar a) (polyFromVar c))
+                          (polyMul (polyFromVar b) (polyFromVar d))
+           sq_ac_bd = polyMul ac_bd ac_bd
+       in if poly == sq_ac_bd
+          then Just $ SOSCertificate [(1, ac_bd)] [] polyZero (Just CauchySchwarz)
+          else Nothing
+
+formatSOSDecomposition :: SOSCertificate -> String
+formatSOSDecomposition cert =
+  let terms = sosTerms cert
+      formatCoeff c
+        | c == 1 = ""
+        | otherwise = prettyRational c ++ "*"
+      formatTerm (c, p) = formatCoeff c ++ "(" ++ prettyPolyNice p ++ ")^2"
+      termStrs = map formatTerm (reverse terms)
+      decomposition = if null termStrs then "0" else intercalate " + " termStrs
+  in "Sum of squares decomposition:\n  " ++ decomposition ++ " >= 0"

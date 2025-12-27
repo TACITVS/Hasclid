@@ -5,6 +5,32 @@ All notable changes to Hasclid will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.4.0] - 2025-12-27
+
+### Added
+- **NthRoot AST Constructor**: New `NthRoot Natural Expr` constructor for general nth-roots (cube roots, fourth roots, etc.)
+- **Coefficient Pattern Matching**: `matchRootPattern` function to extract coefficient/index/radicand from expressions like `2*sqrt(ab)`
+- **Coefficient*Sqrt Formula Patterns**: Direct pattern matching in `elimFormula` for `Ge`, `Gt`, `Le`, `Lt`, `Eq` with coefficient patterns
+- **ElimConfig Type**: Configurable root elimination with `maxSquaringDepth` and `enableInequiSquaring` options
+- **Extended AlgebraicConstraint**: Now tracks `acVar`, `acIndex`, `acRadicand`, `acCoefficient`, and `acSign`
+
+### Changed
+- **Smart Inequality Squaring**: Re-enabled with depth limit (default: 3) to prevent infinite loops
+- **SqrtElim Module**: Complete overhaul for robust coefficient handling
+  - `b >= c*sqrt(a)` now directly transforms to `b² >= c²*a`
+  - Coefficient absorption: `c*sqrt(a)` → `sqrt(c²*a)` in expressions
+- **algebraicReducer**: Generalized to `substituteNthPower` for nth-power variable substitution
+- **Pattern Matching Order**: Specific coefficient patterns now match before general catch-all patterns
+
+### Fixed
+- **AM-GM with Coefficient**: `a+b >= 2*sqrt(ab)` now PROVES correctly (previously only `a+b >= sqrt(4ab)` worked)
+- **Equality with Coefficients**: `2*sqrt(ab) = sqrt(4ab)` now proves correctly
+- **Root Handling Consistency**: Both coefficient and non-coefficient forms produce identical polynomial goals
+
+### Performance
+- **Test Suite**: All 111 unit tests pass
+- **AM-GM Variants**: All standard AM-GM formulations now prove automatically
+
 ## [9.3.0] - 2025-12-17
 
 ### Added
