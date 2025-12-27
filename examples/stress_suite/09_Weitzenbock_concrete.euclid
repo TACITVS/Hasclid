@@ -1,0 +1,17 @@
+; Level 9: Weitzenbock's Inequality (Concrete Instance)
+; a^2 + b^2 + c^2 >= 4*sqrt(3)*Area
+;
+; For 3-4-5 right triangle:
+; A = (0,0), B = (3,0), C = (0,4)
+; a = BC = 5, b = AC = 4, c = AB = 3
+; Area = 0.5 * 3 * 4 = 6
+;
+; LHS = 25 + 16 + 9 = 50
+; RHS = 4 * sqrt(3) * 6 = 24 * sqrt(3) ≈ 41.57
+; 50 >= 41.57 TRUE
+;
+; Prove: 50 >= 24*sqrt(3)
+
+:set-timeout 60
+:prove (>= 50 (* 24 (sqrt 3)))
+:q
