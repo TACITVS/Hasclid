@@ -4,160 +4,363 @@
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)
 
-**Hasclid** (v9.4) is a next-generation Automated Theorem Prover (ATP) specialized for Euclidean Geometry and Inequality Reasoning. Built entirely in Haskell, it bridges the gap between geometric intuition and rigorous algebraic proof, offering a self-contained, high-performance reasoning kernel with zero external dependencies.
+**Hasclid** (v9.4) is an Automated Theorem Prover (ATP) for Euclidean Geometry and Polynomial Inequalities. Built entirely in Haskell with zero external dependencies, it combines multiple algebraic solving methods into a unified proving engine.
 
-**Recent Improvements (v9.4)**:
-- ✅ **Robust Nth-Root Handling**: Full support for general nth-roots (sqrt, cbrt, fourth roots, etc.) with coefficient tracking
-- ✅ **AM-GM with Coefficients**: `a+b >= 2*sqrt(ab)` now proves directly (previously only `a+b >= sqrt(4ab)` worked)
-- ✅ **Smart Inequality Squaring**: Re-enabled with depth limits to prevent infinite loops
-- ✅ **Coefficient Pattern Matching**: Expressions like `2*sqrt(ab)` are properly handled in inequalities
+## Key Features
 
----
-
-## 🌟 Why Hasclid?
-
-### The Problem
-Traditional proof assistants (Coq, Lean, Isabelle) are powerful but require manual guidance—you must explain *how* to prove something. Computer Algebra Systems (Mathematica, Maple) can compute answers but lack the logical framework to produce formal proofs of universal truths.
-
-### The Hasclid Solution
-Hasclid is **fully automated**. You describe the geometric setup (points, lines, circles) and the conjecture. Hasclid orchestrates a symphony of algorithms—from classical Wu's Method to modern Semidefinite Programming—to find the proof automatically.
-
-### 🚀 Key Differentiators
-
-*   **Hybrid Architecture**: A unique two-phase engine that attempts fast **Geometric Constraint Propagation** (milliseconds) before falling back to heavy-duty **Algebraic Geometry** (Gröbner Bases, CAD).
-*   **Internal SDP Solver**: Features a custom-built Primal-Dual Interior Point Method solver for **Semidefinite Programming**, enabling **Sum-of-Squares (SOS)** proofs for complex inequalities without calling external C++ libraries.
-*   **Integer & Induction**: Goes beyond geometry to prove number-theoretic properties using **Structural Induction** and bounded verification.
-*   **Pure Haskell**: No Z3, no CVC5, no singular. Just pure, functional, type-safe math.
+- **Multi-Solver Architecture**: Automatic routing between Wu's Method, Gröbner Bases (F5/F4), Sum-of-Squares, and CAD
+- **Pure Haskell**: No Z3, CVC5, or external solvers - fully self-contained
+- **Exact Arithmetic**: Rational number computation with no floating-point errors
+- **Inequality Proving**: SOS decomposition with SDP solver for polynomial inequalities
+- **Nth-Root Support**: Full handling of sqrt, cbrt, and general nth-roots with coefficients
 
 ---
 
-## 🏛️ Hall of Fame: Solved Problems
+## Quick Start
 
-Hasclid has conquered some of the most notorious challenges in automated geometry:
+### Prerequisites
+- GHC 9.x (Haskell Compiler)
+- Cabal 3.x
 
-| Rank | Theorem | Difficulty | Method Used | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| 🥇 | **Erdos-Mordell Inequality** (Generic) | ⭐⭐⭐⭐⭐ | Degree Reduction + CAD (6D) | ✅ **PROVED** |
-| 🥈 | **Morley's Trisector Theorem** | ⭐⭐⭐⭐ | Rational Elimination + Gröbner | ✅ **PROVED** |
-| 🥉 | **Euler's Four-Square Identity** | ⭐⭐⭐ | Integer Algebra Fallback | ✅ **PROVED** |
-| 🏅 | **Summation Identities** ($\sum i = \frac{n(n+1)}{2}$) | ⭐⭐ | Structural Induction | ✅ **PROVED** |
-| 🏅 | **Simson Line Theorem** | ⭐⭐ | Wu's Method | ✅ **PROVED** |
+### Installation
+```bash
+git clone https://github.com/TACITVS/Hasclid.git
+cd Hasclid
+cabal build
+cabal run prover-int
+```
+
+### First Proof
+```lisp
+> :point A 0 0
+> :point B 3 0
+> :point C 0 4
+> :prove (= (dist2 B C) (+ (dist2 A B) (dist2 A C)))
+RESULT: PROVED
+```
 
 ---
 
-## 🎯 Stress Suite Results (v9.4)
+## Language Reference
 
-Hasclid is continuously tested against a comprehensive stress suite of challenging geometric theorems:
+### S-Expression Syntax
+All expressions use prefix notation (Lisp-style):
+```lisp
+(+ 1 2 3)           -- Addition: 1 + 2 + 3 = 6
+(* 2 (+ x 1))       -- Multiplication: 2 * (x + 1)
+(= (^ x 2) 4)       -- Equation: x² = 4
+-- This is a comment
+```
+
+### Numbers & Variables
+
+| Type | Examples | Description |
+|------|----------|-------------|
+| Integer | `42`, `-17` | Whole numbers |
+| Rational | `3/4`, `-22/7` | Exact fractions |
+| Decimal | `1.5`, `3.14` | Converted to exact rationals |
+| Variable | `x`, `P1`, `abc` | Symbolic variables |
+
+### Arithmetic Expressions
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `(+ e1 e2 ...)` | Addition (variadic) | `(+ 1 2 3)` → 6 |
+| `(- e)` | Negation | `(- x)` → -x |
+| `(- e1 e2)` | Subtraction | `(- 5 3)` → 2 |
+| `(* e1 e2 ...)` | Multiplication | `(* 2 3 4)` → 24 |
+| `(/ e1 e2)` | Division | `(/ 6 2)` → 3 |
+| `(^ e n)` | Power (n is integer) | `(^ x 2)` → x² |
+| `(mod e1 e2)` | Modulo | `(mod 7 3)` → 1 |
+| `(sqrt e)` | Square root | `(sqrt 4)` |
+| `(cbrt e)` | Cube root | `(cbrt 8)` |
+| `(root n e)` | Nth root | `(root 4 16)` |
+
+### Comparison Operators
+
+| Syntax | Description |
+|--------|-------------|
+| `(= lhs rhs)` | Equality |
+| `(>= lhs rhs)` | Greater or equal |
+| `(> lhs rhs)` | Strictly greater |
+| `(<= lhs rhs)` | Less or equal |
+| `(< lhs rhs)` | Strictly less |
+| `(divides a b)` | a divides b |
+
+### Logical Connectives
+
+| Syntax | Description |
+|--------|-------------|
+| `(and f1 f2 ...)` | Conjunction (variadic) |
+| `(or f1 f2 ...)` | Disjunction (variadic) |
+| `(not f)` | Negation |
+| `(implies p q)` | Implication (p → q) |
+
+### Quantifiers
+```lisp
+(forall ((x) (y 0 10)) body)     -- x unbounded, y in [0,10]
+(exists ((int n 1 100)) body)    -- integer n in [1,100]
+```
+
+### Geometric Primitives
+
+| Syntax | Description |
+|--------|-------------|
+| `(dist2 A B)` | Squared distance \|AB\|² |
+| `(collinear A B C)` | Points A, B, C are collinear |
+| `(midpoint A B M)` | M is midpoint of segment AB |
+| `(perpendicular A B C D)` | Line AB ⊥ line CD |
+| `(parallel A B C D)` | Line AB ∥ line CD |
+| `(circle P C r)` | Point P on circle with center C, radius r |
+| `(dot A B C D)` | Dot product of vectors AB · CD |
+| `(angle-eq A B C D E F)` | Angle ∠ABC = ∠DEF |
+| `(angle-eq-abs A B C D E F)` | \|∠ABC\| = \|∠DEF\| |
+
+---
+
+## REPL Commands Reference
+
+### Session Management
+
+| Command | Description |
+|---------|-------------|
+| `:help` | Show all commands |
+| `:quit` / `:q` | Exit the REPL |
+| `:reset` | Clear theory (preserve lemmas and cache) |
+| `:soft-reset` | Clear theory (preserve cache and int vars) |
+| `:clear` | Full system reset |
+| `:history` | Show command history |
+
+### Theory & Proving
+
+| Command | Description |
+|---------|-------------|
+| `:assume (formula)` | Add assumption to theory |
+| `:prove (formula)` | Prove with automatic solver routing |
+| `:wu (formula)` | Prove using Wu's method only |
+| `:auto (formula)` | Auto-select best solver |
+| `:list` | Show current theory assumptions |
+| `:induction (formula)` | Prove by mathematical induction |
+
+### Geometry
+
+| Command | Description |
+|---------|-------------|
+| `:point A x y` | Define 2D point A at (x, y) |
+| `:point A x y z` | Define 3D point A at (x, y, z) |
+| `:inside P A B C` | Constrain P inside triangle ABC |
+| `:construct (step)` | Add Area Method construction step |
+| `:prove-area (goal)` | Prove using Area Method |
+
+### Lemmas
+
+| Command | Description |
+|---------|-------------|
+| `:lemma (formula)` | Save formula as reusable lemma |
+| `:list-lemmas` | Show all stored lemmas |
+| `:save-lemmas file` | Export lemmas to file |
+| `:load-lemmas file` | Import lemmas from file |
+
+### Macros
+
+| Command | Description |
+|---------|-------------|
+| `:macro name (params) = body` | Define a macro |
+| `:defmacro name (params) = body` | Alias for :macro |
+| `:list-macros` | Show defined macros |
+| `:clear-macros` | Delete all macros |
+
+### Solver Configuration
+
+| Command | Description |
+|---------|-------------|
+| `:set-timeout N` | Set timeout in seconds (1-180) |
+| `:show-timeout` | Show current timeout |
+| `:set-order ORDER` | Term order: `grevlex`/`lex`/`gradedlex` |
+| `:show-order` | Show current term order |
+| `:set-gb-backend BE` | Gröbner backend: `f5`/`buchberger` |
+| `:set-strategy S` | S-poly strategy: `normal`/`sugar`/`minimal` |
+| `:proof-mode MODE` | Mode: `sound` (rigorous) / `unsafe` (heuristics) |
+| `:optimize on/off` | Toggle Buchberger optimization |
+| `:bruteforce on/off` | Toggle integer brute-force search |
+| `:verbose` | Toggle verbose output |
+| `:auto-simplify` | Toggle automatic simplification |
+
+### Proof Explanation
+
+| Command | Description |
+|---------|-------------|
+| `:explain` | Show step-by-step proof of last result |
+| `:format ascii/latex` | Set explanation format |
+| `:detail LEVEL` | Detail: `minimal`/`brief`/`normal`/`verbose` |
+| `:export file` | Export last proof to file |
+
+### Files & Batch
+
+| Command | Description |
+|---------|-------------|
+| `:load file.euclid` | Execute commands from script file |
+| `:solve file` | Solve formulas from file (one per line) |
+| `:lagrange N` | Compute sum-of-4-squares for integer N |
+
+### Cache Management
+
+| Command | Description |
+|---------|-------------|
+| `:cache-stats` | Show Gröbner cache statistics |
+| `:clear-cache` | Clear Gröbner basis cache |
+
+### Integer Variables
+
+| Command | Description |
+|---------|-------------|
+| `:declare-int v1 v2 ...` | Declare variables as integers |
+
+---
+
+## Solver Architecture
+
+Hasclid uses a two-phase proving strategy:
+
+### Phase 1: Geometric Solver
+Fast symbolic constraint propagation for simple geometric facts. Handles midpoints, perpendicularity, parallelism through direct symbolic reasoning.
+
+### Phase 2: Algebraic Solvers
+When Phase 1 doesn't resolve the problem:
+
+| Solver | Best For | Method |
+|--------|----------|--------|
+| **Wu's Method** | Geometric equalities | Characteristic sets, pseudo-division |
+| **Gröbner Basis** | Polynomial equations | F5 (default), F4Lite, or Buchberger |
+| **Sum-of-Squares** | Polynomial inequalities | Pattern matching + SDP verification |
+| **CAD** | General inequalities | Cylindrical Algebraic Decomposition |
+
+### Preprocessing Pipeline
+1. Geometric predicate expansion (midpoint, parallel → coordinates)
+2. Heuristic substitutions (Ravi, tangent, cotangent, half-angle)
+3. Sqrt/rational elimination
+4. Variable substitution and simplification
+
+---
+
+## Verified Test Results
+
+### Stress Suite (6/10 = 60%)
 
 | Test | Theorem | Status | Method |
-| :--- | :--- | :--- | :--- |
-| 01 | **Apollonius Circle** | ✅ PROVED | Wu's Method |
-| 02 | **Varignon's Theorem** | ⏳ In Progress | Complexity reduction needed |
-| 03 | **Orthocenter Collinearity** | ✅ PROVED | Geometric Solver |
-| 04 | **Nine-Point Circle** | ⏳ In Progress | High-degree polynomials |
-| 05 | **Cauchy-Schwarz** | ✅ PROVED | CAD |
-| 06 | **Triangle Inequality** | ⏳ In Progress | Timeout issue |
-| 07 | **Ptolemy's Theorem** | ✅ PROVED | Gröbner Basis |
-| 08 | **Euler's d² = R(R-2r)** | ✅ PROVED | Concrete computation |
-| 09 | **Weitzenbock Inequality** | ✅ PROVED | Geometric Solver |
-| 10 | **Erdős-Mordell Component** | ⏳ In Progress | SDP required |
-| 11 | **AM-GM Inequality** | ✅ PROVED | SOS with Root Handling |
+|------|---------|--------|--------|
+| 01 | Apollonius Circle | ✅ PROVED | Wu's Method |
+| 02 | Varignon's Theorem | ✅ PROVED | Gröbner |
+| 03 | Orthocenter Collinearity | ✅ PROVED | Geometric Solver |
+| 04 | Nine-Point Circle | ✅ PROVED | Gröbner |
+| 05 | Cauchy-Schwarz (∀-quantified) | ❌ NOT PROVED | Quantifier limitation |
+| 06 | Triangle Inequality | ⏱️ TIMEOUT | Complexity |
+| 07 | Ptolemy's Theorem | ✅ PROVED | Gröbner |
+| 08 | Euler's d² = R(R-2r) | ✅ PROVED | Concrete computation |
+| 09 | Weitzenbock | ❌ NOT PROVED | Sqrt complexity |
+| 10 | Erdős-Mordell | ⏱️ TIMEOUT | Variable explosion |
 
-**Success Rate: 8/11 (73%)** - Proven automatically without manual intervention
+### Additional Verified Proofs
+
+| Theorem | Status |
+|---------|--------|
+| Pythagorean Theorem | ✅ PROVED |
+| AM-GM: a+b ≥ 2√(ab) | ✅ PROVED |
+| Cauchy-Schwarz (free vars) | ✅ PROVED |
+| Symmetric: a²+b²+c² ≥ ab+bc+ca | ✅ PROVED |
 
 ---
 
-## 🧠 Didactic Examples
+## Examples
 
-### 1. The Classic: Pythagorean Theorem
-Prove that in a right-angled triangle, $a^2 + b^2 = c^2$.
-
+### Pythagorean Theorem
 ```lisp
 :point A 0 0
 :point B x 0
 :point C 0 y
 :prove (= (dist2 B C) (+ (dist2 A B) (dist2 A C)))
+-- RESULT: PROVED
 ```
-*Result: PROVED (Gröbner Basis reduced to 0)*
 
-### 2. The Hard: Erdos-Mordell (Optimized)
-Prove $\sum R_a \ge 2 \sum r_a$ for a generic triangle. Hasclid handles this by reducing the polynomial degree via auxiliary variables and applying Cylindrical Algebraic Decomposition.
-
+### AM-GM Inequality
 ```lisp
-:point P x y
-:assume (= (^ Ra 2) (+ (^ x 2) (^ y 2))) -- Define auxiliary distance
-:auto (>= (- (* Ra b) (+ term_c term_b)) 0)
+:assume (>= a 0)
+:assume (>= b 0)
+:prove (>= (+ a b) (* 2 (sqrt (* a b))))
+-- RESULT: PROVED
 ```
-*Result: PROVED (CAD check succeeded)*
 
-### 3. The Concrete: Decimal Coordinates (NEW in v9.3)
-Prove Euler's formula $d^2 = R(R-2r)$ for a 3-4-5 triangle with decimal coordinates.
+### Cauchy-Schwarz
+```lisp
+:prove (>= (* (+ (^ a 2) (^ b 2)) (+ (^ x 2) (^ y 2)))
+           (^ (+ (* a x) (* b y)) 2))
+-- RESULT: PROVED
+```
 
+### Concrete Triangle
 ```lisp
 :point A 0 0
 :point B 3 0
 :point C 0 4
-:point O 1.5 2    -- Circumcenter (decimals supported!)
-:point I 1 1      -- Incenter
-:prove (= (dist2 O I) 1.25)
+:point O 1.5 2      -- Decimals supported!
+:prove (= (dist2 A B) 9)
+-- RESULT: PROVED
 ```
-*Result: PROVED (Decimal 1.25 → exact rational 5/4)*
 
-### 4. The Abstract: Induction
-Prove $\sum_{i=0}^n i = \frac{n(n+1)}{2}$ for all integers $n$.
+---
 
+## Known Limitations
+
+### What Works Well
+- Polynomial equations with 2-6 variables
+- Simple polynomial inequalities (SOS patterns)
+- Geometric theorems with concrete or simple symbolic coordinates
+- AM-GM, Cauchy-Schwarz, symmetric inequalities
+
+### Current Limitations
+- **Variable Count**: >8 variables often causes timeout or memory issues
+- **Quantifiers**: `forall`/`exists` have limited support (CAD required)
+- **High Degree**: Polynomials of degree >10 may not terminate
+- **Complex Sqrt**: Nested square roots with many terms
+- **Some Classic Theorems**: Morley, Simson Line require specialized formulations
+
+### Performance Tips
+1. Use concrete coordinates when possible
+2. Break complex proofs into lemmas
+3. Reduce variable count through WLOG assumptions
+4. Try `:verbose` to see what's happening
+5. Increase timeout with `:set-timeout 120`
+
+---
+
+## File Format (.euclid)
+
+Proof scripts use `.euclid` extension:
 ```lisp
-:declare-int n
-:induction (forall ((int n)) (= (sum i 0 n i) (/ (* n (+ n 1)) 2)))
-```
-*Result: PROVED (Base Case + Step Case verified)*
-
----
-
-## ⚙️ Under the Hood
-
-Hasclid implements a pipeline of cutting-edge algorithms:
-
-1.  **Geometric Solver (Phase 1)**: Symbolic propagation of constraints (Midpoints, Perpendicularity). Fast path for constructive geometry.
-2.  **Wu's Method**: The gold standard for geometric equality proving. Uses characteristic sets to triangularize polynomial systems.
-3.  **Gröbner Bases**: An optimized F4-style implementation for solving systems of polynomial equations.
-4.  **Cylindrical Algebraic Decomposition (CAD)**: The "nuclear option" for real algebraic geometry. Decomposes $\mathbb{R}^n$ into sign-invariant cells to decide inequalities.
-5.  **Semidefinite Programming (SDP)**: An internal solver for finding Sum-of-Squares certificates, proving non-negativity of polynomials.
-
----
-
-## 📦 Installation & Usage
-
-### Prerequisites
-*   **GHC** (Haskell Compiler)
-*   **Cabal**
-
-### Quick Start
-```bash
-# Clone the repository
-git clone https://github.com/TACITVS/Hasclid.git
-cd Hasclid
-
-# Build the project
-cabal build
-
-# Run the REPL
-cabal run prover-int
+-- Comments start with --
+:point A 0 0
+:point B 1 0
+:assume (>= x 0)
+:prove (= (dist2 A B) 1)
+:q  -- Quit after proving
 ```
 
-### Interactive Commands
-| Command | Description |
-| :--- | :--- |
-| `:point A x y` | Define a point $A=(x,y)$. |
-| `:assume (= A B)` | Add a constraint/hypothesis. |
-| `:prove (= A B)` | Attempt to prove a goal using Algebra. |
-| `:auto (< A B)` | Auto-select best solver (e.g. CAD for inequalities). |
-| `:induction <f>` | Attempt proof by structural induction. |
-| `:declare-int n` | Declare a variable as an Integer. |
-| `:load <file>` | Run a proof script. |
+Run with: `cabal run prover-int < proof.euclid`
 
 ---
 
-## 📜 License
+## Contributing
 
-MIT License. Open source and ready for extension.
+Contributions welcome! Areas of interest:
+- Additional geometric predicates
+- Improved SOS heuristics
+- Better quantifier handling
+- Performance optimization
+
+## License
+
+MIT License - Open source and ready for extension.
+
+---
+
+**Built with Haskell** | [Documentation](docs/) | [Issues](https://github.com/TACITVS/Hasclid/issues)
