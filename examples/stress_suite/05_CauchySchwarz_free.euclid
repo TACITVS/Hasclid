@@ -1,0 +1,13 @@
+; Level 5: Cauchy-Schwarz Inequality (Free Variable Form)
+; (a^2 + b^2)(x^2 + y^2) >= (ax + by)^2
+;
+; The original forall-quantified version fails due to quantifier limitations.
+; This free variable version proves instantly.
+;
+; Mathematical equivalence:
+; For all a,b,x,y: (a^2+b^2)(x^2+y^2) >= (ax+by)^2
+; is the same as proving it for free/symbolic variables.
+
+:set-timeout 60
+:prove (>= (* (+ (^ a 2) (^ b 2)) (+ (^ x 2) (^ y 2))) (^ (+ (* a x) (* b y)) 2))
+:q

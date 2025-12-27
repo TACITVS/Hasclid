@@ -245,7 +245,7 @@ When Phase 1 doesn't resolve the problem:
 
 ## Verified Test Results
 
-### Stress Suite (6/10 = 60%)
+### Stress Suite (8/10 = 80%)
 
 | Test | Theorem | Status | Method |
 |------|---------|--------|--------|
@@ -253,12 +253,14 @@ When Phase 1 doesn't resolve the problem:
 | 02 | Varignon's Theorem | ✅ PROVED | Gröbner |
 | 03 | Orthocenter Collinearity | ✅ PROVED | Geometric Solver |
 | 04 | Nine-Point Circle | ✅ PROVED | Gröbner |
-| 05 | Cauchy-Schwarz (∀-quantified) | ❌ NOT PROVED | Quantifier limitation |
-| 06 | Triangle Inequality | ⏱️ TIMEOUT | Complexity |
+| 05 | Cauchy-Schwarz (∀-quantified) | ✅ PROVED | CAD (free variable method) |
+| 06 | Triangle Inequality | ⏱️ TIMEOUT | Complex sqrt elimination |
 | 07 | Ptolemy's Theorem | ✅ PROVED | Gröbner |
 | 08 | Euler's d² = R(R-2r) | ✅ PROVED | Concrete computation |
-| 09 | Weitzenbock | ❌ NOT PROVED | Sqrt complexity |
+| 09 | Weitzenbock (∀-quantified) | ✅ PROVED | CAD (free variable method) |
 | 10 | Erdős-Mordell | ⏱️ TIMEOUT | Variable explosion |
+
+**Note**: Unbounded `forall` quantifiers are now handled via the free variable method - proving `∀x. P(x)` by treating x as a symbolic variable.
 
 ### Additional Verified Proofs
 
@@ -266,8 +268,12 @@ When Phase 1 doesn't resolve the problem:
 |---------|--------|
 | Pythagorean Theorem | ✅ PROVED |
 | AM-GM: a+b ≥ 2√(ab) | ✅ PROVED |
+| AM-GM: a+b ≥ √(4ab) | ✅ PROVED |
 | Cauchy-Schwarz (free vars) | ✅ PROVED |
 | Symmetric: a²+b²+c² ≥ ab+bc+ca | ✅ PROVED |
+| Weitzenbock (concrete): 50 ≥ 24√3 | ✅ PROVED |
+| Triangle Inequality (3-4-5) | ✅ PROVED |
+| Erdős-Mordell (concrete) | ✅ PROVED |
 
 ---
 

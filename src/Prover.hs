@@ -492,14 +492,27 @@ proveTheoryWithCache proofMode maybeCache theoryRaw formulaRaw =
             in (proved, msg, baseTrace, maybeCache)
 
       Forall qs inner
-        | all (\q -> qvType q == QuantInt) qs -> 
+        | all (\q -> qvType q == QuantInt) qs ->
             let intNames = map qvName qs
                 theoryInt = map (promoteIntVars intNames) theory
                 innerInt = promoteIntVars intNames inner
                 (decided, msg) = proveForallInt theoryInt innerInt
             in (decided, msg, baseTrace, maybeCache)
 
-      Forall _ _ -> (False, "Unsupported universal quantifier.", baseTrace, maybeCache)
+      -- Handle unbounded real foralls by treating as free variable proof
+      -- For polynomial inequalities, (forall x. P(x) >= 0) is equivalent to
+      -- proving P(x) >= 0 for symbolic x
+      Forall qs inner
+        | all isUnboundedReal qs ->
+            let (innerProved, innerMsg, innerTrace, innerCache) =
+                  proveTheoryWithCache proofMode maybeCache theory inner
+            in if innerProved
+               then (True, "Proved universally (free variable method). " ++ innerMsg, innerTrace, innerCache)
+               else (False, "Universal proof failed. " ++ innerMsg, innerTrace, innerCache)
+        where
+          isUnboundedReal q = qvType q == QuantReal && isNothing (qvLower q) && isNothing (qvUpper q)
+
+      Forall _ _ -> (False, "Unsupported universal quantifier (bounded reals need explicit bounds).", baseTrace, maybeCache)
 
       _ -> fallThrough proofMode maybeCache theory formula baseTrace
 
@@ -568,7 +581,7 @@ proveTheoryWithOptions proofMode customBuchberger maybeCache theoryRaw formulaRa
            then let (p2, r2, t2, c2) = proveTheoryWithOptions proofMode customBuchberger c1 theory f2
                 in (p2, if p2 then "Both conjuncts proved: " ++ r1 ++ " AND " ++ r2 else "Failed on second conjunct: " ++ r2, t1 { steps = steps t1 ++ steps t2 }, c2)
            else (False, "Failed on first conjunct: " ++ r1, t1, c1)
-      
+
       Or f1 f2 ->
         let (p1, r1, t1, c1) = proveTheoryWithOptions proofMode customBuchberger maybeCache theory f1
         in if p1
@@ -577,6 +590,17 @@ proveTheoryWithOptions proofMode customBuchberger maybeCache theoryRaw formulaRa
                 in if p2
                    then (True, "Proved second disjunct: " ++ r2, t2, c2)
                    else (False, "Failed to prove either disjunct.", t1, c2)
+
+      -- Handle unbounded real foralls by treating as free variable proof
+      Forall qs inner
+        | all isUnboundedRealQ qs ->
+            let (innerProved, innerMsg, innerTrace, innerCache) =
+                  proveTheoryWithOptions proofMode customBuchberger maybeCache theory inner
+            in if innerProved
+               then (True, "Proved universally (free variable method). " ++ innerMsg, innerTrace, innerCache)
+               else (False, "Universal proof failed. " ++ innerMsg, innerTrace, innerCache)
+        where
+          isUnboundedRealQ q = qvType q == QuantReal && isNothing (qvLower q) && isNothing (qvUpper q)
 
       _ -> fallThroughWithOptions proofMode customBuchberger maybeCache theory formula baseTrace
 
