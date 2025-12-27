@@ -14,8 +14,30 @@ import Expr
 import Control.Monad.State
 import Control.Monad (when)
 import qualified Data.Map.Strict as Map
-import Data.Ratio ((%))
+import Data.Ratio ((%), numerator, denominator)
 import Numeric.Natural (Natural)
+
+-- | Check if a rational is integral (denominator is 1)
+isIntegral :: Rational -> Bool
+isIntegral r = denominator r == 1
+
+-- | Check if an integer is a perfect square
+isPerfectSquare :: Integer -> Bool
+isPerfectSquare n
+  | n < 0     = False
+  | n == 0    = True
+  | otherwise = let s = intSqrt n in s * s == n
+
+-- | Integer square root (floor of sqrt)
+intSqrt :: Integer -> Integer
+intSqrt n
+  | n < 0     = 0
+  | n == 0    = 0
+  | otherwise = go n
+  where
+    go x =
+      let x' = (x + n `div` x) `div` 2
+      in if x' >= x then x else go x'
 
 -- | Sign information for root expressions
 data RootSign = Positive | Negative | Unknown
@@ -507,6 +529,12 @@ elimExpr (Sqrt e) = do
     Pow t 2 -> do
       addConstraint (Ge t (Const 0))
       return t
+    -- Simplify sqrt of perfect square constants: sqrt(4) -> 2, sqrt(9) -> 3
+    Const n | n >= 0, isIntegral n, isPerfectSquare (numerator n), denominator n == 1 ->
+      return $ Const (toRational (intSqrt (numerator n)))
+    -- Simplify sqrt of perfect square rationals: sqrt(4/9) -> 2/3
+    Const n | n >= 0, isPerfectSquare (numerator n), isPerfectSquare (denominator n) ->
+      return $ Const (toRational (intSqrt (numerator n)) / toRational (intSqrt (denominator n)))
     _ -> do
       -- Check memo first - reuse variable if we've seen this expression
       (_, memo) <- get
