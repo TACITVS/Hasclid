@@ -89,8 +89,8 @@ analyzeProblem :: Theory -> Formula -> ProblemProfile
 analyzeProblem theory goal =
   let
       -- Collect all variables
-      theoryVars = concatMap extractVarsFromFormula theory
-      goalVars = extractVarsFromFormula goal
+      theoryVars = concatMap varsInFormula theory
+      goalVars = varsInFormula goal
       allVars = nub (theoryVars ++ goalVars)
 
       -- Identify symbolic parameters (single uppercase letters)
@@ -192,6 +192,20 @@ classifyProblem theory goal geoFeatures
       hasCollinearityConstraints gf ||
       hasParallelConstraints gf
 
+-- | Extract all expressions from a formula
+extractExprsFromFormula :: Formula -> [Expr]
+extractExprsFromFormula (Eq l r) = [l, r]
+extractExprsFromFormula (Ge l r) = [l, r]
+extractExprsFromFormula (Gt l r) = [l, r]
+extractExprsFromFormula (Le l r) = [l, r]
+extractExprsFromFormula (Lt l r) = [l, r]
+extractExprsFromFormula (Divides l r) = [l, r]
+extractExprsFromFormula (And f1 f2) = extractExprsFromFormula f1 ++ extractExprsFromFormula f2
+extractExprsFromFormula (Or f1 f2) = extractExprsFromFormula f1 ++ extractExprsFromFormula f2
+extractExprsFromFormula (Not f) = extractExprsFromFormula f
+extractExprsFromFormula (Forall _ f) = extractExprsFromFormula f
+extractExprsFromFormula (Exists _ f) = extractExprsFromFormula f
+
 -- | Analyze geometric features in the problem
 analyzeGeometricFeatures :: Theory -> Formula -> GeometricFeatures
 analyzeGeometricFeatures theory goal =
@@ -271,7 +285,7 @@ estimateComplexity numVars numCons maxDeg hasSymbolic probType
 
 -- | Extract all variables from a theory
 extractVariables :: Theory -> [String]
-extractVariables theory = nub $ concatMap extractVarsFromFormula theory
+extractVariables theory = nub $ concatMap varsInFormula theory
 
 -- | Extract symbolic parameters (like S, T - single uppercase letters)
 extractSymbolicParams :: Theory -> Formula -> [String]
@@ -283,77 +297,6 @@ extractSymbolicParams theory goal =
 isSymbolicParam :: String -> Bool
 isSymbolicParam [c] = c `elem` "STUVWPQR"  -- Common parameter names
 isSymbolicParam _ = False
-
--- | Extract variables from a formula
-extractVarsFromFormula :: Formula -> [String]
-extractVarsFromFormula formula =
-  case formula of
-    Forall qs f ->
-      let bound = map qvName qs
-      in filter (`notElem` bound) (extractVarsFromFormula f)
-    Exists qs f ->
-      let bound = map qvName qs
-      in filter (`notElem` bound) (extractVarsFromFormula f)
-    _ ->
-      nub $ concatMap extractVarsFromExpr (extractExprsFromFormula formula)
-
--- | Extract all expressions from a formula
-extractExprsFromFormula :: Formula -> [Expr]
-extractExprsFromFormula (Eq l r) = [l, r]
-extractExprsFromFormula (Ge l r) = [l, r]
-extractExprsFromFormula (Gt l r) = [l, r]
-extractExprsFromFormula (Le l r) = [l, r]
-extractExprsFromFormula (Lt l r) = [l, r]
-extractExprsFromFormula (Divides l r) = [l, r]
-extractExprsFromFormula (And f1 f2) = extractExprsFromFormula f1 ++ extractExprsFromFormula f2
-extractExprsFromFormula (Or f1 f2) = extractExprsFromFormula f1 ++ extractExprsFromFormula f2
-extractExprsFromFormula (Not f) = extractExprsFromFormula f
-extractExprsFromFormula (Forall _ f) = extractExprsFromFormula f
-extractExprsFromFormula (Exists _ f) = extractExprsFromFormula f
-
--- | Extract all variable names from an expression
-extractVarsFromExpr :: Expr -> [String]
-extractVarsFromExpr (Var v) = [v]
-extractVarsFromExpr (Const _) = []
-extractVarsFromExpr (IntVar v) = [v]
-extractVarsFromExpr (IntConst _) = []
-extractVarsFromExpr (Add e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
-extractVarsFromExpr (Sub e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
-extractVarsFromExpr (Mul e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
-extractVarsFromExpr (Div e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
-extractVarsFromExpr (Mod e1 e2) = extractVarsFromExpr e1 ++ extractVarsFromExpr e2
-extractVarsFromExpr (Pow e _) = extractVarsFromExpr e
-extractVarsFromExpr (Sqrt e) = extractVarsFromExpr e
-extractVarsFromExpr (Dist2 p1 p2) =
-  ["x" ++ p1, "y" ++ p1, "z" ++ p1, "x" ++ p2, "y" ++ p2, "z" ++ p2]
-extractVarsFromExpr (Collinear p1 p2 p3) =
-  ["x" ++ p1, "y" ++ p1, "x" ++ p2, "y" ++ p2, "x" ++ p3, "y" ++ p3]
-extractVarsFromExpr (Dot p1 p2 p3 p4) =
-  ["x" ++ p1, "y" ++ p1, "z" ++ p1, "x" ++ p2, "y" ++ p2, "z" ++ p2,
-   "x" ++ p3, "y" ++ p3, "z" ++ p3, "x" ++ p4, "y" ++ p4, "z" ++ p4]
-extractVarsFromExpr (Circle p1 p2 _) =
-  ["x" ++ p1, "y" ++ p1, "z" ++ p1, "x" ++ p2, "y" ++ p2, "z" ++ p2]
-extractVarsFromExpr (Midpoint p1 p2 p3) =
-  ["x" ++ p1, "y" ++ p1, "z" ++ p1,
-   "x" ++ p2, "y" ++ p2, "z" ++ p2,
-   "x" ++ p3, "y" ++ p3, "z" ++ p3]
-extractVarsFromExpr (Perpendicular p1 p2 p3 p4) =
-  ["x" ++ p1, "y" ++ p1, "z" ++ p1,
-   "x" ++ p2, "y" ++ p2, "z" ++ p2,
-   "x" ++ p3, "y" ++ p3, "z" ++ p3,
-   "x" ++ p4, "y" ++ p4, "z" ++ p4]
-extractVarsFromExpr (Parallel p1 p2 p3 p4) =
-  ["x" ++ p1, "y" ++ p1, "z" ++ p1,
-   "x" ++ p2, "y" ++ p2, "z" ++ p2,
-   "x" ++ p3, "y" ++ p3, "z" ++ p3,
-   "x" ++ p4, "y" ++ p4, "z" ++ p4]
-extractVarsFromExpr (AngleEq2D a b c d e f) =
-  ["x" ++ a, "y" ++ a, "x" ++ b, "y" ++ b, "x" ++ c, "y" ++ c,
-   "x" ++ d, "y" ++ d, "x" ++ e, "y" ++ e, "x" ++ f, "y" ++ f]
-extractVarsFromExpr (AngleEq2DAbs a b c d e f) =
-  ["x" ++ a, "y" ++ a, "x" ++ b, "y" ++ b, "x" ++ c, "y" ++ c,
-   "x" ++ d, "y" ++ d, "x" ++ e, "y" ++ e, "x" ++ f, "y" ++ f]
-extractVarsFromExpr (Determinant rows) = concatMap extractVarsFromExpr (concat rows)
 
 -- =============================================
 -- Polynomial Analysis Utilities
@@ -367,9 +310,21 @@ countPolynomials = length
 estimateMaxDegree :: Theory -> Formula -> Int
 estimateMaxDegree theory goal =
   let allFormulas = goal : theory
-      allExprs = concatMap extractExprsFromFormula allFormulas
+      allExprs = concatMap extractExprsLocal allFormulas
       degrees = map estimateExprDegree allExprs
   in if null degrees then 0 else maximum degrees
+  where
+    extractExprsLocal (Eq l r) = [l, r]
+    extractExprsLocal (Ge l r) = [l, r]
+    extractExprsLocal (Gt l r) = [l, r]
+    extractExprsLocal (Le l r) = [l, r]
+    extractExprsLocal (Lt l r) = [l, r]
+    extractExprsLocal (Divides l r) = [l, r]
+    extractExprsLocal (And f1 f2) = extractExprsLocal f1 ++ extractExprsLocal f2
+    extractExprsLocal (Or f1 f2) = extractExprsLocal f1 ++ extractExprsLocal f2
+    extractExprsLocal (Not f) = extractExprsLocal f
+    extractExprsLocal (Forall _ f) = extractExprsLocal f
+    extractExprsLocal (Exists _ f) = extractExprsLocal f
 
 -- | Estimate degree of an expression (conservative upper bound)
 estimateExprDegree :: Expr -> Int
@@ -384,6 +339,12 @@ estimateExprDegree (Div e1 e2) = estimateExprDegree e1 + estimateExprDegree e2
 estimateExprDegree (Mod e1 e2) = estimateExprDegree e1 + estimateExprDegree e2
 estimateExprDegree (Pow e n) = fromIntegral n * estimateExprDegree e
 estimateExprDegree (Sqrt e) = max 1 (estimateExprDegree e)
+estimateExprDegree (Sin e) = estimateExprDegree e -- Heuristic
+estimateExprDegree (Cos e) = estimateExprDegree e
+estimateExprDegree (Tan e) = estimateExprDegree e
+estimateExprDegree (Asin e) = estimateExprDegree e
+estimateExprDegree (Acos e) = estimateExprDegree e
+estimateExprDegree (Atan e) = estimateExprDegree e
 estimateExprDegree (Dist2 _ _) = 2  -- (x1-x2)^2 + (y1-y2)^2
 estimateExprDegree (Collinear _ _ _) = 2
 estimateExprDegree (Dot _ _ _ _) = 2

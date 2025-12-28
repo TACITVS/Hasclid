@@ -18,6 +18,10 @@ This list reflects what is currently missing or only partially implemented, afte
 ## Notes
 - Term ordering control is already present (Lex/GrLex/GrevLex with REPL support), so no action required there aside from potential integration audits.
 
+## Completed (Recent)
+- **Trigonometric Support**: Full support for `sin`, `cos`, `tan`, `asin`, `acos`, `atan` in the expression language, with implicit `sqrt` recognition and algebraic simplification.
+- **Variable Centralization**: Refactored `varsInExpr` and `varsInFormula` to `Core/Types.hs` for cleaner architecture.
+
 ## Prioritized TODO (2025-12-05)
 - **Constraint solving / constructive mode** (easy, high value): broaden witness/counterexample search (wider ranges, simple linear solving, better heuristics).
 - **Non-degeneracy filters** (easy–moderate, high safety): richer degeneracy checks (collinear/coplanar/rank conditions) with low false positives.

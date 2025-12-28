@@ -791,25 +791,6 @@ proveUnivariatePolyForall lo hi upoly strict =
 varInTheory :: String -> Theory -> Bool
 varInTheory v = any (v `elem`) . map varsInFormula
 
-varsInFormula :: Formula -> [String]
-varsInFormula (Eq l r) = varsInExpr l ++ varsInExpr r
-varsInFormula (Ge l r) = varsInExpr l ++ varsInExpr r
-varsInFormula (Gt l r) = varsInExpr l ++ varsInExpr r
-varsInFormula (And f1 f2) = varsInFormula f1 ++ varsInFormula f2
-varsInFormula (Or f1 f2) = varsInFormula f1 ++ varsInFormula f2
-varsInFormula (Not f) = varsInFormula f
-varsInFormula _ = []
-
-varsInExpr :: Expr -> [String]
-varsInExpr (Var v) = [v]
-varsInExpr (Add a b) = varsInExpr a ++ varsInExpr b
-varsInExpr (Sub a b) = varsInExpr a ++ varsInExpr b
-varsInExpr (Mul a b) = varsInExpr a ++ varsInExpr b
-varsInExpr (Div a b) = varsInExpr a ++ varsInExpr b
-varsInExpr (Pow e _) = varsInExpr e
-varsInExpr (Sqrt e) = varsInExpr e
-varsInExpr _ = []
-
 negateIntGoal :: Formula -> Maybe [Formula]
 negateIntGoal (Eq l r) = Just [Gt l r, Gt r l]
 negateIntGoal (Ge l r) = Just [Gt r l]

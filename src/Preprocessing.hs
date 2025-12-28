@@ -412,6 +412,12 @@ applySubstitutionsExpr subs = go
     go (Mod e1 e2) = Mod (go e1) (go e2)
     go (Pow e n) = Pow (go e) n
     go (Sqrt e) = Sqrt (go e)
+    go (Sin e) = Sin (go e)
+    go (Cos e) = Cos (go e)
+    go (Tan e) = Tan (go e)
+    go (Asin e) = Asin (go e)
+    go (Acos e) = Acos (go e)
+    go (Atan e) = Atan (go e)
     go (Dist2 p1 p2) =
       -- Expand dist2 to coordinate form so substitutions can be applied
       let x1 = Var ("x" ++ p1); y1 = Var ("y" ++ p1); z1 = Var ("z" ++ p1)
@@ -465,38 +471,3 @@ simplifyTheory theory =
     simplified = nub $ filter notTautology theory
   in simplified
 
--- | Get all variables mentioned in a formula
-varsInFormula :: Formula -> [String]
-varsInFormula (Eq e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (Le e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (Lt e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (Ge e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (Gt e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (Divides e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (And f1 f2) = varsInFormula f1 ++ varsInFormula f2
-varsInFormula (Or f1 f2) = varsInFormula f1 ++ varsInFormula f2
-varsInFormula (Not f) = varsInFormula f
-varsInFormula (Forall _ f) = varsInFormula f
-varsInFormula (Exists _ f) = varsInFormula f
-
--- | Get all variables in an expression
-varsInExpr :: Expr -> [String]
-varsInExpr (Var v) = [v]
-varsInExpr (Add e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInExpr (Sub e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInExpr (Mul e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInExpr (Div e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInExpr (Mod e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInExpr (Pow e _) = varsInExpr e
-varsInExpr (Sqrt e) = varsInExpr e
-varsInExpr (Dist2 p1 p2) = ["x"++p1, "y"++p1, "z"++p1, "x"++p2, "y"++p2, "z"++p2]
-varsInExpr (Collinear p1 p2 p3) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3]
-varsInExpr (Dot p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3, p4]
-varsInExpr (Circle _ _ r) = varsInExpr r
-varsInExpr (Midpoint p1 p2 p3) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3]
-varsInExpr (Perpendicular p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3, p4]
-varsInExpr (Parallel p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3, p4]
-varsInExpr (AngleEq2D p1 p2 p3 p4 p5 p6) = concatMap (\p -> ["x"++p, "y"++p]) [p1, p2, p3, p4, p5, p6]
-varsInExpr (AngleEq2DAbs p1 p2 p3 p4 p5 p6) = concatMap (\p -> ["x"++p, "y"++p]) [p1, p2, p3, p4, p5, p6]
-varsInExpr (Determinant rows) = concatMap (concatMap varsInExpr) rows
-varsInExpr _ = []

@@ -76,6 +76,12 @@ All expressions use prefix notation (Lisp-style):
 | `(sqrt e)` | Square root | `(sqrt 4)` |
 | `(cbrt e)` | Cube root | `(cbrt 8)` |
 | `(root n e)` | Nth root | `(root 4 16)` |
+| `(sin e)` | Sine | `(sin x)` |
+| `(cos e)` | Cosine | `(cos x)` |
+| `(tan e)` | Tangent | `(tan x)` |
+| `(asin e)` | Arcsine | `(asin x)` |
+| `(acos e)` | Arccosine | `(acos x)` |
+| `(atan e)` | Arctangent | `(atan x)` |
 
 ### Comparison Operators
 

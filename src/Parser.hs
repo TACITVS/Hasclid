@@ -246,6 +246,42 @@ exprFromSExpr intVars (List (Atom op : args)) = case op of
     _ -> Left $ ParseError (WrongArity "sqrt" 1 (length args))
                   "sqrt requires exactly 1 argument"
 
+  "sin" -> case args of
+    [a] -> do
+      e <- exprFromSExpr intVars a
+      Right $ Sin e
+    _ -> Left $ ParseError (WrongArity "sin" 1 (length args)) "Usage: (sin x)"
+
+  "cos" -> case args of
+    [a] -> do
+      e <- exprFromSExpr intVars a
+      Right $ Cos e
+    _ -> Left $ ParseError (WrongArity "cos" 1 (length args)) "Usage: (cos x)"
+
+  "tan" -> case args of
+    [a] -> do
+      e <- exprFromSExpr intVars a
+      Right $ Tan e
+    _ -> Left $ ParseError (WrongArity "tan" 1 (length args)) "Usage: (tan x)"
+
+  "asin" -> case args of
+    [a] -> do
+      e <- exprFromSExpr intVars a
+      Right $ Asin e
+    _ -> Left $ ParseError (WrongArity "asin" 1 (length args)) "Usage: (asin x)"
+
+  "acos" -> case args of
+    [a] -> do
+      e <- exprFromSExpr intVars a
+      Right $ Acos e
+    _ -> Left $ ParseError (WrongArity "acos" 1 (length args)) "Usage: (acos x)"
+
+  "atan" -> case args of
+    [a] -> do
+      e <- exprFromSExpr intVars a
+      Right $ Atan e
+    _ -> Left $ ParseError (WrongArity "atan" 1 (length args)) "Usage: (atan x)"
+
   "dist2" -> case args of
     [Atom p1, Atom p2] -> Right $ Dist2 p1 p2
     _ -> Left $ ParseError (WrongArity "dist2" 2 (length args))

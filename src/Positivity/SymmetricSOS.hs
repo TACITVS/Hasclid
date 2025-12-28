@@ -20,6 +20,10 @@ import F4Lite (f4LiteGroebner, reduceWithBasis)
 import qualified Positivity.GeneralizedSturm as GS
 import Positivity.GeneralizedSturm (ProofResult(..))
 import Positivity.SOS (getSOSCertificate)
+import qualified Positivity.SOSTypes as SOST
+import Positivity.SOSTypes (trySOSHeuristic)
+import qualified Polynomial
+import Data.Ratio (numerator, denominator)
 import ProofMode (ProofMode(..))
 import TermOrder (TermOrder(..), compareMonomials)
 
@@ -60,52 +64,80 @@ checkBarrowInequality proofMode theory goal =
      then BarrowNotApplicable ("Too many constraints: " ++ show (length theory))
      else
        case extractPolynomialSystem theory goal of
-      Nothing -> BarrowNotApplicable "Could not extract polynomial system"      
+      Nothing -> BarrowNotApplicable "Could not extract polynomial system"
       Just (eqConstraints, posConstraints, goalPoly) ->
-        -- Check variable count (allow up to 30 variables for complex geometric proofs)
-        let vars = S.toList $ S.unions $ map getVars (goalPoly : eqConstraints ++ posConstraints)
-            nVars = length vars
-        in if nVars > 30
-           then BarrowNotApplicable $ "Too many variables: " ++ show nVars
-           else
-             let subMap = buildSubMap theory
-                 barrowStrongOk = barrowConditionsMet subMap eqConstraints id theory
-                 barrowOk = barrowPositivity theory
-                 barrowContext = barrowVarContext theory || matchesBarrowGoal goal
-                 directBarrowProof =
-                   if isInequalityFormula goal && barrowContext && (barrowStrongOk || barrowOk)
-                   then Just "Matched Barrow inequality (built-in lemma for angle-bisector form)"
-                   else Nothing
-             in case directBarrowProof of
-                  Just msg -> BarrowProved msg
-                  Nothing ->
-                    let ord = compareMonomials GrevLex
-                        basis = if null eqConstraints
-                                then []
-                                else f4LiteGroebner ord SugarStrategy True eqConstraints
-                        reducer = if null eqConstraints
-                                  then id
-                                  else reduceWithBasis ord basis
-                        reducedGoal = reducer goalPoly
-                        reducedPos = map reducer posConstraints
-                        maybeConst = polyConstantValue reducedGoal
-                        maybeCert = getSOSCertificate reducedPos reducer reducedGoal
-                        fallback = GS.tryGenericProof (proofMode == Unsafe) [] reducedPos reducedGoal
-                    in case maybeConst of
-                         Just c
-                           | c >= 0 -> BarrowProved "Reduced to non-negative constant"
-                           | otherwise -> BarrowFailed "Reduced to negative constant"
-                         Nothing
-                           | reducedGoal == polyZero -> BarrowProved "Goal reduces to 0 via Groebner basis"
-                           | isJust maybeCert -> BarrowProved "Groebner-reduced SOS certificate found"
-                           | otherwise ->
-                               case fallback of
-                                 GS.Proved msg -> BarrowProved msg
-                                 GS.Disproved msg -> BarrowFailed msg
-                                 GS.Unknown msg -> BarrowNotApplicable msg
+        -- FAST PATH: Try SOS heuristics directly on the goal polynomial first
+        -- This avoids expensive Groebner basis computation for simple cases
+        case SOST.trySOSHeuristic goalPoly (goal : theory) of
+          Just cert ->
+            -- Verify the certificate is correct before accepting
+            let terms = SOST.sosTerms cert
+                reconstructed = foldl Polynomial.add polyZero
+                  [Polynomial.scale c (Polynomial.mul p p) | (c, p) <- terms]
+            in if reconstructed == goalPoly
+               then BarrowProved $ formatSOSCertificateLocal cert
+               else BarrowNotApplicable "SOS certificate verification failed"
+          Nothing ->
+            -- Check variable count (allow up to 30 variables for complex geometric proofs)
+            let vars = S.toList $ S.unions $ map getVars (goalPoly : eqConstraints ++ posConstraints)
+                nVars = length vars
+            in if nVars > 30
+               then BarrowNotApplicable $ "Too many variables: " ++ show nVars
+               else
+                 let subMap = buildSubMap theory
+                     barrowStrongOk = barrowConditionsMet subMap eqConstraints id theory
+                     barrowOk = barrowPositivity theory
+                     barrowContext' = barrowVarContext theory || matchesBarrowGoal goal
+                     directBarrowProof =
+                       if isInequalityFormula goal && barrowContext' && (barrowStrongOk || barrowOk)
+                       then Just "Matched Barrow inequality (built-in lemma for angle-bisector form)"
+                       else Nothing
+                 in case directBarrowProof of
+                      Just msg -> BarrowProved msg
+                      Nothing ->
+                        let ord = compareMonomials GrevLex
+                            basis = if null eqConstraints
+                                    then []
+                                    else f4LiteGroebner ord SugarStrategy True eqConstraints
+                            reducer = if null eqConstraints
+                                      then id
+                                      else reduceWithBasis ord basis
+                            reducedGoal = reducer goalPoly
+                            reducedPos = map reducer posConstraints
+                            maybeConst = polyConstantValue reducedGoal
+                            maybeCert = getSOSCertificate reducedPos reducer reducedGoal
+                            fallback = GS.tryGenericProof (proofMode == Unsafe) [] reducedPos reducedGoal
+                        in case maybeConst of
+                             Just c
+                               | c >= 0 -> BarrowProved $ "Reduced to non-negative constant: " ++ show c ++ " >= 0"
+                               | otherwise -> BarrowFailed "Reduced to negative constant"
+                             Nothing
+                               | reducedGoal == polyZero -> BarrowProved "Goal reduces to 0 via Groebner basis"
+                               | Just cert <- maybeCert -> BarrowProved $ formatSOSCertificateLocal cert
+                               | otherwise ->
+                                   case fallback of
+                                     GS.Proved msg -> BarrowProved msg
+                                     GS.Disproved msg -> BarrowFailed msg
+                                     GS.Unknown msg -> BarrowNotApplicable msg
+
+-- | Format SOS certificate for human-readable output
+formatSOSCertificateLocal :: SOST.SOSCertificate -> String
+formatSOSCertificateLocal cert =
+  let terms = SOST.sosTerms cert
+      lemmas = SOST.sosLemmas cert
+      formatCoeff c
+        | c == 1 = ""
+        | denominator c == 1 = show (numerator c) ++ "*"
+        | otherwise = show (numerator c) ++ "/" ++ show (denominator c) ++ "*"
+      formatTerm (c, p) = formatCoeff c ++ "(" ++ prettyPolyNice p ++ ")^2"
+      termStrs = map formatTerm (reverse terms)
+      lemmaStrs = map prettyPolyNice lemmas
+      allParts = termStrs ++ lemmaStrs
+      decomposition = if null allParts then "0" else unwords (zipWith (\i s -> (if i > 1 then "+ " else "") ++ s) [1..] allParts)
+  in "Sum of squares decomposition:\n  " ++ decomposition ++ " >= 0"
 
 -- | Extract polynomial constraints from theory
-extractPolynomialSystem :: [Formula] -> Formula -> Maybe ([Poly], [Poly], Poly) 
+extractPolynomialSystem :: [Formula] -> Formula -> Maybe ([Poly], [Poly], Poly)
 extractPolynomialSystem theory goal =
   let subMap = buildSubMap theory
       (eqPolys, posPolys) = partitionConstraints subMap theory
@@ -177,7 +209,7 @@ matchesBarrowGoal f =
         Le lhs rhs -> isBarrowLinear rhs lhs || isBarrowSquared rhs lhs
         Lt lhs rhs -> isBarrowLinear rhs lhs || isBarrowSquared rhs lhs
         _ -> False
-      vars = varsInFormulaLocal f
+      vars = varsInFormula f
       barrowVars = ["PA", "PB", "PC", "PU", "PV", "PW"]
       hasAll = all (`elem` vars) barrowVars
       isIneq = case f of Ge _ _ -> True; Gt _ _ -> True; Le _ _ -> True; Lt _ _ -> True; _ -> False
@@ -250,7 +282,7 @@ barrowPositivity theory =
 
 barrowVarContext :: [Formula] -> Bool
 barrowVarContext theory =
-  let vars = concatMap varsInFormulaLocal theory
+  let vars = concatMap varsInFormula theory
   in all (`elem` vars) ["PA", "PB", "PC", "PU", "PV", "PW"]
 
 isInequalityFormula :: Formula -> Bool
@@ -286,12 +318,12 @@ hasAngleBisectorVars theory pu pb pc side =
   let hasVars vars f =
         case f of
           Eq _ _ ->
-            let fv = varsInFormulaLocal f
+            let fv = varsInFormula f
             in all (`elem` fv) vars
           _ -> False
       sideVars = [side, side ++ "2"]
       required = [pu, pb, pc]
-      hasSide f = any (`elem` varsInFormulaLocal f) sideVars
+      hasSide f = any (`elem` varsInFormula f) sideVars
   in any (\f -> hasVars required f && hasSide f) theory
 
 polyEqUpToSign :: Poly -> Poly -> Bool
@@ -377,7 +409,7 @@ isHeronFormula :: Expr -> Bool
 isHeronFormula expr =
   -- Simplified check: look for the characteristic structure
   -- The Heron formula has degree 4 in variables and is symmetric
-  let vars = extractVarsExpr expr
+  let vars = varsInExpr expr
   in length vars >= 3 && hasQuarticTerms expr
 
 isAreaLike :: Expr -> Bool
@@ -416,29 +448,6 @@ extractCosineProduct (Pow e 2) = e
 extractCosineProduct (Mul (Pow e 2) rest) = Mul e (extractCosineProduct rest)
 extractCosineProduct (Mul rest (Pow e 2)) = Mul (extractCosineProduct rest) e
 extractCosineProduct e = e
-
--- | Extract variables from expression
-extractVarsExpr :: Expr -> [String]
-extractVarsExpr (Var v) = [v]
-extractVarsExpr (Const _) = []
-extractVarsExpr (Add e1 e2) = extractVarsExpr e1 ++ extractVarsExpr e2
-extractVarsExpr (Sub e1 e2) = extractVarsExpr e1 ++ extractVarsExpr e2
-extractVarsExpr (Mul e1 e2) = extractVarsExpr e1 ++ extractVarsExpr e2
-extractVarsExpr (Pow e _) = extractVarsExpr e
-extractVarsExpr _ = []
-
-varsInFormulaLocal :: Formula -> [String]
-varsInFormulaLocal (Eq l r) = extractVarsExpr l ++ extractVarsExpr r
-varsInFormulaLocal (Ge l r) = extractVarsExpr l ++ extractVarsExpr r
-varsInFormulaLocal (Gt l r) = extractVarsExpr l ++ extractVarsExpr r
-varsInFormulaLocal (Le l r) = extractVarsExpr l ++ extractVarsExpr r
-varsInFormulaLocal (Lt l r) = extractVarsExpr l ++ extractVarsExpr r
-varsInFormulaLocal (And f1 f2) = varsInFormulaLocal f1 ++ varsInFormulaLocal f2
-varsInFormulaLocal (Or f1 f2) = varsInFormulaLocal f1 ++ varsInFormulaLocal f2
-varsInFormulaLocal (Not f) = varsInFormulaLocal f
-varsInFormulaLocal (Forall _ f) = varsInFormulaLocal f
-varsInFormulaLocal (Exists _ f) = varsInFormulaLocal f
-varsInFormulaLocal _ = []
 
 extractDefinitions :: [Formula] -> M.Map String Expr
 extractDefinitions = M.fromList . mapMaybe extractDef
