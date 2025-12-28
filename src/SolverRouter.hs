@@ -52,7 +52,7 @@ import qualified Geometry.WLOG
 import qualified Geometry.Barycentric
 import Heuristics
 import qualified Heuristics as H
-import AreaMethod (proveArea, proveAreaE, AreaResult(..), deriveConstruction)
+import AreaMethod (proveArea, proveAreaE, AreaResult(..), deriveConstruction, checkConstruction)
 import qualified Modular
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
@@ -67,16 +67,18 @@ import ProofMode (ProofMode(..), defaultProofMode)
 import Core.Types
 import Core.Problem
 import Core.Solver
-import Core.Orchestrator
+import Core.Orchestrator hiding (proveSequential)
+import qualified Core.Orchestrator as Orchestrator
 import qualified Solvers.Wu as SW
 import qualified Solvers.Groebner as SG
 import qualified Solvers.Interval as SI
+import qualified Solvers.Metric as SM
 
 -- =============================================
 -- Legacy / Compatibility Types
 -- =============================================
 
-data SolverChoice = UseGeoSolver | UseWu | UseGroebner | UseConstructiveWu | UseCAD | UseAreaMethod | UseSOS | UseNumerical | UseInterval | Unsolvable deriving (Show, Eq)
+data SolverChoice = UseGeoSolver | UseWu | UseGroebner | UseConstructiveWu | UseCAD | UseAreaMethod | UseSOS | UseNumerical | UseInterval | UseMetric | Unsolvable deriving (Show, Eq)
 data ProofEvidence = EvidenceSOS SOSCertificate [String] deriving (Show, Eq)
 
 data AutoSolveResult = AutoSolveResult
@@ -178,6 +180,14 @@ instance Solver LocalIntervalSolver where
     let (proved, reason) = SI.solveInterval (assumptions prob) (goal prob)
     return $ ProofResult (if proved then Proved else Failed reason) [] 0.0
 
+-- Wrapper for Metric Solver
+data LocalMetricSolver = LocalMetricSolver
+instance Solver LocalMetricSolver where
+  name _ = "Metric Space Solver"
+  solve _ prob = do
+    let (proved, reason) = SM.solveMetric (assumptions prob) (goal prob)
+    return $ ProofResult (if proved then Proved else Failed reason) [] 0.0
+
 --Wrapper for Area Method Solver
 data LocalAreaSolver = LocalAreaSolver
 instance Solver LocalAreaSolver where
@@ -189,7 +199,9 @@ instance Solver LocalAreaSolver where
       Just (steps, geoGoal) ->
         case proveAreaE steps geoGoal of
           Right res ->
-            if areaProved res
+            if isDegenerate res
+            then return $ ProofResult (Failed "Degenerate Construction (e.g. parallel lines intersected)") [] 0.0
+            else if areaProved res
             then return $ ProofResult Proved ["Area Method Proved"] 0.0
             else return $ ProofResult (Failed (areaReason res)) [] 0.0
           Left err -> return $ ProofResult (Failed (show err)) [] 0.0
@@ -216,7 +228,7 @@ autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
 
 -- | Synthesize a witness for an existential goal
 synthesize :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> Maybe (M.Map String Rational)
-synthesize opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
+synthesize _ pointSubs theoryRaw goalRaw = unsafePerformIO $ do
   res <- try $ evaluate $
     let (theoryG, goalG, _) = preprocessGeometry pointSubs theoryRaw goalRaw
         -- Skipping advanced heuristics for now to keep variable mapping simple
@@ -236,6 +248,16 @@ autoSolveInternal pts opts pointSubs theoryRaw goalRaw =
   in if not modConsistent
      then let profile = analyzeProblem theoryRaw goalRaw
           in AutoSolveResult UseNumerical "Probabilistic Refutation" profile goalRaw False modReason Nothing Nothing M.empty
+     else
+  -- GENERICITY CHECK (Area Method)
+  -- Verify that the implied geometric construction is non-degenerate
+  let (isGeneric, genReason) = 
+        case deriveConstruction theoryRaw goalRaw of
+          Just (steps, _) -> checkConstruction steps
+          Nothing -> (True, "No construction derived")
+  in if not isGeneric
+     then let profile = analyzeProblem theoryRaw goalRaw
+          in AutoSolveResult UseGeoSolver "Degenerate Construction" profile goalRaw False genReason Nothing Nothing M.empty
      else
   -- AXIOM PATH: Check for well-known geometric theorems first
   case H.checkTriangleInequalityAxiom goalRaw of
@@ -281,7 +303,7 @@ autoSolveInternal pts opts pointSubs theoryRaw goalRaw =
               -- Determine Strategy based on Profile
               strategy = determineStrategy profile pts opts goal'
           in unsafePerformIO $ do
-               outcome <- proveSequential strategy problem
+               outcome <- Orchestrator.proveParallel strategy problem
                let baseResult = mapResultToAuto outcome profile goal' varDefs logsH
                -- Try numerical verification as fallback for failed inequalities
                if not (isProved baseResult) && proofMode opts == Unsafe && isInequality goal'
@@ -677,10 +699,11 @@ executeSolver pts choice opts _profile theory goal = unsafePerformIO $ do
         UseSOS -> AnySolver (LocalSOSSolver pts opts)
         UseCAD -> AnySolver (LocalCADSolver opts)
         UseGeoSolver -> AnySolver LocalGeoSolver
-        UseAreaMethod -> AnySolver LocalGeoSolver -- Placeholder mapping
+        UseAreaMethod -> AnySolver LocalAreaSolver
+        UseInterval -> AnySolver LocalIntervalSolver
         _ -> AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts)) -- Fallback        
 
-  outcome <- proveSequential [solver] problem
+  outcome <- Orchestrator.proveParallel [solver] problem
   let res = outcomeResult outcome
       (status, reason) = case resultStatus res of
         Proved -> (True, "Proved")
@@ -929,9 +952,9 @@ findCyclicOrder vars crossTerms =
   let pairs = [(v1, v2) | (v1, v2, _) <- crossTerms]
       neighbors v = nub [if v1 == v then v2 else v1 | (v1, v2) <- pairs, v1 == v || v2 == v]
       -- Start from first variable and follow the chain
-      (start, rest) = case vars of
-                        (s:_) -> (s, vars)
-                        [] -> ("", []) -- Should be caught by pattern match above
+      start = case vars of
+                (s:_) -> s
+                [] -> "" -- Should be caught by pattern match above
       
       followChain prev current visited
         | length visited == length vars = Just (reverse visited)

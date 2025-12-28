@@ -11,6 +11,7 @@ module AreaMethod
   , exprToGeoExpr
   , geoToExpr
   , reduceArea
+  , checkConstruction
   ) where
 
 import Expr
@@ -19,6 +20,8 @@ import Data.Ratio
 import qualified Data.Map.Strict as M
 import Data.List (nub, isPrefixOf, find, (\\))
 import Data.Maybe (mapMaybe)
+import Control.Monad.Writer (Writer, runWriter, tell)
+import qualified Modular
 
 -- =============================================
 -- 1. Geometric Quantities (Invariants)
@@ -47,6 +50,7 @@ data ConstructStep
   deriving (Show, Eq)
 
 type Construction = [ConstructStep]
+type AreaM = Writer [GeoExpr]
 
 -- =============================================
 -- 2. Basic Evaluation / Simplification
@@ -118,45 +122,47 @@ normalizeDist2 a b
 -- 3. Elimination Lemmas
 -- =============================================
 
-eliminate :: ConstructStep -> GeoExpr -> GeoExpr
+eliminate :: ConstructStep -> GeoExpr -> AreaM GeoExpr
 eliminate (PointMid m a b) expr = eliminate (PointOnLine m a b (G_Const (1%2))) expr
-eliminate step expr = simplifyGeo (elimRec step expr)
+eliminate step expr = do
+  res <- elimRec step expr
+  return (simplifyGeo res)
 
-elimRec :: ConstructStep -> GeoExpr -> GeoExpr
-elimRec step (G_Add a b) = G_Add (elimRec step a) (elimRec step b)
-elimRec step (G_Sub a b) = G_Sub (elimRec step a) (elimRec step b)
-elimRec step (G_Mul a b) = G_Mul (elimRec step a) (elimRec step b)
-elimRec step (G_Div a b) = G_Div (elimRec step a) (elimRec step b)
-elimRec step (G_Sqrt a)  = G_Sqrt (elimRec step a)
-elimRec _    (G_Const c) = G_Const c
-elimRec _    (G_Param s) = G_Param s
+elimRec :: ConstructStep -> GeoExpr -> AreaM GeoExpr
+elimRec step (G_Add a b) = G_Add <$> elimRec step a <*> elimRec step b
+elimRec step (G_Sub a b) = G_Sub <$> elimRec step a <*> elimRec step b
+elimRec step (G_Mul a b) = G_Mul <$> elimRec step a <*> elimRec step b
+elimRec step (G_Div a b) = G_Div <$> elimRec step a <*> elimRec step b
+elimRec step (G_Sqrt a)  = G_Sqrt <$> elimRec step a
+elimRec _    (G_Const c) = return (G_Const c)
+elimRec _    (G_Param s) = return (G_Param s)
 elimRec step (S_Area a b c) = elimArea step a b c
 elimRec step (P_Pyth a b c) = elimPyth step a b c
 elimRec step (G_Dist2 a b)  = elimDist step a b
 
 -- Area Elimination
-elimArea :: ConstructStep -> String -> String -> String -> GeoExpr
+elimArea :: ConstructStep -> String -> String -> String -> AreaM GeoExpr
 elimArea (PointOnLine y u v r) a b c
   | y == a = elimAreaOnLine y u v r b c
   | y == b = elimAreaOnLine y u v r c a
   | y == c = elimAreaOnLine y u v r a b
-  | otherwise = S_Area a b c
+  | otherwise = return (S_Area a b c)
 elimArea (PointInter y u v p q) a b c
   | y == a = elimAreaInter y u v p q b c
   | y == b = elimAreaInter y u v p q c a
   | y == c = elimAreaInter y u v p q a b
-  | otherwise = S_Area a b c
+  | otherwise = return (S_Area a b c)
 elimArea (PointInterAng y u v t1 p q t2) a b c
   | y == a = elimAreaInterAng y u v t1 p q t2 b c
   | y == b = elimAreaInterAng y u v t1 p q t2 c a
   | y == c = elimAreaInterAng y u v t1 p q t2 a b
-  | otherwise = S_Area a b c
-elimArea _ a b c = S_Area a b c
+  | otherwise = return (S_Area a b c)
+elimArea _ a b c = return (S_Area a b c)
 
 -- Pythagoras Elimination
-elimPyth :: ConstructStep -> String -> String -> String -> GeoExpr
+elimPyth :: ConstructStep -> String -> String -> String -> AreaM GeoExpr
 elimPyth (PointOnLine y u v r) a b c
-  | y == b =
+  | y == b = return $
       let pU = P_Pyth a u c
           pV = P_Pyth a v c
           uv2 = G_Dist2 u v
@@ -165,56 +171,55 @@ elimPyth (PointOnLine y u v r) a b c
           term1 = G_Mul (G_Sub (G_Const 1) r) pU
           term2 = G_Mul r pV
       in G_Sub (G_Add term1 term2) corr
-  | y == a =
+  | y == a = return $
       let pU = P_Pyth u b c
           pV = P_Pyth v b c
           term1 = G_Mul (G_Sub (G_Const 1) r) pU
           term2 = G_Mul r pV
       in G_Add term1 term2
-  | y == c =
+  | y == c = return $
       let pU = P_Pyth a b u
           pV = P_Pyth a b v
           term1 = G_Mul (G_Sub (G_Const 1) r) pU
           term2 = G_Mul r pV
       in G_Add term1 term2
-  | otherwise = P_Pyth a b c
-elimPyth _ a b c = P_Pyth a b c
+  | otherwise = return (P_Pyth a b c)
+elimPyth _ a b c = return (P_Pyth a b c)
 
 -- Distance Elimination
-elimDist :: ConstructStep -> String -> String -> GeoExpr
+elimDist :: ConstructStep -> String -> String -> AreaM GeoExpr
 elimDist (PointOnLine y u v r) a b
-  | y == a = elimDistOnLine y u v r b
-  | y == b = elimDistOnLine y u v r a
-  | otherwise = G_Dist2 a b
-elimDist _ a b = G_Dist2 a b
+  | y == a = return (elimDistOnLine y u v r b)
+  | y == b = return (elimDistOnLine y u v r a)
+  | otherwise = return (G_Dist2 a b)
+elimDist _ a b = return (G_Dist2 a b)
 
 -- =============================================
 -- Helpers
 -- =============================================
 
-elimAreaOnLine :: String -> String -> String -> GeoExpr -> String -> String -> GeoExpr
-elimAreaOnLine _ u v r a b =
+elimAreaOnLine :: String -> String -> String -> GeoExpr -> String -> String -> AreaM GeoExpr
+elimAreaOnLine _ u v r a b = return $
   let sU = S_Area u a b
       sV = S_Area v a b
       term1 = G_Mul (G_Sub (G_Const 1) r) sU
       term2 = G_Mul r sV
   in G_Add term1 term2
 
-elimAreaInter :: String -> String -> String -> String -> String -> String -> String -> GeoExpr
-elimAreaInter _ u v p q a b =
+elimAreaInter :: String -> String -> String -> String -> String -> String -> String -> AreaM GeoExpr
+elimAreaInter _ u v p q a b = do
   let sPQU = S_Area p q u
       sPQV = S_Area p q v
       sVAB = S_Area v a b
       sUAB = S_Area u a b
       num = G_Sub (G_Mul sPQU sVAB) (G_Mul sPQV sUAB)
       den = G_Sub sPQU sPQV
-  in G_Div num den
+  tell [den] -- Denominator condition: S_PQU != S_PQV (lines not parallel)
+  return (G_Div num den)
 
-elimAreaInterAng :: String -> String -> String -> GeoExpr -> String -> String -> GeoExpr -> String -> String -> GeoExpr
-elimAreaInterAng _ u v t1 p q t2 a b =
+elimAreaInterAng :: String -> String -> String -> GeoExpr -> String -> String -> GeoExpr -> String -> String -> AreaM GeoExpr
+elimAreaInterAng _ u v t1 p q t2 a b = do
   let
-    -- f1(Z) = S_VUZ - (t1/4) * P_VUZ  (Line through U)
-    -- f2(Z) = S_QPZ - (t2/4) * P_QPZ  (Line through P)
     k1 = G_Div t1 (G_Const 4)
     k2 = G_Div t2 (G_Const 4)
     
@@ -225,18 +230,16 @@ elimAreaInterAng _ u v t1 p q t2 a b =
     f1B = evalF1 b
     f2A = evalF2 a
     f2B = evalF2 b
-    f2U = evalF2 u -- f1(U) is 0 by definition
+    f2U = evalF2 u
     
     dAB = G_Sub (G_Mul f1A f2B) (G_Mul f1B f2A)
-    
-    -- Formula derived from linear interpolation:
-    -- S_ABY = S_ABU * D_AB / ( (f1(B)-f1(A))*f2(U) + D_AB )
     
     term1 = G_Mul (G_Sub f1B f1A) f2U
     den = G_Add term1 dAB
     num = G_Mul (S_Area a b u) dAB
-  in
-    G_Div num den
+  
+  tell [den] -- Denominator condition
+  return (G_Div num den)
 
 elimDistOnLine :: String -> String -> String -> GeoExpr -> String -> GeoExpr
 elimDistOnLine _ u v r b =
@@ -256,7 +259,6 @@ elimDistOnLine _ u v r b =
 geoToExpr :: GeoExpr -> Expr
 geoToExpr (S_Area a b c) = Collinear a b c
 geoToExpr (P_Pyth a b c) = 
-  -- P_{ABC} = d(A,B)^2 + d(B,C)^2 - d(A,C)^2
   Sub (Add (Dist2 a b) (Dist2 b c)) (Dist2 a c)
 geoToExpr (G_Dist2 a b)  = Dist2 a b
 geoToExpr (G_Sqrt e)     = Sqrt (geoToExpr e)
@@ -272,34 +274,88 @@ data AreaResult = AreaResult
   { areaProved :: Bool      -- Was the theorem proved?
   , areaReason :: String    -- Explanation
   , areaReduced :: GeoExpr  -- Reduced expression
+  , ndgConditions :: [GeoExpr] -- Non-degeneracy conditions
+  , isDegenerate :: Bool    -- Is the construction degenerate?
   } deriving (Show, Eq)
 
 -- | Legacy tuple-based API for backward compatibility
 proveArea :: Construction -> GeoExpr -> (Bool, String)
 proveArea steps goal =
   let
-    reduced = foldr eliminate goal steps
+    (reduced, ndgs) = runWriter (eliminateAll steps goal)
     simplified = simplifyGeo reduced
+    degenerate = checkDegeneracy ndgs
   in
-    case simplified of
-      G_Const c | c == 0 -> (True, "Reduced to 0")
-      _ -> (False, "Reduced to: " ++ show simplified)
+    if degenerate
+    then (False, "Construction is DEGENERATE (e.g. parallel lines intersected)")
+    else case simplified of
+           G_Const c | c == 0 -> (True, "Reduced to 0")
+           _ -> (False, "Reduced to: " ++ show simplified)
+
+-- | Check if any non-degeneracy condition is violated (i.e. denominator can be zero)
+checkDegeneracy :: [GeoExpr] -> Bool
+checkDegeneracy ndgs = 
+  let checkOne den = 
+        let poly = geoToExpr den
+            -- Check if den = 0 is consistent (Satisfiable)
+            -- If it is satisfiable, then there exists a configuration where it is zero -> Degenerate
+            (consistent, _) = Modular.probSolve [] (Eq poly (Const 0))
+        in consistent
+  in any checkOne ndgs
+
+eliminateAll :: Construction -> GeoExpr -> AreaM GeoExpr
+eliminateAll steps goal = foldr (\step acc -> acc >>= eliminate step) (return goal) steps
 
 -- | Get the reduced expression from Area Method
 reduceArea :: Construction -> GeoExpr -> GeoExpr
-reduceArea steps goal = simplifyGeo (foldr eliminate goal steps)
+reduceArea steps goal = 
+  let (res, _) = runWriter (eliminateAll steps goal)
+  in simplifyGeo res
 
 -- | Either-based version of proveArea (recommended API)
 -- Returns Either ProverError AreaResult for better error handling
 proveAreaE :: Construction -> GeoExpr -> Either ProverError AreaResult
 proveAreaE steps goal =
-  let reduced = reduceArea steps goal
-      proved = case reduced of
-                 G_Const c -> c == 0
+  let (reduced, ndgs) = runWriter (eliminateAll steps goal)
+      simplified = simplifyGeo reduced
+      degenerate = checkDegeneracy ndgs
+      proved = case simplified of
+                 G_Const c | c == 0 -> True
                  _ -> False
-      reason = if proved then "Reduced to 0" else "Reduced to complex expression"
-  in Right $ AreaResult proved reason reduced
+      reason = if degenerate then "Construction is Degenerate" 
+               else if proved then "Reduced to 0" 
+               else "Reduced to complex expression"
+  in Right $ AreaResult (proved && not degenerate) reason simplified ndgs degenerate
 
+-- | Check validity of a construction (Genericity Checker)
+-- Verifies that all denominators implied by construction steps are non-zero.
+checkConstruction :: Construction -> (Bool, String)
+checkConstruction steps =
+  let 
+    go _ [] = (True, "Construction Valid")
+    go prevReversed (step:rest) =
+      let ndgs = getStepNDGs step
+          -- Check if any NDG reduces to 0 using previous steps
+          isZero ndg = 
+            let reduced = reduceArea prevReversed ndg
+            in reduced == G_Const 0
+          
+          failures = filter isZero ndgs
+      in if null failures
+         then go (step:prevReversed) rest
+         else (False, "Degenerate step: " ++ show step)
+  in go [] steps
+
+getStepNDGs :: ConstructStep -> [GeoExpr]
+getStepNDGs (PointInter _ u v p q) = 
+  -- Intersection of UV and PQ. Denom is S_PQU - S_PQV.
+  [G_Sub (S_Area p q u) (S_Area p q v)]
+getStepNDGs (PointInterAng _ u v t1 p q t2) =
+  -- More complex, but similar structure. Denom from elimAreaInterAng.
+  [] 
+getStepNDGs (PointOnLine _ _ _ r) =
+  []
+getStepNDGs _ = []
 -- =============================================
 -- 5. Theory -> Construction Bridge
 -- =============================================

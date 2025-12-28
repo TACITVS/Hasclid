@@ -7,7 +7,7 @@ module Main
   ) where
 
 import Expr (Formula(Eq, Ge, Gt, Le, Lt, And), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
-import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea, exprToGeoExpr, reduceArea, geoToExpr)
+import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea, exprToGeoExpr, reduceArea, geoToExpr, checkConstruction)
 import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
 import IntSolver (IntSolveOptions(..))
 import Lagrange (solve4Squares)
@@ -602,20 +602,13 @@ handleCommand state stateWithHist newHist input = do
            in pure (stateWithHist, "Area Method Result: " ++ show res ++ "\n" ++ msg)
         Left err -> pure (stateWithHist, "Parse error: " ++ err)
 
-    (":synthesize":_) -> 
-      let str = drop 12 input
-      in case parseFormulaWithMacros (macros state) (intVars state) str of
-           Left err -> pure (stateWithHist, formatError err)
-           Right formula -> do
-             let fullContext = theory state ++ lemmas state
-                 opts = currentSolverOptions env stateWithHist
-             let result = synthesize opts (pointSubs stateWithHist) fullContext formula
-             case result of
-               Just witness -> 
-                 let showVal (k, v) = k ++ " = " ++ show (fromRational v :: Double)
-                     msg = "Witness Found:\n" ++ unlines (map showVal (M.toList witness))
-                 in pure (stateWithHist, msg)
-               Nothing -> pure (stateWithHist, "No witness found.")
+    (":check-construction":_) -> do
+      let steps = construction state
+      if null steps
+        then pure (stateWithHist, "No manual construction steps defined. Use :construct or load a geometric theory.")
+        else do
+          let (isValid, msg) = checkConstruction steps
+          pure (stateWithHist, (if isValid then "✅ VALID: " else "❌ INVALID: ") ++ msg)
 
     (":help":_) -> pure (stateWithHist, unlines
       ["Commands:",
@@ -646,6 +639,7 @@ handleCommand state stateWithHist newHist input = do
        "  :clear-cache            Clear Groebner cache",
        "  :point A x y [z]        Define a point",
        "  :inside P A B C         Constrain point P inside triangle ABC",
+       "  :check-construction     Check validity of manual construction",
        "  :assume (= lhs rhs)     Add assumption",
        "  :lemma (= lhs rhs)      Save a lemma",
        "  :prove (= lhs rhs)      Prove equality",
