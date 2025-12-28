@@ -20,7 +20,7 @@ import qualified ReplSupport as RS
 import Sturm (isolateRoots, samplePoints, evalPoly)
 import Wu (wuProve, wuProveWithTrace, formatWuTrace)
 import Data.Bifunctor (first)
-import SolverRouter (autoSolve, autoSolveWithTrace, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions, GroebnerBackend(..), executeSolver, SolverChoice(..))
+import SolverRouter (autoSolve, autoSolveWithTrace, formatAutoSolveResult, isProved, proofReason, selectedSolver, AutoSolveResult(..), SolverOptions(..), defaultSolverOptions, GroebnerBackend(..), executeSolver, SolverChoice(..), selectGroebnerAlgorithm, synthesize)
 import Error (ProverError(..), formatError)
 import Validation (validateTheory, formatWarnings)
 import Cache (GroebnerCache, emptyCache, clearCache, getCacheStats, formatCacheStats)
@@ -31,6 +31,7 @@ import Geometry.WLOG (detectPoints)
 import RationalElim (eliminateRational)
 import SqrtElim (eliminateSqrt)
 import ProofMode (ProofMode(..))
+import qualified ProofExplanation as PE
 
 import System.IO (hFlush, stdout, stdin, hIsEOF, hIsTerminalDevice, hSetBuffering, BufferMode(..))
 import System.Environment (getArgs)
@@ -98,6 +99,10 @@ data REPLState = REPLState
   , construction :: Construction -- Area Method Construction
   , intVars :: S.Set String -- Declared Integer Variables
   , pointSubs :: M.Map String Expr -- Point coordinate substitutions (NEW: prevents theory bloat)
+  -- Proof explanation settings
+  , explanationFormat :: PE.ExplanationFormat -- ASCII or LaTeX
+  , explanationDetail :: PE.DetailLevel        -- Brief, Normal, or Verbose
+  , lastExplanation :: Maybe PE.ProofExplanation -- Last proof for :explain
   }
 
 data REPLEnv = REPLEnv
@@ -118,8 +123,8 @@ defaultEnv = REPLEnv
 type REPLM = ReaderT REPLEnv (ExceptT ProverError IO)
 
 initialState :: REPLEnv -> REPLState
-initialState env = 
-  REPLState [] [] [] False True emptyCache (envTermOrder env) (envUseOptimized env) (envSelectionStrategy env) M.empty 30 Nothing (envSolverOptions env) [] S.empty M.empty
+initialState env =
+  REPLState [] [] [] False True emptyCache (envTermOrder env) (envUseOptimized env) (envSelectionStrategy env) M.empty 30 Nothing (envSolverOptions env) [] S.empty M.empty PE.ASCII PE.Normal Nothing
 
 prettyTheory :: Theory -> String
 prettyTheory th = unlines [ show i ++ ": " ++ showFormula f | (i, f) <- zip [1..] th ]
@@ -211,11 +216,10 @@ cadFallbackMessage env st fullContext goal current = do
       pure msg
 
 chooseBuchberger :: REPLEnv -> REPLState -> ([Poly] -> [Poly])
-chooseBuchberger env st = 
-  let ord = compareMonomials (termOrder st)
-  in if useOptimizedBuchberger st || envUseOptimized env
-       then buchbergerWithStrategy ord (selectionStrategy st)
-       else buchberger
+chooseBuchberger _env st =
+  -- Use the backend dispatcher from SolverRouter which respects groebnerBackend setting
+  let opts = solverOptions st
+  in selectGroebnerAlgorithm opts (termOrder st)
 
 -- | Expand geometric formulas into separate coordinate equations
 -- This fixes the sum-of-squares encoding issue with Groebner bases
@@ -397,6 +401,58 @@ handleCommand state stateWithHist newHist input = do
                 else "Verbose mode OFF: Will show only proof results"
       pure (stateWithHist { verbose = newVerbose }, msg)
 
+    -- Proof explanation commands
+    (":explain":_) ->
+      case lastExplanation state of
+        Nothing -> pure (stateWithHist, "No proof to explain. Run :prove or :auto first.")
+        Just expl ->
+          let config = PE.ExplanationConfig (explanationFormat state) (explanationDetail state)
+              formatted = PE.formatExplanation config expl
+          in pure (stateWithHist, formatted)
+
+    (":format":fmtArg:_) ->
+      case map toLower fmtArg of
+        "ascii" -> pure (stateWithHist { explanationFormat = PE.ASCII },
+                         "Explanation format set to ASCII")
+        "latex" -> pure (stateWithHist { explanationFormat = PE.LaTeX },
+                         "Explanation format set to LaTeX (inline $...$)")
+        _ -> pure (stateWithHist, "Unknown format. Use: :format ascii|latex")
+
+    (":format":_) ->
+      let current = if explanationFormat state == PE.ASCII then "ASCII" else "LaTeX"
+      in pure (stateWithHist, "Current explanation format: " ++ current ++ "\nUsage: :format ascii|latex")
+
+    (":detail":lvlArg:_) ->
+      case map toLower lvlArg of
+        "minimal" -> pure (stateWithHist { explanationDetail = PE.Minimal },
+                           "Explanation detail set to Minimal (equations only)")
+        "brief" -> pure (stateWithHist { explanationDetail = PE.Brief },
+                         "Explanation detail set to Brief")
+        "normal" -> pure (stateWithHist { explanationDetail = PE.Normal },
+                          "Explanation detail set to Normal")
+        "verbose" -> pure (stateWithHist { explanationDetail = PE.Verbose },
+                           "Explanation detail set to Verbose")
+        _ -> pure (stateWithHist, "Unknown detail level. Use: :detail minimal|brief|normal|verbose")
+
+    (":detail":_) ->
+      let current = case explanationDetail state of
+                      PE.Minimal -> "Minimal"
+                      PE.Brief -> "Brief"
+                      PE.Normal -> "Normal"
+                      PE.Verbose -> "Verbose"
+      in pure (stateWithHist, "Current detail level: " ++ current ++ "\nUsage: :detail minimal|brief|normal|verbose")
+
+    (":export":filePath:_) ->
+      case lastExplanation state of
+        Nothing -> pure (stateWithHist, "No proof to export. Run :prove or :auto first.")
+        Just expl -> do
+          let config = PE.ExplanationConfig (explanationFormat state) (explanationDetail state)
+          liftIO $ PE.exportExplanation filePath config expl
+          pure (stateWithHist, "Proof explanation exported to: " ++ filePath)
+
+    (":export":_) ->
+      pure (stateWithHist, "Usage: :export <filename>\nExample: :export proof.tex (LaTeX) or :export proof.txt (text)")
+
     (":auto-simplify":_) -> do
       let newAutoSimplify = not (autoSimplify state)
           msg = if newAutoSimplify
@@ -468,25 +524,22 @@ handleCommand state stateWithHist newHist input = do
                              , solverOptions = updatedOpts }
              , "Buchberger optimization " ++ if newFlag then "ON" else "OFF")
 
-    (":set-gb-backend":name:_) -> 
+    (":set-gb-backend":name:_) ->
       let backend = case map toLower name of
-                      "f4"         -> Just F4Backend
+                      "f5"         -> Just F5Backend
                       "buchberger" -> Just BuchbergerBackend
                       _            -> Nothing
       in case backend of
-           Nothing -> pure (stateWithHist, "Unknown backend. Options: buchberger | f4")
-           Just b  -> 
+           Nothing -> pure (stateWithHist, "Unknown backend. Options: buchberger | f5 (default)")
+           Just b  ->
              let opts = solverOptions stateWithHist
                  newOpts = opts { groebnerBackend = b }
-                 msg = "Groebner backend set to: " ++ (if b == F4Backend then "f4" else "buchberger")
+                 backendName = case b of
+                                 F5Backend -> "f5"
+                                 BuchbergerBackend -> "buchberger"
+                                 _ -> "unknown"
+                 msg = "Groebner backend set to: " ++ backendName
              in pure (stateWithHist { solverOptions = newOpts }, msg)
-
-    (":set-f4-batch":flag:_) ->
-      let newFlag = map toLower flag `elem` ["on","true","1","yes"]
-          opts = solverOptions stateWithHist
-          newOpts = opts { f4UseBatch = newFlag }
-          msg = "F4 batch reduction " ++ if newFlag then "ENABLED" else "DISABLED"
-      in pure (stateWithHist { solverOptions = newOpts }, msg)
 
     (":proof-mode":mode:_) ->
       let newMode = case map toLower mode of
@@ -549,6 +602,21 @@ handleCommand state stateWithHist newHist input = do
            in pure (stateWithHist, "Area Method Result: " ++ show res ++ "\n" ++ msg)
         Left err -> pure (stateWithHist, "Parse error: " ++ err)
 
+    (":synthesize":_) -> 
+      let str = drop 12 input
+      in case parseFormulaWithMacros (macros state) (intVars state) str of
+           Left err -> pure (stateWithHist, formatError err)
+           Right formula -> do
+             let fullContext = theory state ++ lemmas state
+                 opts = currentSolverOptions env stateWithHist
+             let result = synthesize opts (pointSubs stateWithHist) fullContext formula
+             case result of
+               Just witness -> 
+                 let showVal (k, v) = k ++ " = " ++ show (fromRational v :: Double)
+                     msg = "Witness Found:\n" ++ unlines (map showVal (M.toList witness))
+                 in pure (stateWithHist, msg)
+               Nothing -> pure (stateWithHist, "No witness found.")
+
     (":help":_) -> pure (stateWithHist, unlines
       ["Commands:",
        "  :reset                  Reset theory (clear assumptions)",
@@ -559,6 +627,10 @@ handleCommand state stateWithHist newHist input = do
        "  :save-lemmas <file>     Save lemmas to file",
        "  :load-lemmas <file>     Load lemmas from file",
        "  :verbose                Toggle verbose mode",
+       "  :explain                Show step-by-step proof explanation",
+       "  :format ascii|latex     Set explanation format (ASCII or LaTeX)",
+       "  :detail brief|normal|verbose  Set explanation detail level",
+       "  :export <file>          Export proof explanation to file (.tex or .txt)",
        "  :auto-simplify          Toggle automatic expression simplification",
        "  :declare-int v1 v2...   Declare variables as integers",
        "  :bruteforce on|off      Toggle bounded brute-force fallback for integer goals",
@@ -567,8 +639,7 @@ handleCommand state stateWithHist newHist input = do
        "  :set-order <order>      Set term ordering (grevlex|lex|gradedlex)",
        "  :show-order             Show current term ordering",
        "  :optimize on|off        Toggle Buchberger optimization",
-       "  :set-gb-backend name    Set Groebner backend (buchberger|f4)",
-       "  :set-f4-batch on|off    Toggle F4 modular batch reduction",
+       "  :set-gb-backend name    Set Groebner backend (buchberger|f5, default: f5)",
        "  :proof-mode sound|unsafe  Set proof mode (sound disables heuristics)",
        "  :set-strategy name      Set selection strategy (normal|sugar|minimal)",
        "  :cache-stats            Show Groebner cache statistics",
@@ -580,6 +651,7 @@ handleCommand state stateWithHist newHist input = do
        "  :prove (= lhs rhs)      Prove equality",
        "  :wu (= lhs rhs)         Wu's method",
        "  :auto (= lhs rhs)       Automatic solver",
+       "  :synthesize (formula)   Find a witness for the formula",
        "  :solve <file>           Solve each formula in file",
        "  :load <file>            Load and execute commands from file",
        "  :history                Show session history",
@@ -653,21 +725,23 @@ handleCommand state stateWithHist newHist input = do
              if isIneq
                then do
                  let isVerbose = verbose stateWithHist
+                     explConfig = PE.ExplanationConfig (explanationFormat stateWithHist) (explanationDetail stateWithHist)
                  eres <- liftIO $ try $ runWithTimeout current $ do
                    let res = autoSolve opts (pointSubs stateWithHist) contextWithAnd singleGoal
+                       expl = PE.explainAutoSolve explConfig res
                        traceStr = if isVerbose
                                   then maybe "" (\t -> "\n\n" ++ t) (detailedTrace res)
                                   else ""
                        msg = (if isProved res then "RESULT: PROVED\n" else "RESULT: NOT PROVED\n")
                              ++ proofReason res ++ traceStr
                    _ <- CE.evaluate (length msg)
-                   return msg
+                   return (msg, expl)
                  case eres of
                    Left Underflow -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Underflow in solver.")
                    Left Overflow  -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
                    Left _         -> pure (stateWithHist, "[NUMERICAL ERROR] Math exception in solver.")
                    Right Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-                   Right (Just msg) -> pure (stateWithHist, msg)
+                   Right (Just (msg, expl)) -> pure (stateWithHist { lastExplanation = Just expl }, msg)
                else do
                  let preprocessResult = preprocess (pointSubs state) contextWithAnd singleGoal
                      theory' = preprocessedTheory preprocessResult
@@ -756,9 +830,12 @@ handleCommand state stateWithHist newHist input = do
                    eres <- liftIO $ try $ runWithTimeout current $ do
                      let res = autoSolve opts (pointSubs stateWithHist) fullContext goalForAlgebraic
                          msg = formatAutoSolveResult res isVerbose
+                         -- Generate proof explanation
+                         explConfig = PE.ExplanationConfig (explanationFormat stateWithHist) (explanationDetail stateWithHist)
+                         expl = PE.explainAutoSolve explConfig res
                      _ <- CE.evaluate (length msg)
-                     return msg
-                   
+                     return (msg, expl)
+
                    case eres of
                      Left Underflow -> do
                        liftIO $ putStrLn "[DEBUG] Original Underflow caught"
@@ -767,7 +844,7 @@ handleCommand state stateWithHist newHist input = do
                      Left Overflow  -> pure (stateWithHist, "[NUMERICAL ERROR] Arithmetic Overflow in solver.")
                      Left _         -> pure (stateWithHist, "[NUMERICAL ERROR] Math exception in solver.")
                      Right Nothing -> pure (stateWithHist, "[TIMEOUT] exceeded " ++ show current ++ "s. Use :set-timeout to increase.")
-                     Right (Just msg) -> pure (stateWithHist, msg)
+                     Right (Just (msg, expl)) -> pure (stateWithHist { lastExplanation = Just expl }, msg)
 
     (":induction":_) -> 
       let str = drop 11 input
