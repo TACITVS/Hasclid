@@ -70,12 +70,13 @@ import Core.Solver
 import Core.Orchestrator
 import qualified Solvers.Wu as SW
 import qualified Solvers.Groebner as SG
+import qualified Solvers.Interval as SI
 
 -- =============================================
 -- Legacy / Compatibility Types
 -- =============================================
 
-data SolverChoice = UseGeoSolver | UseWu | UseGroebner | UseConstructiveWu | UseCAD | UseAreaMethod | UseSOS | UseNumerical | Unsolvable deriving (Show, Eq)
+data SolverChoice = UseGeoSolver | UseWu | UseGroebner | UseConstructiveWu | UseCAD | UseAreaMethod | UseSOS | UseNumerical | UseInterval | Unsolvable deriving (Show, Eq)
 data ProofEvidence = EvidenceSOS SOSCertificate [String] deriving (Show, Eq)
 
 data AutoSolveResult = AutoSolveResult
@@ -169,7 +170,15 @@ instance Solver LocalGeoSolver where
       GeoDisproved r s -> return $ ProofResult (Disproved r) (r:s) 0.0
       GeoUnknown r -> return $ ProofResult (Failed r) [] 0.0
 
--- Wrapper for Area Method Solver
+-- Wrapper for Interval Solver
+data LocalIntervalSolver = LocalIntervalSolver
+instance Solver LocalIntervalSolver where
+  name _ = "Interval Arithmetic"
+  solve _ prob = do
+    let (proved, reason) = SI.solveInterval (assumptions prob) (goal prob)
+    return $ ProofResult (if proved then Proved else Failed reason) [] 0.0
+
+--Wrapper for Area Method Solver
 data LocalAreaSolver = LocalAreaSolver
 instance Solver LocalAreaSolver where
   name _ = "Area Method"
@@ -856,7 +865,7 @@ tryCyclic4Var (Poly m)
              -> let vars = [a, b, c, d]
                     -- Build cyclic differences
                     diffs = zipWith (\v1 v2 -> polySub (polyFromVar v1) (polyFromVar v2))
-                                    vars (tail vars ++ [head vars])
+                                    vars (drop 1 vars ++ take 1 vars)
                 in Just $ SOSCertificate [(ca/2, diff) | diff <- diffs] [] polyZero (Just (Custom "Cyclic4Var"))
            _ -> Nothing
 
