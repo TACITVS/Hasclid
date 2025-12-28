@@ -664,6 +664,13 @@ elimExpr (NthRoot n e) = do
           modify (\(cs, m) -> (cs, Map.insert memoKey v m))
           return vExpr
 
+elimExpr (Atan e) = Atan <$> elimExpr e
+elimExpr (Sin e) = Sin <$> elimExpr e
+elimExpr (Cos e) = Cos <$> elimExpr e
+elimExpr (Tan e) = Tan <$> elimExpr e
+elimExpr (Asin e) = Asin <$> elimExpr e
+elimExpr (Acos e) = Acos <$> elimExpr e
+
 elimExpr (Determinant rows) = Determinant <$> mapM (mapM elimExpr) rows
 elimExpr (Circle p c r) = Circle p c <$> elimExpr r
 -- Geometric primitives and base cases

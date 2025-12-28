@@ -140,6 +140,8 @@ module Core.Types
   , hasDuplicates
   , integerSqrt
   , rationalGCD
+  , varsInExpr
+  , varsInFormula
   ) where
 
 import Data.List (intercalate, sortBy, nub, maximumBy)
@@ -189,6 +191,19 @@ data Expr
     -- ^ Nth root: @NthRoot n e@ represents @e^(1/n)@ for n >= 2
     -- NthRoot 2 e is semantically equivalent to Sqrt e
     -- NthRoot 3 e is the cube root, etc.
+  -- Trigonometric functions
+  | Sin Expr
+    -- ^ Sine: @Sin x@
+  | Cos Expr
+    -- ^ Cosine: @Cos x@
+  | Tan Expr
+    -- ^ Tangent: @Tan x@
+  | Asin Expr
+    -- ^ Arcsine: @Asin x@
+  | Acos Expr
+    -- ^ Arccosine: @Acos x@
+  | Atan Expr
+    -- ^ Arctangent: @Atan x@
   -- Geometric primitives
   | Dist2 String String
     -- ^ Squared Euclidean distance: @Dist2 \"A\" \"B\"@ = |AB|^2
@@ -278,6 +293,12 @@ prettyExpr (Sqrt e)     = "(sqrt " ++ prettyExpr e ++ ")"
 prettyExpr (NthRoot 2 e) = "(sqrt " ++ prettyExpr e ++ ")"  -- Canonical form
 prettyExpr (NthRoot 3 e) = "(cbrt " ++ prettyExpr e ++ ")"
 prettyExpr (NthRoot n e) = "(root " ++ show n ++ " " ++ prettyExpr e ++ ")"
+prettyExpr (Sin e)      = "(sin " ++ prettyExpr e ++ ")"
+prettyExpr (Cos e)      = "(cos " ++ prettyExpr e ++ ")"
+prettyExpr (Tan e)      = "(tan " ++ prettyExpr e ++ ")"
+prettyExpr (Asin e)     = "(asin " ++ prettyExpr e ++ ")"
+prettyExpr (Acos e)     = "(acos " ++ prettyExpr e ++ ")"
+prettyExpr (Atan e)     = "(atan " ++ prettyExpr e ++ ")"
 prettyExpr (Dist2 p1 p2) = "(dist2 " ++ p1 ++ " " ++ p2 ++ ")"
 prettyExpr (Collinear p1 p2 p3) = "(collinear " ++ p1 ++ " " ++ p2 ++ " " ++ p3 ++ ")"
 prettyExpr (Dot a b c d) = "(dot " ++ a ++ " " ++ b ++ " " ++ c ++ " " ++ d ++ ")"
@@ -418,6 +439,12 @@ prettyExprLaTeX (Sqrt e)     = "\\sqrt{" ++ prettyExprLaTeX e ++ "}"
 prettyExprLaTeX (NthRoot 2 e) = "\\sqrt{" ++ prettyExprLaTeX e ++ "}"
 prettyExprLaTeX (NthRoot 3 e) = "\\sqrt[3]{" ++ prettyExprLaTeX e ++ "}"
 prettyExprLaTeX (NthRoot n e) = "\\sqrt[" ++ show n ++ "]{" ++ prettyExprLaTeX e ++ "}"
+prettyExprLaTeX (Sin e)      = "\\sin(" ++ prettyExprLaTeX e ++ ")"
+prettyExprLaTeX (Cos e)      = "\\cos(" ++ prettyExprLaTeX e ++ ")"
+prettyExprLaTeX (Tan e)      = "\\tan(" ++ prettyExprLaTeX e ++ ")"
+prettyExprLaTeX (Asin e)     = "\\arcsin(" ++ prettyExprLaTeX e ++ ")"
+prettyExprLaTeX (Acos e)     = "\\arccos(" ++ prettyExprLaTeX e ++ ")"
+prettyExprLaTeX (Atan e)     = "\\arctan(" ++ prettyExprLaTeX e ++ ")"
 prettyExprLaTeX (Dist2 p1 p2) = "|" ++ p1 ++ p2 ++ "|^{2}"
 prettyExprLaTeX (Collinear p1 p2 p3) = "\\text{collinear}(" ++ p1 ++ ", " ++ p2 ++ ", " ++ p3 ++ ")"
 prettyExprLaTeX (Dot a b c d) = "\\vec{" ++ a ++ b ++ "} \\cdot \\vec{" ++ c ++ d ++ "}"
@@ -657,6 +684,12 @@ substituteExpr var val (Mod e1 e2) = Mod (substituteExpr var val e1) (substitute
 substituteExpr var val (Pow e n) = Pow (substituteExpr var val e) n
 substituteExpr var val (Sqrt e) = Sqrt (substituteExpr var val e)
 substituteExpr var val (NthRoot n e) = NthRoot n (substituteExpr var val e)
+substituteExpr var val (Sin e) = Sin (substituteExpr var val e)
+substituteExpr var val (Cos e) = Cos (substituteExpr var val e)
+substituteExpr var val (Tan e) = Tan (substituteExpr var val e)
+substituteExpr var val (Asin e) = Asin (substituteExpr var val e)
+substituteExpr var val (Acos e) = Acos (substituteExpr var val e)
+substituteExpr var val (Atan e) = Atan (substituteExpr var val e)
 substituteExpr var val (Sum i lo hi body) =
   let lo' = substituteExpr var val lo
       hi' = substituteExpr var val hi
@@ -678,6 +711,12 @@ substituteAll subMap (Mod e1 e2) = Mod (substituteAll subMap e1) (substituteAll 
 substituteAll subMap (Pow e n) = Pow (substituteAll subMap e) n
 substituteAll subMap (Sqrt e) = Sqrt (substituteAll subMap e)
 substituteAll subMap (NthRoot n e) = NthRoot n (substituteAll subMap e)
+substituteAll subMap (Sin e) = Sin (substituteAll subMap e)
+substituteAll subMap (Cos e) = Cos (substituteAll subMap e)
+substituteAll subMap (Tan e) = Tan (substituteAll subMap e)
+substituteAll subMap (Asin e) = Asin (substituteAll subMap e)
+substituteAll subMap (Acos e) = Acos (substituteAll subMap e)
+substituteAll subMap (Atan e) = Atan (substituteAll subMap e)
 substituteAll subMap (Sum i lo hi body) =
   let lo' = substituteAll subMap lo
       hi' = substituteAll subMap hi
@@ -706,6 +745,12 @@ hasNonPolynomial (Div _ _) = True
 hasNonPolynomial (Mod _ _) = True
 hasNonPolynomial (Sqrt _) = True
 hasNonPolynomial (NthRoot _ _) = True
+hasNonPolynomial (Sin _) = True
+hasNonPolynomial (Cos _) = True
+hasNonPolynomial (Tan _) = True
+hasNonPolynomial (Asin _) = True
+hasNonPolynomial (Acos _) = True
+hasNonPolynomial (Atan _) = True
 hasNonPolynomial (IntVar _) = True
 hasNonPolynomial (IntConst _) = True
 hasNonPolynomial (Add e1 e2) = hasNonPolynomial e1 || hasNonPolynomial e2
@@ -842,6 +887,31 @@ simplifyExpr (NthRoot n e) =
        Pow base m | fromIntegral m == n -> base  -- Assumes positive base
        _ -> NthRoot n s
 
+simplifyExpr (Sin e) =
+  let s = simplifyExpr e
+  in case s of
+       Const 0 -> Const 0
+       IntConst 0 -> Const 0
+       _ -> Sin s
+
+simplifyExpr (Cos e) =
+  let s = simplifyExpr e
+  in case s of
+       Const 0 -> Const 1
+       IntConst 0 -> Const 1
+       _ -> Cos s
+
+simplifyExpr (Tan e) =
+  let s = simplifyExpr e
+  in case s of
+       Const 0 -> Const 0
+       IntConst 0 -> Const 0
+       _ -> Tan s
+
+simplifyExpr (Asin e) = Asin (simplifyExpr e)
+simplifyExpr (Acos e) = Acos (simplifyExpr e)
+simplifyExpr (Atan e) = Atan (simplifyExpr e)
+
 simplifyExpr (Sum i lo hi body) =
   let lo' = simplifyExpr lo
       hi' = simplifyExpr hi
@@ -953,6 +1023,12 @@ normalizeCommAssoc (Mod a b) = Mod (normalizeCommAssoc a) (normalizeCommAssoc b)
 normalizeCommAssoc (Pow e n) = Pow (normalizeCommAssoc e) n
 normalizeCommAssoc (Sqrt e) = Sqrt (normalizeCommAssoc e)
 normalizeCommAssoc (NthRoot n e) = NthRoot n (normalizeCommAssoc e)
+normalizeCommAssoc (Sin e) = Sin (normalizeCommAssoc e)
+normalizeCommAssoc (Cos e) = Cos (normalizeCommAssoc e)
+normalizeCommAssoc (Tan e) = Tan (normalizeCommAssoc e)
+normalizeCommAssoc (Asin e) = Asin (normalizeCommAssoc e)
+normalizeCommAssoc (Acos e) = Acos (normalizeCommAssoc e)
+normalizeCommAssoc (Atan e) = Atan (normalizeCommAssoc e)
 normalizeCommAssoc (Determinant rows) = Determinant (map (map normalizeCommAssoc) rows)
 normalizeCommAssoc e = e
 
@@ -1030,6 +1106,13 @@ toPoly (Mod e1 e2) =
 toPoly (Pow e n)   = polyPow (toPoly e) n
 toPoly (Sqrt _)    = error "Sqrt Error: Square roots are not supported in polynomial expressions. Rewrite without sqrt or use a geometric/analytic solver."
 toPoly (NthRoot _ _) = error "NthRoot Error: Nth roots are not supported in polynomial expressions. Use eliminateSqrt or a geometric solver."
+toPoly (Sin _) = error "Sin Error: Sine functions are not supported in polynomial expressions. Use trigonometric substitutions or heuristics."
+toPoly (Cos _) = error "Cos Error: Cosine functions are not supported in polynomial expressions. Use trigonometric substitutions or heuristics."
+toPoly (Tan _) = error "Tan Error: Tangent functions are not supported in polynomial expressions. Use trigonometric substitutions or heuristics."
+toPoly (Asin _) = error "Asin Error: Arcsine functions are not supported in polynomial expressions."
+toPoly (Acos _) = error "Acos Error: Arccosine functions are not supported in polynomial expressions."
+toPoly (Atan _) = error "Atan Error: Arctangent functions are not supported in polynomial expressions."
+
 toPoly (Sum i lo hi body) =
   let lo' = case simplifyExpr lo of { Const r -> numerator r; _ -> error "Sum low bound must be constant" }
       hi' = case simplifyExpr hi of { Const r -> numerator r; _ -> error "Sum high bound must be constant" }
@@ -1186,6 +1269,12 @@ containsSqrtExpr (Mul a b) = containsSqrtExpr a || containsSqrtExpr b
 containsSqrtExpr (Div a b) = containsSqrtExpr a || containsSqrtExpr b
 containsSqrtExpr (Mod a b) = containsSqrtExpr a || containsSqrtExpr b
 containsSqrtExpr (Pow e _) = containsSqrtExpr e
+containsSqrtExpr (Sin e) = containsSqrtExpr e
+containsSqrtExpr (Cos e) = containsSqrtExpr e
+containsSqrtExpr (Tan e) = containsSqrtExpr e
+containsSqrtExpr (Asin e) = containsSqrtExpr e
+containsSqrtExpr (Acos e) = containsSqrtExpr e
+containsSqrtExpr (Atan e) = containsSqrtExpr e
 containsSqrtExpr (Determinant rows) = any containsSqrtExpr (concat rows)
 containsSqrtExpr (Circle _ _ e) = containsSqrtExpr e
 containsSqrtExpr _ = False
@@ -1205,6 +1294,12 @@ containsIntExpr (Mod a b) = containsIntExpr a || containsIntExpr b
 containsIntExpr (Pow e _) = containsIntExpr e
 containsIntExpr (Sqrt e) = containsIntExpr e
 containsIntExpr (NthRoot _ e) = containsIntExpr e
+containsIntExpr (Sin e) = containsIntExpr e
+containsIntExpr (Cos e) = containsIntExpr e
+containsIntExpr (Tan e) = containsIntExpr e
+containsIntExpr (Asin e) = containsIntExpr e
+containsIntExpr (Acos e) = containsIntExpr e
+containsIntExpr (Atan e) = containsIntExpr e
 containsIntExpr (Determinant rows) = any containsIntExpr (concat rows)
 containsIntExpr (Circle _ _ e) = containsIntExpr e
 containsIntExpr _ = False
@@ -1240,6 +1335,12 @@ substituteIntsExpr sub (Mod a b) = Mod (substituteIntsExpr sub a) (substituteInt
 substituteIntsExpr sub (Pow e n) = Pow (substituteIntsExpr sub e) n
 substituteIntsExpr sub (Sqrt e) = Sqrt (substituteIntsExpr sub e)
 substituteIntsExpr sub (NthRoot n e) = NthRoot n (substituteIntsExpr sub e)
+substituteIntsExpr sub (Sin e) = Sin (substituteIntsExpr sub e)
+substituteIntsExpr sub (Cos e) = Cos (substituteIntsExpr sub e)
+substituteIntsExpr sub (Tan e) = Tan (substituteIntsExpr sub e)
+substituteIntsExpr sub (Asin e) = Asin (substituteIntsExpr sub e)
+substituteIntsExpr sub (Acos e) = Acos (substituteIntsExpr sub e)
+substituteIntsExpr sub (Atan e) = Atan (substituteIntsExpr sub e)
 substituteIntsExpr _ e = e
 
 containsSqrtFormula :: Formula -> Bool
@@ -1265,6 +1366,12 @@ containsDivExpr (Mul a b) = containsDivExpr a || containsDivExpr b
 containsDivExpr (Pow e _) = containsDivExpr e
 containsDivExpr (Sqrt e) = containsDivExpr e
 containsDivExpr (NthRoot _ e) = containsDivExpr e
+containsDivExpr (Sin e) = containsDivExpr e
+containsDivExpr (Cos e) = containsDivExpr e
+containsDivExpr (Tan e) = containsDivExpr e
+containsDivExpr (Asin e) = containsDivExpr e
+containsDivExpr (Acos e) = containsDivExpr e
+containsDivExpr (Atan e) = containsDivExpr e
 containsDivExpr (Determinant rows) = any containsDivExpr (concat rows)
 containsDivExpr (Circle _ _ e) = containsDivExpr e
 containsDivExpr _ = False
@@ -1450,7 +1557,61 @@ mapExpr f expr = f $ case expr of
   Pow a n -> Pow (mapExpr f a) n
   Sqrt a  -> Sqrt (mapExpr f a)
   NthRoot n a -> NthRoot n (mapExpr f a)
+  Sin a   -> Sin (mapExpr f a)
+  Cos a   -> Cos (mapExpr f a)
+  Tan a   -> Tan (mapExpr f a)
+  Asin a  -> Asin (mapExpr f a)
+  Acos a  -> Acos (mapExpr f a)
+  Atan a  -> Atan (mapExpr f a)
   Sum i l h b -> Sum i (mapExpr f l) (mapExpr f h) (mapExpr f b)
   Determinant m -> Determinant (map (map (mapExpr f)) m)
   Circle p c r -> Circle p c (mapExpr f r)
   _ -> expr
+
+-- =============================================
+-- Variable Extraction (Centralized)
+-- =============================================
+
+varsInExpr :: Expr -> [String]
+varsInExpr (Var v) = [v]
+varsInExpr (Add e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInExpr (Sub e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInExpr (Mul e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInExpr (Div e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInExpr (Mod e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInExpr (Pow e _) = varsInExpr e
+varsInExpr (Sqrt e) = varsInExpr e
+varsInExpr (NthRoot _ e) = varsInExpr e
+varsInExpr (Sin e) = varsInExpr e
+varsInExpr (Cos e) = varsInExpr e
+varsInExpr (Tan e) = varsInExpr e
+varsInExpr (Asin e) = varsInExpr e
+varsInExpr (Acos e) = varsInExpr e
+varsInExpr (Atan e) = varsInExpr e
+varsInExpr (Dist2 p1 p2) = ["x"++p1, "y"++p1, "z"++p1, "x"++p2, "y"++p2, "z"++p2]
+varsInExpr (Collinear p1 p2 p3) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3]
+varsInExpr (Dot p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3, p4]
+varsInExpr (Circle _ _ r) = varsInExpr r
+varsInExpr (Midpoint p1 p2 p3) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3]
+varsInExpr (Perpendicular p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3, p4]
+varsInExpr (Parallel p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3, p4]
+varsInExpr (AngleEq2D p1 p2 p3 p4 p5 p6) = concatMap (\p -> ["x"++p, "y"++p]) [p1, p2, p3, p4, p5, p6]
+varsInExpr (AngleEq2DAbs p1 p2 p3 p4 p5 p6) = concatMap (\p -> ["x"++p, "y"++p]) [p1, p2, p3, p4, p5, p6]
+varsInExpr (Determinant rows) = concatMap (concatMap varsInExpr) rows
+varsInExpr (Sum _ lo hi body) = varsInExpr lo ++ varsInExpr hi ++ varsInExpr body
+varsInExpr _ = []
+
+varsInFormula :: Formula -> [String]
+varsInFormula (Eq e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (Le e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (Lt e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (Ge e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (Gt e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (Divides e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (And f1 f2) = varsInFormula f1 ++ varsInFormula f2
+varsInFormula (Or f1 f2) = varsInFormula f1 ++ varsInFormula f2
+varsInFormula (Not f) = varsInFormula f
+varsInFormula (Forall _ f) = varsInFormula f
+varsInFormula (Exists _ f) = varsInFormula f
+
+

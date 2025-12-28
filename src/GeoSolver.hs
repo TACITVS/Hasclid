@@ -238,17 +238,6 @@ tryGeneralPerpendicular kb pA pB pC pD =
         , resolveName ("x" ++ pC)
         ]
 
-      varsInExpr :: Expr -> [String]
-      varsInExpr (Var v) = [v]
-      varsInExpr (Const _) = []
-      varsInExpr (Add a b) = varsInExpr a ++ varsInExpr b
-      varsInExpr (Sub a b) = varsInExpr a ++ varsInExpr b
-      varsInExpr (Mul a b) = varsInExpr a ++ varsInExpr b
-      varsInExpr (Div a b) = varsInExpr a ++ varsInExpr b
-      varsInExpr (Pow e _) = varsInExpr e
-      varsInExpr (Determinant rows) = concatMap varsInExpr (concat rows)
-      varsInExpr _ = []
-
       candidateVars = nub (preferredVars ++ varsInExpr dotExpr ++ varsInExpr dotRaw)
 
       trySolveExpr _ [] = Nothing

@@ -27,9 +27,12 @@ using Extended Backus-Naur Form (EBNF) notation.
 <expr>          ::= <var>
                   | <const>
                   | <arithmetic-op>
+                  | <trig-func>
                   | <geometric-primitive>
-                  | <integer-expr>
-                  | <sum-expr>
+
+<trig-func>     ::= "(" <trig-op> <expr> ")"
+
+<trig-op>       ::= "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
 
 <var>           ::= <identifier>
 

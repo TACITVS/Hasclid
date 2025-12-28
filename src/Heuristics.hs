@@ -10,13 +10,18 @@ module Heuristics
   , checkTriangleInequalityAxiom
   , checkSmartSquaringInequality
   , tryEliminateIntermediates
+  , tryTangentIdentityElimination
+  , tryDeriveCosineUpperBounds
   ) where
 
 import Expr
-import Data.List (nub, sort, find, partition)
+import Preprocessing (applySubstitutionsFormula)
+import Data.List (nub, nubBy, sort, find, partition)
 import qualified Data.Map.Strict as M
 import Data.Ratio ((%), numerator, denominator)
 import Data.Maybe (mapMaybe, listToMaybe, catMaybes)
+import Control.Applicative ((<|>))
+-- import Debug.Trace (trace)  -- Disabled
 
 -- | Parameter Substitution: If we have a parameter k with k^2 = c and k > 0,
 -- substitute k with a rational approximation of sqrt(c).
@@ -235,53 +240,6 @@ trySymmetryBreaking theory goal =
          let extra = [Le (Var v1) (Var v2), Le (Var v2) (Var v3)]
          in (extra ++ theory, goal, ["Applied Symmetry Breaking: " ++ v1 ++ " <= " ++ v2 ++ " <= " ++ v3])
        _ -> (theory, goal, [])
-
--- Helper (duplicated from Preprocessing to avoid cycle if needed, 
--- but better to import if we can)
--- For now, let's just use what's available or re-implement if simple.
-varsInFormula :: Formula -> [String]
-varsInFormula (Eq e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (Ge e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (Gt e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (Le e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (Lt e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInFormula (And f1 f2) = varsInFormula f1 ++ varsInFormula f2
-varsInFormula (Or f1 f2) = varsInFormula f1 ++ varsInFormula f2
-varsInFormula (Not f) = varsInFormula f
-varsInFormula (Forall _ f) = varsInFormula f
-varsInFormula (Exists _ f) = varsInFormula f
-varsInFormula _ = []
-
-varsInExpr :: Expr -> [String]
-varsInExpr (Var v) = [v]
-varsInExpr (Add e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInExpr (Sub e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInExpr (Mul e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInExpr (Div e1 e2) = varsInExpr e1 ++ varsInExpr e2
-varsInExpr (Pow e _) = varsInExpr e
-varsInExpr (Sqrt e) = varsInExpr e
-varsInExpr _ = []
-
-applySubstitutionsFormula :: M.Map String Expr -> Formula -> Formula
-applySubstitutionsFormula subs (Eq e1 e2) = Eq (applySubstitutionsExpr subs e1) (applySubstitutionsExpr subs e2)
-applySubstitutionsFormula subs (Ge e1 e2) = Ge (applySubstitutionsExpr subs e1) (applySubstitutionsExpr subs e2)
-applySubstitutionsFormula subs (Gt e1 e2) = Gt (applySubstitutionsExpr subs e1) (applySubstitutionsExpr subs e2)
-applySubstitutionsFormula subs (Le e1 e2) = Le (applySubstitutionsExpr subs e1) (applySubstitutionsExpr subs e2)
-applySubstitutionsFormula subs (Lt e1 e2) = Lt (applySubstitutionsExpr subs e1) (applySubstitutionsExpr subs e2)
-applySubstitutionsFormula subs (And f1 f2) = And (applySubstitutionsFormula subs f1) (applySubstitutionsFormula subs f2)
-applySubstitutionsFormula subs (Or f1 f2) = Or (applySubstitutionsFormula subs f1) (applySubstitutionsFormula subs f2)
-applySubstitutionsFormula subs (Not f) = Not (applySubstitutionsFormula subs f)
-applySubstitutionsFormula _ f = f
-
-applySubstitutionsExpr :: M.Map String Expr -> Expr -> Expr
-applySubstitutionsExpr subs (Var v) = M.findWithDefault (Var v) v subs
-applySubstitutionsExpr subs (Add e1 e2) = Add (applySubstitutionsExpr subs e1) (applySubstitutionsExpr subs e2)
-applySubstitutionsExpr subs (Sub e1 e2) = Sub (applySubstitutionsExpr subs e1) (applySubstitutionsExpr subs e2)
-applySubstitutionsExpr subs (Mul e1 e2) = Mul (applySubstitutionsExpr subs e1) (applySubstitutionsExpr subs e2)
-applySubstitutionsExpr subs (Div e1 e2) = Div (applySubstitutionsExpr subs e1) (applySubstitutionsExpr subs e2)
-applySubstitutionsExpr subs (Pow e n) = Pow (applySubstitutionsExpr subs e) n
-applySubstitutionsExpr subs (Sqrt e) = Sqrt (applySubstitutionsExpr subs e)
-applySubstitutionsExpr _ e = e
 
 -- =============================================================================
 -- Homogeneous Normalization for Barrow-type inequalities
@@ -615,6 +573,11 @@ tryEliminateIntermediates theory goal =
     -- Pattern with Mul reversed: (1 + x²) * c2x = 1
     extractMultDef f@(Eq (Mul expr (Var v)) (Const 1)) = Just (v, expr, f)
     extractMultDef f@(Eq (Mul expr (Var v)) (IntConst 1)) = Just (v, expr, f)
+    -- Pattern: c2x = 1/(1 + x²) - CRITICAL: handles pre-RationalElim form
+    extractMultDef f@(Eq (Var v) (Div (Const 1) expr)) = Just (v, expr, f)
+    extractMultDef f@(Eq (Var v) (Div (IntConst 1) expr)) = Just (v, expr, f)
+    extractMultDef f@(Eq (Div (Const 1) expr) (Var v)) = Just (v, expr, f)
+    extractMultDef f@(Eq (Div (IntConst 1) expr) (Var v)) = Just (v, expr, f)
     extractMultDef _ = Nothing
 
     -- Find constraints of form: u² = v
@@ -628,14 +591,26 @@ tryEliminateIntermediates theory goal =
     extractSqDef _ = Nothing
 
     -- Match: if v*expr = 1 AND u² = v, we can substitute u² for v
+    -- Deduplicate by intermediate variable name to avoid redundant substitutions
     findSubstitutionPairs :: [(String, Expr, Formula)] -> [(String, String, Formula)]
                           -> [(String, String, Expr, Formula, Formula)]
     findSubstitutionPairs multDefs sqDefs =
-      [ (v, u, expr, multF, sqF)
-      | (v, expr, multF) <- multDefs
-      , (u, v', sqF) <- sqDefs
-      , v == v'  -- Match the intermediate variable
-      ]
+      let allPairs = [ (v, u, expr, multF, sqF)
+                     | (v, expr, multF) <- multDefs
+                     , (u, v', sqF) <- sqDefs
+                     , v == v'  -- Match the intermediate variable
+                     ]
+          -- Deduplicate by the (v, u) pair to avoid processing same elimination twice
+          uniquePairs = nub $ map (\(v, u, expr, _, _) -> (v, u, expr)) allPairs
+          -- Rebuild with first matching formulas for each unique (v, u) pair
+          withFormulas = [ (v, u, expr, multF, sqF)
+                         | (v, u, expr) <- uniquePairs
+                         , (v', _, multF) <- multDefs, v == v'
+                         , (u', v'', sqF) <- sqDefs, u == u' && v == v''
+                         ]
+          -- Take first match for each (v, u)
+          finalPairs = nubBy (\(v1,u1,_,_,_) (v2,u2,_,_,_) -> v1==v2 && u1==u2) withFormulas
+      in finalPairs
 
     -- Apply eliminations: replace v*expr = 1 with u²*expr = 1
     applyEliminations :: Theory -> [(String, String, Expr, Formula, Formula)]
@@ -643,8 +618,10 @@ tryEliminateIntermediates theory goal =
     applyEliminations th [] = (th, [])
     applyEliminations th subs =
       let
-          -- Build list of formulas to remove and add
-          toRemove = concatMap (\(_, _, _, multF, _) -> [multF]) subs
+          -- Build list of formulas to remove: BOTH multF AND sqF
+          -- multF: v = 1/expr OR v*expr = 1
+          -- sqF: u² = v
+          toRemove = concatMap (\(_, _, _, multF, sqF) -> [multF, sqF]) subs
 
           -- For each substitution, create new constraint: u²*expr = 1
           newConstraints =
@@ -674,3 +651,196 @@ tryEliminateIntermediates theory goal =
     applySubsToGoal g subs =
       let varSubs = M.fromList [(v, Pow (Var u) 2) | (v, u, _, _, _) <- subs]
       in applySubstitutionsFormula varSubs g
+
+-- =============================================================================
+-- Cosine Bound Derivation
+-- =============================================================================
+-- For constraints like cx² * (1 + t²) = 1 with cx > 0, t > 0:
+-- We have cx² = 1/(1+t²) < 1, so cx < 1.
+-- This derived bound is crucial for proving Barrow-type inequalities.
+
+-- | Derive upper bounds for cosine-like variables
+-- From cx² * (1 + t²) = 1 and cx > 0, derive cx <= 1
+-- Also handles indirect form: cx² = c2x AND c2x * (1 + t²) = 1
+deriveCosineUpperBounds :: Theory -> [Formula]
+deriveCosineUpperBounds theory =
+  let -- Find direct patterns: v² * (1 + t²) = 1
+      directPatterns = mapMaybe extractDirectCosinePattern theory
+      -- Find indirect patterns: u² = v AND v * (1 + t²) = 1
+      indirectPatterns = findIndirectCosinePatterns theory
+      -- For each pattern where v > 0, derive v <= 1
+      allPatterns = directPatterns ++ indirectPatterns
+      bounds = mapMaybe (\(v, _) -> if isPositive v theory then Just (Le (Var v) (Const 1)) else Nothing) allPatterns
+  in bounds
+  where
+    -- Direct pattern: cx² * (1 + x²) = 1
+    extractDirectCosinePattern :: Formula -> Maybe (String, String)
+    extractDirectCosinePattern (Eq lhs rhs) =
+      matchCosineProduct lhs rhs <|> matchCosineProduct rhs lhs
+    extractDirectCosinePattern _ = Nothing
+
+    -- Indirect pattern: Find (u² = v) AND (v * (1+t²) = 1) => derive u <= 1
+    findIndirectCosinePatterns :: Theory -> [(String, String)]
+    findIndirectCosinePatterns th =
+      let -- Find squared equalities: u² = v
+          squareEqs = mapMaybe extractSquareEq th
+          -- Find cosine products: v * (1+t²) = 1
+          cosineProducts = mapMaybe extractCosineProductPattern th
+          -- Match them: if u² = v and v * (1+t²) = 1, return (u, t)
+      in [ (u, t) | (u, v) <- squareEqs, (v', t) <- cosineProducts, v == v' ]
+
+    -- Extract (u, v) from u² = v
+    extractSquareEq :: Formula -> Maybe (String, String)
+    extractSquareEq (Eq (Pow (Var u) 2) (Var v)) = Just (u, v)
+    extractSquareEq (Eq (Var v) (Pow (Var u) 2)) = Just (u, v)
+    extractSquareEq _ = Nothing
+
+    -- Extract (v, t) from v * (1+t²) = 1
+    extractCosineProductPattern :: Formula -> Maybe (String, String)
+    extractCosineProductPattern (Eq lhs rhs) =
+      matchCosineProductVar lhs rhs <|> matchCosineProductVar rhs lhs
+    extractCosineProductPattern _ = Nothing
+
+    -- Match: product = 1 where product is v * (1 + t²) (v is just a var, not v²)
+    matchCosineProductVar :: Expr -> Expr -> Maybe (String, String)
+    matchCosineProductVar prod one
+      | isOne one = extractFromMulVar prod
+      | otherwise = Nothing
+
+    extractFromMulVar :: Expr -> Maybe (String, String)
+    extractFromMulVar (Mul a b) = extractPairVar a b <|> extractPairVar b a
+    extractFromMulVar _ = Nothing
+
+    extractPairVar :: Expr -> Expr -> Maybe (String, String)
+    extractPairVar (Var v) e2 = do
+      t <- extractOnePlusTSquared e2
+      Just (v, t)
+    extractPairVar _ _ = Nothing
+
+    -- Match: product = 1 where product is v² * (1 + t²)
+    matchCosineProduct :: Expr -> Expr -> Maybe (String, String)
+    matchCosineProduct prod one
+      | isOne one = extractFromMul prod
+      | otherwise = Nothing
+
+    extractFromMul :: Expr -> Maybe (String, String)
+    extractFromMul (Mul a b) = extractPair a b <|> extractPair b a
+    extractFromMul _ = Nothing
+
+    extractPair :: Expr -> Expr -> Maybe (String, String)
+    extractPair e1 e2 = do
+      v <- extractSquaredVar e1
+      t <- extractOnePlusTSquared e2
+      Just (v, t)
+
+    extractSquaredVar :: Expr -> Maybe String
+    extractSquaredVar (Pow (Var v) 2) = Just v
+    extractSquaredVar _ = Nothing
+
+    extractOnePlusTSquared :: Expr -> Maybe String
+    extractOnePlusTSquared (Add a b) = extractFromAddPair a b <|> extractFromAddPair b a
+    extractOnePlusTSquared _ = Nothing
+
+    extractFromAddPair :: Expr -> Expr -> Maybe String
+    extractFromAddPair a b
+      | isOne a = extractSquaredVar' b
+      | otherwise = Nothing
+
+    extractSquaredVar' :: Expr -> Maybe String
+    extractSquaredVar' (Pow (Var t) 2) = Just t
+    extractSquaredVar' _ = Nothing
+
+    isOne :: Expr -> Bool
+    isOne (Const 1) = True
+    isOne (IntConst 1) = True
+    isOne _ = False
+
+    isPositive :: String -> Theory -> Bool
+    isPositive v th = any (isPositivityFor v) th
+
+    isPositivityFor :: String -> Formula -> Bool
+    isPositivityFor v (Gt (Var x) (Const 0)) = x == v
+    isPositivityFor v (Gt (Var x) (IntConst 0)) = x == v
+    isPositivityFor v (Ge (Var x) (Const 0)) = x == v
+    isPositivityFor v (Ge (Var x) (IntConst 0)) = x == v
+    isPositivityFor _ _ = False
+
+-- | Add derived cosine upper bounds to theory
+tryDeriveCosineUpperBounds :: Theory -> Formula -> (Theory, Formula, [String])
+tryDeriveCosineUpperBounds theory goal =
+  let bounds = deriveCosineUpperBounds theory
+  in if null bounds
+     then (theory, goal, [])
+     else (bounds ++ theory, goal, ["Derived cosine upper bounds: " ++ show (length bounds) ++ " constraints"])
+
+-- =============================================================================
+-- Tangent Identity Constraint Propagation
+-- =============================================================================
+-- For trigonometric formulations with x + y + z = xyz (tangent identity),
+-- we can solve for one variable in terms of the others:
+--   z = (x + y) / (xy - 1)
+-- This reduces the variable count by 1 and simplifies the constraint system.
+
+-- | Eliminate one variable using the tangent identity x + y + z = xyz
+-- Solves for z = (x+y)/(xy-1) and substitutes throughout.
+tryTangentIdentityElimination :: Theory -> Formula -> (Theory, Formula, [String])
+tryTangentIdentityElimination theory goal =
+  case findTangentIdentity theory of
+    Nothing -> (theory, goal, [])
+    Just (v1, v2, v3, identityFormula) ->
+      -- Solve for v3: v3 = (v1 + v2) / (v1*v2 - 1)
+      let elimExpr = Div (Add (Var v1) (Var v2)) (Sub (Mul (Var v1) (Var v2)) (Const 1))
+          subs = M.singleton v3 elimExpr
+
+          -- Remove the tangent identity constraint (it's now implicit)
+          theoryWithoutIdentity = filter (/= identityFormula) theory
+
+          -- Remove positivity constraint for eliminated variable
+          theoryClean = filter (not . isPositivityFor v3) theoryWithoutIdentity
+
+          -- Add constraint that denominator is positive: xy - 1 > 0
+          -- (This is implied by x,y,z > 0 and x+y+z = xyz for the Barrow case)
+          denomConstraint = Gt (Sub (Mul (Var v1) (Var v2)) (Const 1)) (Const 0)
+
+          -- Apply substitution to remaining theory and goal
+          newTheory = denomConstraint : map (applySubstitutionsFormula subs) theoryClean
+          newGoal = applySubstitutionsFormula subs goal
+
+          logs = [ "Tangent identity elimination: " ++ v3 ++ " = (" ++ v1 ++ "+" ++ v2 ++ ")/(" ++ v1 ++ "*" ++ v2 ++ "-1)"
+                 , "Reduced variable count by 1"
+                 ]
+      in (newTheory, newGoal, logs)
+  where
+    -- Find tangent identity: x + y + z = x*y*z
+    findTangentIdentity :: Theory -> Maybe (String, String, String, Formula)
+    findTangentIdentity th = listToMaybe $ mapMaybe extractTangentIdentity th
+
+    extractTangentIdentity :: Formula -> Maybe (String, String, String, Formula)
+    extractTangentIdentity f@(Eq lhs rhs) =
+      case (extractSum3Vars lhs, extractProduct3Vars rhs) of
+        (Just [a, b, c], Just [x, y, z])
+          | sort [a, b, c] == sort [x, y, z] -> Just (a, b, c, f)
+        _ -> case (extractSum3Vars rhs, extractProduct3Vars lhs) of
+               (Just [a, b, c], Just [x, y, z])
+                 | sort [a, b, c] == sort [x, y, z] -> Just (a, b, c, f)
+               _ -> Nothing
+    extractTangentIdentity _ = Nothing
+
+    -- Extract variables from a + (b + c) or (a + b) + c pattern
+    extractSum3Vars :: Expr -> Maybe [String]
+    extractSum3Vars (Add (Var a) (Add (Var b) (Var c))) = Just [a, b, c]
+    extractSum3Vars (Add (Add (Var a) (Var b)) (Var c)) = Just [a, b, c]
+    extractSum3Vars _ = Nothing
+
+    -- Extract variables from a * (b * c) or (a * b) * c pattern
+    extractProduct3Vars :: Expr -> Maybe [String]
+    extractProduct3Vars (Mul (Var a) (Mul (Var b) (Var c))) = Just [a, b, c]
+    extractProduct3Vars (Mul (Mul (Var a) (Var b)) (Var c)) = Just [a, b, c]
+    extractProduct3Vars _ = Nothing
+
+    isPositivityFor :: String -> Formula -> Bool
+    isPositivityFor v (Gt (Var x) (Const 0)) = x == v
+    isPositivityFor v (Gt (Var x) (IntConst 0)) = x == v
+    isPositivityFor v (Ge (Var x) (Const 0)) = x == v
+    isPositivityFor v (Ge (Var x) (IntConst 0)) = x == v
+    isPositivityFor _ _ = False

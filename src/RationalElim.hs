@@ -59,6 +59,12 @@ simpExprArith (Mul a b) = let sa = simpExprArith a; sb = simpExprArith b in case
 simpExprArith (Div a b) = let sa = simpExprArith a; sb = simpExprArith b in case (sa, sb) of (Const 0, _) -> Const 0; (x, Const 1) -> x; _ | sa == sb -> Const 1; _ -> Div sa sb
 simpExprArith (Pow e n) = Pow (simpExprArith e) n
 simpExprArith (Sqrt e) = Sqrt (simpExprArith e)
+simpExprArith (Sin e) = Sin (simpExprArith e)
+simpExprArith (Cos e) = Cos (simpExprArith e)
+simpExprArith (Tan e) = Tan (simpExprArith e)
+simpExprArith (Asin e) = Asin (simpExprArith e)
+simpExprArith (Acos e) = Acos (simpExprArith e)
+simpExprArith (Atan e) = Atan (simpExprArith e)
 simpExprArith (Determinant rows) = Determinant (map (map simpExprArith) rows)
 simpExprArith (Circle p c r) = Circle p c (simpExprArith r)
 simpExprArith e = e
@@ -99,6 +105,12 @@ elimExpr' (Div a b) = do
   else do { v <- freshDivVar; addDenominatorNonzero b'; addConstraint (Eq (Mul (Var v) b') a'); addVarDef v (Div a' b'); return (Var v) }
 elimExpr' (Pow e n) = Pow <$> elimExpr' e <*> pure n
 elimExpr' (Sqrt e) = Sqrt <$> elimExpr' e
+elimExpr' (Sin e) = Sin <$> elimExpr' e
+elimExpr' (Cos e) = Cos <$> elimExpr' e
+elimExpr' (Tan e) = Tan <$> elimExpr' e
+elimExpr' (Asin e) = Asin <$> elimExpr' e
+elimExpr' (Acos e) = Acos <$> elimExpr' e
+elimExpr' (Atan e) = Atan <$> elimExpr' e
 elimExpr' (Sum i lo hi body) = Sum i <$> elimExpr' lo <*> elimExpr' hi <*> elimExpr' body
 elimExpr' (Determinant rows) = Determinant <$> mapM (mapM elimExpr') rows
 elimExpr' (Circle p c r) = Circle p c <$> elimExpr' r

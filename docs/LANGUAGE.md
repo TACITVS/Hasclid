@@ -181,7 +181,11 @@ int : String → Expr
 | `/` | 2 | `(/ 10 3)` | Division: 10/3 |
 | `^` | 2 | `(^ x 3)` | Power: x³ |
 | `x`, `y`, `z` | 1 | `(x A)` | Coordinate x of point A |
-| `sum` | 4 | `(sum i 1 n i)` | Summation Σᵢ₌₁ⁿ i |
+| `(root n e)` | Nth root | `(root 4 16)` |
+| `sin`, `cos`, `tan` | 1 | `(sin x)` | Trigonometric functions |
+| `asin`, `acos`, `atan` | 1 | `(atan x)` | Inverse trigonometric functions |
+
+### Comparison Operators
 
 **Note:** Exponent must be a natural number constant.
 
