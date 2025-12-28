@@ -11,6 +11,7 @@ module SqrtElim
   ) where
 
 import Expr
+import Core.Types (simplifyExpr)
 import Control.Monad.State
 import Control.Monad (when)
 import qualified Data.Map.Strict as Map
@@ -37,6 +38,30 @@ intSqrt n
   where
     go x =
       let x' = (x + n `div` x) `div` 2
+      in if x' >= x then x else go x'
+
+-- | Check if an integer is a perfect nth power
+isPerfectNthPower :: Natural -> Integer -> Bool
+isPerfectNthPower _ 0 = True
+isPerfectNthPower _ 1 = True
+isPerfectNthPower k n
+  | n < 0     = False
+  | otherwise = let r = intNthRoot k n in r ^ k == n
+
+-- | Integer nth root (floor)
+intNthRoot :: Natural -> Integer -> Integer
+intNthRoot _ 0 = 0
+intNthRoot _ 1 = 1
+intNthRoot k n
+  | n < 0     = 0
+  | k == 0    = error "intNthRoot: k must be >= 1"
+  | k == 1    = n
+  | k == 2    = intSqrt n
+  | otherwise = go (n `div` 2 + 1)  -- Newton's method
+  where
+    k' = fromIntegral k :: Integer
+    go x =
+      let x' = ((k' - 1) * x + n `div` (x ^ (k' - 1))) `div` k'
       in if x' >= x then x else go x'
 
 -- | Sign information for root expressions
@@ -402,6 +427,25 @@ elimFormula (Lt (Mul (Sqrt a) (Const c)) b) | c > 0 =
 -- Automatic squaring for equations containing sqrt in SUMS
 -- This handles cases like: sqrt(a) = sqrt(b) + sqrt(c)
 -- By squaring: a = (sqrt(b) + sqrt(c))^2
+-- =============================================================================
+-- IMPLICIT SQRT RECOGNITION: v² = expr means v = sqrt(expr)
+-- =============================================================================
+-- This allows SqrtElim to recognize patterns like "cx² = c2x" as meaning
+-- "cx = sqrt(c2x)" and track them as algebraic constraints.
+-- This is crucial for trigonometric formulations where cos²(x) = 1/(1+tan²(x)).
+elimFormula (Eq (Pow (Var v) 2) rhs) = do
+  rhs' <- elimExpr rhs
+  let rhs'' = simplifyExpr rhs'
+  -- Add positivity constraint: v >= 0 (since v = sqrt(rhs))
+  addConstraint (Ge (Var v) (Const 0))
+  -- Add to memo so it's tracked as algebraic constraint: rhs'' -> v means v = sqrt(rhs'')
+  modify (\(cs, m) -> (cs, Map.insert rhs'' v m))
+  -- Return the polynomial constraint
+  return $ Eq (Pow (Var v) 2) rhs''
+
+-- Reversed form: expr = v²
+elimFormula (Eq lhs (Pow (Var v) 2)) = elimFormula (Eq (Pow (Var v) 2) lhs)
+
 -- NOTE: Only triggers for sqrt in Add/Sub contexts to avoid infinite loops
 -- Simple cases like sqrt(x)*sqrt(x)=x are handled by smart simplifications
 elimFormula (Eq l r)
@@ -524,7 +568,10 @@ elimExpr (Pow (Sqrt a) 2) = do
 elimExpr (Pow e n) = Pow <$> elimExpr e <*> pure n
 elimExpr (Sqrt e) = do
   e' <- elimExpr e
-  case e' of
+  -- CRITICAL: Constant fold before perfect square check!
+  -- This converts (0-3)^2 + (0-0)^2 -> 9 so perfect square detection works
+  let e'' = simplifyExpr e'
+  case e'' of
     -- Simplify sqrt(x^2) -> x (since lengths/distances are positive)
     Pow t 2 -> do
       addConstraint (Ge t (Const 0))
@@ -538,20 +585,20 @@ elimExpr (Sqrt e) = do
     _ -> do
       -- Check memo first - reuse variable if we've seen this expression
       (_, memo) <- get
-      case Map.lookup e' memo of
+      case Map.lookup e'' memo of
         Just varName -> return (Var varName)  -- REUSE existing variable!
         Nothing -> do
           -- Create new variable and memoize it
           v <- freshVar
           let vExpr = Var v
-              eqConstraint = Eq (Pow vExpr 2) e'
+              eqConstraint = Eq (Pow vExpr 2) e''
               geConstraint = Ge vExpr (Const 0)
-              radicandConstraint = Ge e' (Const 0)
+              radicandConstraint = Ge e'' (Const 0)
           addConstraint eqConstraint
           addConstraint geConstraint
           addConstraint radicandConstraint
-          -- Add to memo
-          modify (\(cs, m) -> (cs, Map.insert e' v m))
+          -- Add to memo (use simplified expression as key)
+          modify (\(cs, m) -> (cs, Map.insert e'' v m))
           return vExpr
 
 -- NthRoot elimination: distribute over Mul/Div
@@ -582,28 +629,33 @@ elimExpr (Mul (NthRoot n a) (NthRoot m b))
 -- General NthRoot elimination
 elimExpr (NthRoot n e) = do
   e' <- elimExpr e
-  case e' of
+  -- CRITICAL: Constant fold before perfect power check!
+  let e'' = simplifyExpr e'
+  case e'' of
     -- Simplify NthRoot n (x^n) -> x (for positive x when n is even)
     Pow t m | fromIntegral m == n -> do
       when (even n) $ addConstraint (Ge t (Const 0))
       return t
+    -- Simplify NthRoot n (Const c) for perfect nth powers
+    Const c | c >= 0, isIntegral c, isPerfectNthPower n (numerator c) ->
+      return $ Const (toRational (intNthRoot n (numerator c)))
     _ -> do
       -- Check memo first - reuse variable if we've seen this expression
       (_, memo) <- get
       -- Use a tagged key to differentiate different root indices
-      let memoKey = NthRoot n e'  -- Use the NthRoot itself as key
+      let memoKey = NthRoot n e''  -- Use the NthRoot with simplified expr as key
       case Map.lookup memoKey memo of
         Just varName -> return (Var varName)  -- REUSE existing variable!
         Nothing -> do
           -- Create new variable and memoize it
           v <- freshVar
           let vExpr = Var v
-              -- v^n = e'
-              eqConstraint = Eq (Pow vExpr (fromIntegral n)) e'
+              -- v^n = e''
+              eqConstraint = Eq (Pow vExpr (fromIntegral n)) e''
               -- For even n, v >= 0
               geConstraint = Ge vExpr (Const 0)
-              -- For even n, e' >= 0
-              radicandConstraint = Ge e' (Const 0)
+              -- For even n, e'' >= 0
+              radicandConstraint = Ge e'' (Const 0)
           addConstraint eqConstraint
           when (even n) $ do
             addConstraint geConstraint

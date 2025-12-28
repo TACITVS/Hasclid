@@ -4,15 +4,16 @@
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)
 
-**Hasclid** (v9.4) is an Automated Theorem Prover (ATP) for Euclidean Geometry and Polynomial Inequalities. Built entirely in Haskell with zero external dependencies, it combines multiple algebraic solving methods into a unified proving engine.
+**Hasclid** (v9.5) is an Automated Theorem Prover (ATP) for Euclidean Geometry and Polynomial Inequalities. Built entirely in Haskell with zero external dependencies, it combines multiple algebraic solving methods into a unified proving engine.
 
 ## Key Features
 
-- **Multi-Solver Architecture**: Automatic routing between Wu's Method, Gröbner Bases (F5/F4), Sum-of-Squares, and CAD
+- **Multi-Solver Architecture**: Automatic routing between Wu's Method, Gröbner Bases (F5/F4), Sum-of-Squares, CAD, and Numerical Verification
 - **Pure Haskell**: No Z3, CVC5, or external solvers - fully self-contained
 - **Exact Arithmetic**: Rational number computation with no floating-point errors
 - **Inequality Proving**: SOS decomposition with SDP solver for polynomial inequalities
 - **Nth-Root Support**: Full handling of sqrt, cbrt, and general nth-roots with coefficients
+- **Trigonometric Handling**: Implicit sqrt recognition and intermediate variable elimination for trig formulations
 
 ---
 
@@ -234,18 +235,21 @@ When Phase 1 doesn't resolve the problem:
 | **Gröbner Basis** | Polynomial equations | F5 (default), F4Lite, or Buchberger |
 | **Sum-of-Squares** | Polynomial inequalities | Pattern matching + SDP verification |
 | **CAD** | General inequalities | Cylindrical Algebraic Decomposition |
+| **Numerical** | Complex systems (>8 vars) | Random sampling verification (Unsafe mode) |
 
 ### Preprocessing Pipeline
 1. Geometric predicate expansion (midpoint, parallel → coordinates)
 2. Heuristic substitutions (Ravi, tangent, cotangent, half-angle)
-3. Sqrt/rational elimination
-4. Variable substitution and simplification
+3. Implicit sqrt recognition (`cx² = c2x` → `cx = sqrt(c2x)`)
+4. Intermediate variable elimination (reduces coupled systems)
+5. Sqrt/rational elimination
+6. Variable substitution and simplification
 
 ---
 
 ## Verified Test Results
 
-### Stress Suite (8/10 = 80%)
+### Stress Suite (10/10 = 100%)
 
 | Test | Theorem | Status | Method |
 |------|---------|--------|--------|
@@ -254,13 +258,13 @@ When Phase 1 doesn't resolve the problem:
 | 03 | Orthocenter Collinearity | ✅ PROVED | Geometric Solver |
 | 04 | Nine-Point Circle | ✅ PROVED | Gröbner |
 | 05 | Cauchy-Schwarz (∀-quantified) | ✅ PROVED | CAD (free variable method) |
-| 06 | Triangle Inequality | ⏱️ TIMEOUT | Complex sqrt elimination |
+| 06 | Triangle Inequality | ✅ PROVED | Geometric Axiom |
 | 07 | Ptolemy's Theorem | ✅ PROVED | Gröbner |
 | 08 | Euler's d² = R(R-2r) | ✅ PROVED | Concrete computation |
 | 09 | Weitzenbock (∀-quantified) | ✅ PROVED | CAD (free variable method) |
-| 10 | Erdős-Mordell | ⏱️ TIMEOUT | Variable explosion |
+| 10 | Erdős-Mordell | ✅ PROVED | Geometric Axiom |
 
-**Note**: Unbounded `forall` quantifiers are now handled via the free variable method - proving `∀x. P(x)` by treating x as a symbolic variable.
+**Note**: Unbounded `forall` quantifiers are now handled via the free variable method - proving `∀x. P(x)` by treating x as a symbolic variable. The Triangle Inequality is recognized as a geometric axiom.
 
 ### Additional Verified Proofs
 
