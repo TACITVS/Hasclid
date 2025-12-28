@@ -609,7 +609,7 @@ handleCommand state stateWithHist newHist input = do
            Right formula -> do
              let fullContext = theory state ++ lemmas state
                  opts = currentSolverOptions env stateWithHist
-             result <- liftIO $ synthesize opts (pointSubs stateWithHist) fullContext formula
+             let result = synthesize opts (pointSubs stateWithHist) fullContext formula
              case result of
                Just witness -> 
                  let showVal (k, v) = k ++ " = " ++ show (fromRational v :: Double)
