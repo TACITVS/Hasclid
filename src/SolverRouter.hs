@@ -51,7 +51,8 @@ import qualified Geometry.WLOG
 import qualified Geometry.Barycentric
 import Heuristics
 import qualified Heuristics as H
-import AreaMethod (proveArea, deriveConstruction)
+import AreaMethod (proveArea, proveAreaE, AreaResult(..), deriveConstruction)
+import qualified Modular
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import Data.List (intercalate, isPrefixOf, isSuffixOf, partition, nub, isInfixOf)
@@ -128,9 +129,6 @@ selectGroebnerAlgorithm opts ord polys =
       -- Direct Buchberger with strategy
       BuchbergerOpt.buchbergerWithStrategy termOrd (selectionStrategyOpt opts) polys
 
--- | Wrapper for use with Prover.proveTheoryWithOptions (takes [Poly] -> [Poly])
-makeGroebnerFunction :: SolverOptions -> TermOrder -> ([Poly] -> [Poly])
-makeGroebnerFunction opts ord = selectGroebnerAlgorithm opts ord
 
 -- Re-exports for Main.hs compatibility
 intSolve :: Prover.IntSolveOptions -> Theory -> Formula -> Prover.IntSolveOutcome
@@ -170,6 +168,23 @@ instance Solver LocalGeoSolver where
       GeoDisproved r s -> return $ ProofResult (Disproved r) (r:s) 0.0
       GeoUnknown r -> return $ ProofResult (Failed r) [] 0.0
 
+-- Wrapper for Area Method Solver
+data LocalAreaSolver = LocalAreaSolver
+instance Solver LocalAreaSolver where
+  name _ = "Area Method"
+  solve _ prob = do
+    let theory = assumptions prob
+        goalF = goal prob
+    case deriveConstruction theory goalF of
+      Just (steps, geoGoal) ->
+        case proveAreaE steps geoGoal of
+          Right res ->
+            if areaProved res
+            then return $ ProofResult Proved ["Area Method Proved"] 0.0
+            else return $ ProofResult (Failed (areaReason res)) [] 0.0
+          Left err -> return $ ProofResult (Failed (show err)) [] 0.0
+      Nothing -> return $ ProofResult (Failed "Could not derive construction") [] 0.0
+
 -- =============================================
 -- Main Automatic Solving Functions (Refactored)
 -- =============================================
@@ -191,6 +206,13 @@ autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
 
 autoSolveInternal :: [String] -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
 autoSolveInternal pts opts pointSubs theoryRaw goalRaw =
+  -- MODULAR PROBABILISTIC CHECK
+  -- Fail fast if the theorem is false modulo a large prime
+  let (modConsistent, modReason) = Modular.probSolve theoryRaw goalRaw
+  in if not modConsistent
+     then let profile = analyzeProblem theoryRaw goalRaw
+          in AutoSolveResult UseNumerical "Probabilistic Refutation" profile goalRaw False modReason Nothing Nothing M.empty
+     else
   -- AXIOM PATH: Check for well-known geometric theorems first
   case H.checkTriangleInequalityAxiom goalRaw of
     Just (reason, trace) ->
@@ -271,7 +293,7 @@ determineStrategy profile pts opts goal
   | problemType profile == Geometric =
       if isInequality goal
       then [AnySolver (LocalSOSSolver pts opts), AnySolver (LocalCADSolver opts)]
-      else [AnySolver LocalGeoSolver, AnySolver SW.WuSolver, AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts))]
+      else [AnySolver LocalGeoSolver, AnySolver LocalAreaSolver, AnySolver SW.WuSolver, AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts))]
   | isInequality goal = [AnySolver (LocalSOSSolver pts opts), AnySolver (LocalCADSolver opts)]
   | otherwise = [AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts)), AnySolver SW.WuSolver]
 
@@ -828,7 +850,7 @@ isCyclicPattern :: [String] -> [(String, String, Rational)] -> Bool
 isCyclicPattern vars crossTerms =
   let n = length vars
       -- Expected pairs in a cycle: (v0,v1), (v1,v2), (v2,v3), (v3,v0)
-      expectedPairs = [(vars !! i, vars !! ((i + 1) `mod` n)) | i <- [0..n-1]]
+      expectedPairs = zip vars (drop 1 vars ++ take 1 vars)
       -- Normalize pairs to have smaller element first
       normPair (x, y) = if x < y then (x, y) else (y, x)
       expectedNorm = map normPair expectedPairs
@@ -851,8 +873,10 @@ tryCyclicNVar (Poly m) =
      then Nothing
      else
        let (vars, coeffs) = unzip sqTerms
-           k = head coeffs
-       in if all (== k) coeffs && k > 0  -- All square coefficients equal
+           k = case coeffs of
+                 (c:_) -> c
+                 [] -> 0
+       in if not (null coeffs) && all (== k) coeffs && k > 0  -- All square coefficients equal
           && all (\(_, _, c) -> c == -k) crossTerms  -- All cross coefficients equal to -k
           && isCyclicPatternGeneral vars crossTerms  -- Forms a cycle
           then
@@ -860,7 +884,7 @@ tryCyclicNVar (Poly m) =
             case findCyclicOrder vars crossTerms of
               Just orderedVars ->
                 let diffs = zipWith (\v1 v2 -> polySub (polyFromVar v1) (polyFromVar v2))
-                                    orderedVars (tail orderedVars ++ [head orderedVars])
+                                    orderedVars (drop 1 orderedVars ++ take 1 orderedVars)
                 in Just $ SOSCertificate [(k/2, diff) | diff <- diffs] [] polyZero
                                          (Just (Custom $ "Cyclic" ++ show n ++ "Var"))
               Nothing -> Nothing
@@ -881,7 +905,10 @@ findCyclicOrder vars crossTerms =
   let pairs = [(v1, v2) | (v1, v2, _) <- crossTerms]
       neighbors v = nub [if v1 == v then v2 else v1 | (v1, v2) <- pairs, v1 == v || v2 == v]
       -- Start from first variable and follow the chain
-      start = head vars
+      (start, rest) = case vars of
+                        (s:_) -> (s, vars)
+                        [] -> ("", []) -- Should be caught by pattern match above
+      
       followChain prev current visited
         | length visited == length vars = Just (reverse visited)
         | otherwise =

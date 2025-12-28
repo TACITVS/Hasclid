@@ -188,46 +188,55 @@ buchbergerM polys =
 --   4. Check consistency
 probSolve :: Theory -> Formula -> (Bool, String)
 probSolve theory goal =
-  case goal of
-    Exists qs body ->
-      let
-        -- 1. Identify Quantified Variables (to solve for)
-        qVars = map qvName qs
-        qSet = S.fromList qVars
-        
-        -- 2. Extract all variables from theory + body
-        allEqs = [ Sub l r | Eq l r <- theory ] ++ extractBodyEqs body
-        allVars = S.toList $ foldr (S.union . extractExprVars) S.empty allEqs
+  let
+    -- 1. Extract explicit quantified variables
+    explicitQVars = case goal of
+                      Exists qs _ -> map qvName qs
+                      _ -> []
+    qSet = S.fromList explicitQVars
+    
+    -- 2. Extract all equations from theory + goal
+    theoryEqs = [ Sub l r | Eq l r <- theory ]
+    goalEqs = extractBodyEqs goal
+    allEqs = theoryEqs ++ goalEqs
+    
+    -- 3. Extract all variables
+    allVars = S.toList $ foldr (S.union . extractExprVars) S.empty allEqs
 
-        -- 3. Identify Free Variables (Parameters)
-        freeVars = filter (\v -> not (S.member v qSet)) allVars
+    -- 4. Identify Free Variables vs Variables to Solve
+    -- If explicit quantifiers exist, everything else is a parameter.
+    -- If NO explicit quantifiers, assume EVERYTHING is a variable to solve (consistency check).
+    (varsToSolve, params) = 
+      if null explicitQVars
+      then (allVars, [])
+      else (explicitQVars, filter (\v -> not (S.member v qSet)) allVars)
 
-        -- 4. Generate Random Assignment for Free Variables
-        seed = 42 -- Deterministic "random" for reproducibility
-        rng = mkStdGen seed
-        randVals = randomRs (1, prime - 1) rng -- Avoid 0 to be safe for denominators
-        assignment = M.fromList (zip freeVars randVals)
-        
-        -- 5. Instantiate and Convert to PolyM
-        polysM = map (toPolyM assignment) allEqs
-        
-        -- 6. Compute Groebner Basis
-        basis = buchbergerM polysM
-        
-        -- 7. Check if 1 is in the Ideal
-        -- In GB, if the system is inconsistent (no solution), the basis contains a constant.
-        -- Since we work in a Field, that constant can be normalized to 1.
-        isInconsistent = any isConstantNonZero basis
-        
-      in if isInconsistent
-         then (False, "System inconsistent modulo " ++ show prime ++ " (Probabilistic)")
-         else (True, "Solution exists modulo " ++ show prime ++ " (Probabilistic)")
-    _ -> (False, "Probabilistic solver only supports Exists")
+    -- 5. Generate Random Assignment for Parameters ONLY
+    seed = 42
+    rng = mkStdGen seed
+    randVals = randomRs (1, prime - 1) rng
+    assignment = M.fromList (zip params randVals)
+    
+    -- 6. Instantiate and Convert to PolyM
+    polysM = map (toPolyM assignment) allEqs
+    
+    -- 7. Compute Groebner Basis
+    basis = buchbergerM polysM
+    
+    -- 8. Check if 1 is in the Ideal
+    isInconsistent = any isConstantNonZero basis
+    
+  in if isInconsistent
+     then (False, "System inconsistent modulo " ++ show prime ++ " (Probabilistic)")
+     else (True, "Solution exists modulo " ++ show prime ++ " (Probabilistic)")
 
 extractBodyEqs :: Formula -> [Expr]
 extractBodyEqs (Eq l r) = [Sub l r]
 extractBodyEqs (And a b) = extractBodyEqs a ++ extractBodyEqs b
-extractBodyEqs (Or a b) = extractBodyEqs a ++ extractBodyEqs b -- Treating Or as union of constraints (heuristic)
+extractBodyEqs (Exists _ b) = extractBodyEqs b
+extractBodyEqs (Or _ _) = [] -- Cannot handle disjunction in simple GB, treat as consistent
+extractBodyEqs (Not _) = []  -- Cannot handle negation, treat as consistent
+extractBodyEqs (Forall _ _) = [] -- Cannot handle universal, treat as consistent
 extractBodyEqs _ = []
 
 extractExprVars :: Expr -> S.Set String
