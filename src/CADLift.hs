@@ -16,6 +16,7 @@ module CADLift
   , proveWithCAD
   , proveFormulaCAD
   , satisfiableFormulaCAD
+  , findWitnessCAD
   , solveQuantifiedFormulaCAD
   , formatCADCells
   ) where
@@ -30,7 +31,7 @@ import qualified Control.Exception as CE
 import Control.Exception (try, evaluate, ArithException(..))
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Map.Strict as M
-import Data.List (nub, sort, sortBy, partition)
+import Data.List (nub, sort, sortBy, partition, find)
 import Data.Ord (comparing)
 import Data.Ratio ((%), numerator, denominator)
 import qualified Data.Set as S
@@ -691,6 +692,19 @@ satisfiableFormulaCAD theory goal =
       cells = cadDecompose polys optimizedVars
       validCells = filter (\c -> all (`evaluateFormula` c) theory) cells
   in any (evaluateFormula goal) validCells
+
+-- | Find a witness satisfying the formula (Existential Synthesis)
+findWitnessCAD :: Theory -> Formula -> Maybe (M.Map String Rational)
+findWitnessCAD theory goal =
+  let polys = concatMap formulaToPolys (goal : theory)
+      vars = S.toList (extractPolyVarsList polys)
+      optimizedVars = optimizeVariableOrder polys vars
+      cells = cadDecompose polys optimizedVars
+      -- Find first cell that satisfies theory AND goal
+      witnessCell = find (\c -> all (`evaluateFormula` c) theory && evaluateFormula goal c) cells
+  in case witnessCell of
+       Just (cell, _) -> Just (samplePoint cell)
+       Nothing -> Nothing
 
 -- | Extract all polynomials from a formula
 formulaToPolys :: Formula -> [Poly]

@@ -22,6 +22,7 @@ module SolverRouter
   , intSolve
   , intSat
   , proveExistentialConstructive
+  , synthesize
   )
 where
 
@@ -32,7 +33,7 @@ import ProblemAnalyzer
 import GeoSolver (solveGeoWithTrace, GeoResult(..))
 import qualified Wu (wuProveWithTrace, formatWuTrace, isProved, proofReason)
 import qualified Prover (intSolve, intSat, IntSolveOptions(..), IntSolveOutcome(..), defaultIntSolveOptions, proveExistentialConstructive, ProofTrace)
-import qualified CADLift (proveFormulaCAD)
+import qualified CADLift (proveFormulaCAD, findWitnessCAD)
 import Positivity.SOS (SOSCertificate(..), getSOSCertificate, getSOSCertificateWithAlgebraic, algebraicReducer)
 import Positivity.SOSTypes (SOSPattern(..))
 import Data.Ratio (numerator, denominator, (%))
@@ -203,6 +204,20 @@ autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
     Right res      -> return res
   where
     errorResult profile msg = AutoSolveResult Unsolvable msg profile goalRaw False msg Nothing Nothing M.empty
+
+-- | Synthesize a witness for an existential goal
+synthesize :: SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> Maybe (M.Map String Rational)
+synthesize opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
+  res <- try $ evaluate $
+    let (theoryG, goalG, _) = preprocessGeometry pointSubs theoryRaw goalRaw
+        -- Skipping advanced heuristics for now to keep variable mapping simple
+        (theoryS, goalS, _) = eliminateSqrt theoryG goalG
+        (theoryP, goalP, _) = eliminateRational theoryS goalS
+        -- Use CAD to find witness
+    in CADLift.findWitnessCAD theoryP goalP
+  return $ case res of
+    Left (_ :: CE.SomeException) -> Nothing
+    Right w -> w
 
 autoSolveInternal :: [String] -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
 autoSolveInternal pts opts pointSubs theoryRaw goalRaw =
