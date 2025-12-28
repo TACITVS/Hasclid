@@ -39,6 +39,7 @@ import Data.Ratio (numerator, denominator, (%))
 import qualified Positivity.Numerical as NumSOS
 import qualified Positivity.SDP as SDP
 import qualified Positivity.SymmetricSOS as SymSOS
+import qualified Positivity.Sampling as Sampling
 import SqrtElim (eliminateSqrt, eliminateSqrtWithConstraints, AlgebraicConstraint(..), SqrtElimResult(..))
 import RationalElim (eliminateRational)
 import qualified BuchbergerOpt
@@ -49,6 +50,7 @@ import qualified F5 (f5Groebner, f5SolveBounded, F5Config(..), F5Result(..), def
 import qualified Geometry.WLOG
 import qualified Geometry.Barycentric
 import Heuristics
+import qualified Heuristics as H
 import AreaMethod (proveArea, deriveConstruction)
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
@@ -71,7 +73,7 @@ import qualified Solvers.Groebner as SG
 -- Legacy / Compatibility Types
 -- =============================================
 
-data SolverChoice = UseGeoSolver | UseWu | UseGroebner | UseConstructiveWu | UseCAD | UseAreaMethod | UseSOS | Unsolvable deriving (Show, Eq)
+data SolverChoice = UseGeoSolver | UseWu | UseGroebner | UseConstructiveWu | UseCAD | UseAreaMethod | UseSOS | UseNumerical | Unsolvable deriving (Show, Eq)
 data ProofEvidence = EvidenceSOS SOSCertificate [String] deriving (Show, Eq)
 
 data AutoSolveResult = AutoSolveResult
@@ -181,32 +183,60 @@ autoSolve opts pointSubs theoryRaw goalRaw = unsafePerformIO $ do
 
 autoSolveInternal :: [String] -> SolverOptions -> M.Map String Expr -> [Formula] -> Formula -> AutoSolveResult
 autoSolveInternal pts opts pointSubs theoryRaw goalRaw =
-  -- ULTRA-FAST PATH: Try direct SOS on raw goal before any preprocessing
-  -- This handles simple symmetric inequalities like a² + b² + c² >= ab + bc + ca
-  case tryDirectSOSHeuristic goalRaw of
-    Just (cert, proof) ->
+  -- AXIOM PATH: Check for well-known geometric theorems first
+  case H.checkTriangleInequalityAxiom goalRaw of
+    Just (reason, trace) ->
       let profile = analyzeProblem theoryRaw goalRaw
-      in AutoSolveResult UseSOS "Direct SOS (no preprocessing)" profile goalRaw True "Proved" (Just (EvidenceSOS cert [])) (Just proof) M.empty
+      in AutoSolveResult UseGeoSolver "Geometric Axiom" profile goalRaw True reason Nothing (Just trace) M.empty
     Nothing ->
-      -- Preprocessing Phase
-      let (theoryG, goalG, _) = preprocessGeometry pointSubs theoryRaw goalRaw
-          -- Heuristics (Keeping existing pipeline)
-          (theoryH, goalH, logsH) = applyHeuristics (proofMode opts) theoryG goalG
-          -- Elimination
-          (theoryS, goalS, varDefsS) = eliminateSqrt theoryH goalH
-          (theoryP, goalP, varDefsP) = eliminateRational theoryS goalS
-          varDefs = M.union varDefsS varDefsP
-          prepRes = preprocess pointSubs theoryP goalP
-          theory' = preprocessedTheory prepRes
-          goal' = preprocessedGoal prepRes
-          profile = analyzeProblem theory' goal'
-          -- UNIFIED ORCHESTRATION START
-          problem = mkProblem theory' goal'
-          -- Determine Strategy based on Profile
-          strategy = determineStrategy profile pts opts goal'
-      in unsafePerformIO $ do
-           outcome <- proveSequential strategy problem
-           return $ mapResultToAuto outcome profile goal' varDefs logsH
+      -- ULTRA-FAST PATH: Try direct SOS on raw goal before any preprocessing
+      -- This handles simple symmetric inequalities like a² + b² + c² >= ab + bc + ca
+      case tryDirectSOSHeuristic goalRaw of
+        Just (cert, proof) ->
+          let profile = analyzeProblem theoryRaw goalRaw
+          in AutoSolveResult UseSOS "Direct SOS (no preprocessing)" profile goalRaw True "Proved" (Just (EvidenceSOS cert [])) (Just proof) M.empty
+        Nothing ->
+          -- NUMERICAL FAST-PATH: For complex inequalities in Unsafe mode,
+          -- try numerical verification FIRST to avoid costly timeouts.
+          -- This is especially useful for Barrow-type trig formulations.
+          let numVars = length $ nub $ concatMap varsInFormula (goalRaw : theoryRaw)
+          in if proofMode opts == Unsafe && isInequality goalRaw && numVars > 8
+             then case tryNumericalVerification theoryRaw goalRaw of
+                    Just (reason, trace) ->
+                      let profile = analyzeProblem theoryRaw goalRaw
+                      in AutoSolveResult UseNumerical "Numerical Fast-Path (Complex System)"
+                           profile goalRaw True reason Nothing (Just trace) M.empty
+                    Nothing -> algebraicPath
+             else algebraicPath
+  where
+    algebraicPath =
+          -- Preprocessing Phase
+          let (theoryG, goalG, _) = preprocessGeometry pointSubs theoryRaw goalRaw
+              -- Heuristics (Keeping existing pipeline)
+              (theoryH, goalH, logsH) = applyHeuristics (proofMode opts) theoryG goalG
+              -- Elimination
+              (theoryS, goalS, varDefsS) = eliminateSqrt theoryH goalH
+              (theoryP, goalP, varDefsP) = eliminateRational theoryS goalS
+              varDefs = M.union varDefsS varDefsP
+              prepRes = preprocess pointSubs theoryP goalP
+              theory' = preprocessedTheory prepRes
+              goal' = preprocessedGoal prepRes
+              profile = analyzeProblem theory' goal'
+              -- UNIFIED ORCHESTRATION START
+              problem = mkProblem theory' goal'
+              -- Determine Strategy based on Profile
+              strategy = determineStrategy profile pts opts goal'
+          in unsafePerformIO $ do
+               outcome <- proveSequential strategy problem
+               let baseResult = mapResultToAuto outcome profile goal' varDefs logsH
+               -- Try numerical verification as fallback for failed inequalities
+               if not (isProved baseResult) && proofMode opts == Unsafe && isInequality goal'
+               then case tryNumericalVerification theory' goal' of
+                      Just (reason, trace) ->
+                        return $ AutoSolveResult UseNumerical "Numerical Verification (Fallback)"
+                                   profile goal' True reason Nothing (Just trace) varDefs
+                      Nothing -> return baseResult
+               else return baseResult
 
 applyHeuristics :: ProofMode -> Theory -> Formula -> (Theory, Formula, [String])
 applyHeuristics mode theory goal
@@ -220,7 +250,9 @@ applyHeuristics mode theory goal
           (t6, g6, l6) = tryParameterSubstitution t5 g5
           (t7, g7, l7) = tryHomogeneousNormalization t6 g6
           (t8, g8, l8) = tryHalfAngleTangent t7 g7
-      in (t8, g8, l1++l2++l3++l4++l5++l6++l7++l8)
+          -- Variable elimination: reduce 12-variable trig systems to 9 variables
+          (t9, g9, l9) = tryEliminateIntermediates t8 g8
+      in (t9, g9, l1++l2++l3++l4++l5++l6++l7++l8++l9)
 
 determineStrategy :: ProblemProfile -> [String] -> SolverOptions -> Formula -> [AnySolver]
 determineStrategy profile pts opts goal
@@ -243,6 +275,45 @@ mapResultToAuto outcome profile goal defs logs =
       traceStr = unlines logs ++ "\n" ++ unlines (resultTrace res)
   in AutoSolveResult choice ("Unified Orchestrator (" ++ solverName ++ ")") profile goal status reason Nothing (Just traceStr) defs
 
+-- =============================================================================
+-- NUMERICAL VERIFICATION FALLBACK
+-- =============================================================================
+-- When algebraic methods fail, try numerical sampling to verify the inequality.
+-- This is NOT a formal proof, but provides high-confidence verification.
+-- Only used in Unsafe mode.
+
+tryNumericalVerification :: [Formula] -> Formula -> Maybe (String, String)
+tryNumericalVerification theory goal =
+  case goal of
+    Ge _ _ -> doVerify
+    Gt _ _ -> doVerify
+    Le _ _ -> doVerify
+    Lt _ _ -> doVerify
+    _ -> Nothing
+  where
+    doVerify =
+      let config = Sampling.defaultSamplingConfig { Sampling.numSamples = 10000 }
+          result = Sampling.numericallyVerifyInequality theory goal config
+      in if Sampling.verified result && Sampling.confidence result > 0.9
+         then Just ("Verified numerically",
+                    unlines [ "NUMERICAL VERIFICATION (High Confidence)"
+                            , "----------------------------------------"
+                            , "Method: Random sampling with constraint satisfaction"
+                            , "Samples checked: " ++ show (Sampling.samplesChecked result)
+                            , "Total samples: " ++ show (Sampling.totalSamples result)
+                            , "Confidence: " ++ show (round (Sampling.confidence result * 100) :: Int) ++ "%"
+                            , ""
+                            , "The inequality was verified for all sampled points in the"
+                            , "feasible region. While not a formal proof, this provides"
+                            , "strong evidence that the inequality holds."
+                            , ""
+                            , "WARNING: This is heuristic verification, not a rigorous proof."
+                            ])
+         else case Sampling.counterexample result of
+                Just cex -> Just ("Counterexample found",
+                                  "Counterexample: " ++ show cex)
+                Nothing -> Nothing
+
 solverChoiceFromName :: String -> SolverChoice
 solverChoiceFromName name
   | "Sum-of-Squares" `isInfixOf` name = UseSOS
@@ -250,6 +321,7 @@ solverChoiceFromName name
   | "Wu" `isInfixOf` name = UseWu
   | "Groebner" `isInfixOf` name = UseGroebner
   | "Geometric" `isInfixOf` name = UseGeoSolver
+  | "Numerical" `isInfixOf` name = UseNumerical
   | otherwise = Unsolvable
 
 -- =============================================
@@ -467,6 +539,31 @@ isInequality (Gt _ _) = True
 isInequality (Le _ _) = True
 isInequality (Lt _ _) = True
 isInequality _ = False
+
+-- | Extract all variables from a formula
+varsInFormula :: Formula -> [String]
+varsInFormula (Eq e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (Ge e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (Gt e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (Le e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (Lt e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInFormula (And f1 f2) = varsInFormula f1 ++ varsInFormula f2
+varsInFormula (Or f1 f2) = varsInFormula f1 ++ varsInFormula f2
+varsInFormula (Not f) = varsInFormula f
+varsInFormula (Forall _ f) = varsInFormula f
+varsInFormula (Exists _ f) = varsInFormula f
+varsInFormula _ = []
+
+varsInExpr :: Expr -> [String]
+varsInExpr (Var v) = [v]
+varsInExpr (Add e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInExpr (Sub e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInExpr (Mul e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInExpr (Div e1 e2) = varsInExpr e1 ++ varsInExpr e2
+varsInExpr (Pow e _) = varsInExpr e
+varsInExpr (Sqrt e) = varsInExpr e
+varsInExpr (NthRoot _ e) = varsInExpr e
+varsInExpr _ = []
 
 -- | Legacy API for direct solver execution (Adapted to Unified Core)
 executeSolver :: [String] -> SolverChoice -> SolverOptions -> ProblemProfile -> [Formula] -> Formula -> (Bool, String, Maybe String, M.Map String Expr)
