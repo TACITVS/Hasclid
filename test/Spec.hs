@@ -23,11 +23,17 @@ import qualified Data.Set as S
 import qualified ExamplesSpec
 import qualified IntegrationSpec
 import qualified PropertySpec
+import qualified ProofExplanationSpec
+import qualified IntervalSpec
+import qualified IntervalSolverSpec
 
 main :: IO ()
 main = hspec $ do
   coreSpec
   PropertySpec.spec
+  ProofExplanationSpec.spec
+  IntervalSpec.spec
+  IntervalSolverSpec.spec
   -- NOTE: ExamplesSpec and IntegrationSpec are slow/hanging tests
   -- Run them separately: cabal test prover-test --test-options="--match Examples"
   -- ExamplesSpec.spec
