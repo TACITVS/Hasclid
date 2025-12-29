@@ -501,8 +501,10 @@ proveInequalitySOS pts opts theoryRaw goalRaw =
              let vars = extractPolyVars p
              in S.member "ba_u" vars && S.member "ba_v" vars && S.member "ba_w" vars && polyDegreeIn p "ba_u" == 1
 
-          basis = selectGroebnerAlgorithm opts ordType eqConstraintsSOS
-          reducer = reduceWithBasis ord basis
+          complexity = estimatedComplexity profileFinal
+          skipGB = complexity >= VeryHigh
+          basis = if skipGB then [] else selectGroebnerAlgorithm opts ordType eqConstraintsSOS
+          reducer = if skipGB then id else reduceWithBasis ord basis
 
           knownLemmas = mapMaybe (listToMaybe . formulaToPolysLocal)
             [Ge (Var v) (Const 0) | v <- posVars]

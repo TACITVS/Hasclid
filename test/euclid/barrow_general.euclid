@@ -83,7 +83,7 @@
 -- And W (∠APB, meeting AB):
 :assume (= denomW2 (^ (+ PA PB) 2))
 :assume (= innerW (- denomW2 AB2))
-:verbose
+
 :assume (> innerW 0)
 -- PW satisfies the angle bisector formula (polynomial form)
 :assume (= (* (^ PW 2) denomW2) (* (* PA PB) innerW))
@@ -96,5 +96,5 @@
 -- The inequality: PA + PB + PC >= 2*(PU + PV + PW)
 -- Equivalently: (PA + PB + PC)² >= 4*(PU + PV + PW)²
 
-:auto (>= (^ (+ PA (+ PB PC)) 2) (* 4 (^ (+ PU (+ PV PW)) 2)))
+:prove (>= (^ (+ PA (+ PB PC)) 2) (* 4 (^ (+ PU (+ PV PW)) 2)))
 

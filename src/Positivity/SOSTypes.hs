@@ -9,7 +9,7 @@ import Expr (Poly(..), Monomial(..), Formula, polyZero, polyFromVar, getLeadingT
 import Polynomial (add, sub, mul, scale, fromMonomial, monomialDegree, monomialMul, monomialDiv)
 import qualified Data.Map.Strict as Map
 import Data.Ratio
-import Data.List (nub)
+import Data.List (nub, sort)
 
 -- | Certificate showing that a polynomial is a sum of squares.
 data SOSCertificate = SOSCertificate
@@ -32,16 +32,65 @@ data SOSPattern
   deriving (Eq, Show)
 
 -- | Try to decompose polynomial using heuristic pattern matching.
--- Attempts patterns in order: trivial square, sum of squares, AM-GM, triangle inequality.
+-- Attempts patterns in order: trivial square, sum of squares, symmetric 3-var, AM-GM, triangle inequality.
 trySOSHeuristic :: Poly -> [Formula] -> Maybe SOSCertificate
 trySOSHeuristic poly theory =
   case tryTrivialSquare poly of
     Just cert -> Just cert
     Nothing -> case trySimpleSumOfSquares poly of
       Just cert -> Just cert
-      Nothing -> case tryAMGMPattern poly theory of
+      Nothing -> case trySymmetric3VarPattern poly of
         Just cert -> Just cert
-        Nothing -> tryTriangleInequalityPattern poly
+        Nothing -> case tryAMGMPattern poly theory of
+          Just cert -> Just cert
+          Nothing -> tryTriangleInequalityPattern poly
+
+-- | Try symmetric 3-variable patterns
+-- a² + b² + c² - ab - bc - ca = (1/2)[(a-b)² + (b-c)² + (c-a)²]
+trySymmetric3VarPattern :: Poly -> Maybe SOSCertificate
+trySymmetric3VarPattern poly =
+  case matchSymmetric3Var poly of
+    Just (a, b, c, k) ->
+      let polyA = polyFromVar a; polyB = polyFromVar b; polyC = polyFromVar c
+          diffAB = sub polyA polyB
+          diffBC = sub polyB polyC
+          diffCA = sub polyC polyA
+          -- Verify: k * (1/2) * [(a-b)² + (b-c)² + (c-a)²] = poly
+          terms = [(k/2, diffAB), (k/2, diffBC), (k/2, diffCA)]
+          cert = SOSCertificate terms [] polyZero (Just (Custom "Symmetric3Var"))
+          -- Verify the decomposition matches the input
+          reconstructed = foldl add polyZero [scale c (mul p p) | (c, p) <- terms]
+      in if reconstructed == poly then Just cert else Nothing
+    Nothing -> Nothing
+
+-- | Match the pattern k * (a² + b² + c² - ab - bc - ca) for 3 distinct variables
+matchSymmetric3Var :: Poly -> Maybe (String, String, String, Rational)
+matchSymmetric3Var (Poly m)
+  | Map.size m /= 6 = Nothing  -- Must have exactly 6 terms
+  | otherwise =
+      let terms = Map.toList m
+          -- Find all degree-2 square monomials (v^2)
+          sqTerms = [(v, c) | (Monomial vm, c) <- terms
+                            , [(v, 2)] <- [Map.toList vm]]
+          -- Find all cross-product monomials (v1 * v2)
+          crossTerms = [(v1, v2, c) | (Monomial vm, c) <- terms
+                                    , [(v1, e1), (v2, e2)] <- [Map.toList vm]
+                                    , e1 == 1, e2 == 1, v1 < v2]
+      in case (sqTerms, crossTerms) of
+           (sq@[(a, ca), (b, cb), (cc', ccc)], cross@[(_, _, c12), (_, _, c34), (_, _, c56)])
+             | ca == cb && cb == ccc && ca > 0  -- All square coefficients equal and positive
+             , c12 == c34 && c34 == c56 && c12 < 0  -- All cross coefficients equal and negative
+             , ca == -c12  -- Coefficients match the pattern: k and -k
+             , length (nub [a, b, cc']) == 3  -- 3 distinct variables in squares
+             , allCrossVarsMatch [a, b, cc'] cross  -- Cross terms use same variables
+             -> Just (a, b, cc', ca)
+           _ -> Nothing
+
+-- | Check that cross terms use exactly the same 3 variables
+allCrossVarsMatch :: [String] -> [(String, String, Rational)] -> Bool
+allCrossVarsMatch vars cross =
+  let crossVars = nub $ concatMap (\(v1, v2, _) -> [v1, v2]) cross
+  in sort crossVars == sort vars
 
 -- | Check if polynomial is already a perfect square
 tryTrivialSquare :: Poly -> Maybe SOSCertificate
@@ -121,7 +170,10 @@ tryTriangleInequalityPattern poly =
       let polyA = polyFromVar varA; polyB = polyFromVar varB; polyC = polyFromVar varC
           comp1 = sub polyA polyB; comp2 = sub polyB polyC; comp3 = sub polyC polyA
           terms = [(1/2, comp1), (1/2, comp2), (1/2, comp3)]
-      in Just $ SOSCertificate terms [] polyZero (Just TriangleInequality)
+          cert = SOSCertificate terms [] polyZero (Just TriangleInequality)
+          -- Verify the decomposition matches
+          reconstructed = foldl add polyZero [scale c (mul p p) | (c, p) <- terms]
+      in if reconstructed == poly then Just cert else Nothing
     Nothing -> Nothing
 
 matchTrianglePattern :: Poly -> Maybe (String, String, String)
@@ -140,7 +192,14 @@ looksLikeTrianglePattern m a b c =
       getCoeff mon = Map.findWithDefault 0 mon m
       cA2 = getCoeff a2; cB2 = getCoeff b2; cC2 = getCoeff c2
       cAB = getCoeff ab; cAC = getCoeff ac; cBC = getCoeff bc
-  in cA2 > 0 && cB2 > 0 && cC2 > 0 && abs (cA2 - cB2) < 0.01 * cA2 && cAB < 0 && cAC < 0 && cBC < 0
+      -- All square coefficients must be equal (not just A and B)
+      allSquaresEqual = cA2 == cB2 && cB2 == cC2
+      -- Cross terms must all be negative and equal
+      allCrossNegative = cAB < 0 && cAC < 0 && cBC < 0
+      allCrossEqual = cAB == cAC && cAC == cBC
+      -- Coefficient relationship: square coeff = -cross coeff
+      coeffsMatch = cA2 == -cAB
+  in cA2 > 0 && allSquaresEqual && allCrossNegative && allCrossEqual && coeffsMatch
 
 -- | Try AM-GM pattern for n=3: (xy+yz+zx)^3 - 27x^2y^2z^2 >= 0
 tryAMGMPattern :: Poly -> [Formula] -> Maybe SOSCertificate

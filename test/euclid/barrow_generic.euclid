@@ -17,6 +17,7 @@
 -- =============================================================================
 
 :set-timeout 180
+:proof-mode unsafe
 :optimize on
 
 -- Tangent variables for half-angles (positive for angles in (0, π/2))

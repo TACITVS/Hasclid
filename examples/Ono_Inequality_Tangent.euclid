@@ -6,6 +6,7 @@
 -- =======================================================
 
 -- 1. Setup Coordinates
+:verbose 
 :point A 0 0
 :point B cx 0
 :point C ux uy
