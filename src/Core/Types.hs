@@ -224,6 +224,8 @@ data Expr
     -- ^ Oriented angle equality in 2D: angle ABC = angle DEF
   | AngleEq2DAbs String String String String String String
     -- ^ Unsigned angle equality in 2D: |angle ABC| = |angle DEF|
+  | Angle String String String
+    -- ^ Angle value: angle ABC
   -- High-level algebraic primitives
   | Determinant [[Expr]]
     -- ^ Matrix determinant (lazy expansion)
@@ -308,6 +310,7 @@ prettyExpr (Perpendicular a b c d) = "(perpendicular " ++ a ++ " " ++ b ++ " " +
 prettyExpr (Parallel a b c d) = "(parallel " ++ a ++ " " ++ b ++ " " ++ c ++ " " ++ d ++ ")"
 prettyExpr (AngleEq2D a b c d e f) = "(angle-eq " ++ unwords [a,b,c,d,e,f] ++ ")"
 prettyExpr (AngleEq2DAbs a b c d e f) = "(angle-eq-abs " ++ unwords [a,b,c,d,e,f] ++ ")"
+prettyExpr (Angle a b c) = "(angle " ++ unwords [a,b,c] ++ ")"
 prettyExpr (Determinant rows) =
   case rows of
     (r0:_) -> "(det " ++ show (length rows) ++ "x" ++ show (length r0) ++ ")"
@@ -454,6 +457,7 @@ prettyExprLaTeX (Perpendicular a b c d) = a ++ b ++ " \\perp " ++ c ++ d
 prettyExprLaTeX (Parallel a b c d) = a ++ b ++ " \\parallel " ++ c ++ d
 prettyExprLaTeX (AngleEq2D a b c d e f) = "\\angle " ++ a ++ b ++ c ++ " = \\angle " ++ d ++ e ++ f
 prettyExprLaTeX (AngleEq2DAbs a b c d e f) = "|\\angle " ++ a ++ b ++ c ++ "| = |\\angle " ++ d ++ e ++ f ++ "|"
+prettyExprLaTeX (Angle a b c) = "\\angle " ++ a ++ b ++ c
 prettyExprLaTeX (Determinant rows) =
   "\\begin{vmatrix} " ++ intercalate " \\\\ " (map formatRow rows) ++ " \\end{vmatrix}"
   where formatRow row = intercalate " & " (map prettyExprLaTeX row)
@@ -967,6 +971,7 @@ simplifyExpr e@(Perpendicular _ _ _ _) = e
 simplifyExpr e@(Parallel _ _ _ _) = e
 simplifyExpr e@(AngleEq2D _ _ _ _ _ _) = e
 simplifyExpr e@(AngleEq2DAbs _ _ _ _ _ _) = e
+simplifyExpr e@(Angle _ _ _) = e
 
 -- Base cases
 simplifyExpr e@(Var _) = e
@@ -1236,6 +1241,8 @@ toPoly (AngleEq2DAbs a b c d e f) =
       sinAbsDiff = polySub (polyMul (polyMul cross1 cross1) (polyMul l2 l2))
                             (polyMul (polyMul cross2 cross2) (polyMul l1 l1))
   in polyAdd (polyMul cosDiff cosDiff) (polyMul sinAbsDiff sinAbsDiff)
+
+toPoly (Angle _ _ _) = error "Angle Error: Raw angle values cannot be converted to polynomial directly. Use geometric rewrite."
 
 -- Determinant: Recursive expansion (Laplace expansion along first row)
 -- For a matrix M, det(M) = sum_{j=1..n} (-1)^(1+j) * M_{1,j} * det(M_{1,j})
@@ -1566,6 +1573,7 @@ mapExpr f expr = f $ case expr of
   Sum i l h b -> Sum i (mapExpr f l) (mapExpr f h) (mapExpr f b)
   Determinant m -> Determinant (map (map (mapExpr f)) m)
   Circle p c r -> Circle p c (mapExpr f r)
+  Angle a b c -> Angle a b c
   _ -> expr
 
 -- =============================================
@@ -1597,6 +1605,7 @@ varsInExpr (Perpendicular p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++
 varsInExpr (Parallel p1 p2 p3 p4) = concatMap (\p -> ["x"++p, "y"++p, "z"++p]) [p1, p2, p3, p4]
 varsInExpr (AngleEq2D p1 p2 p3 p4 p5 p6) = concatMap (\p -> ["x"++p, "y"++p]) [p1, p2, p3, p4, p5, p6]
 varsInExpr (AngleEq2DAbs p1 p2 p3 p4 p5 p6) = concatMap (\p -> ["x"++p, "y"++p]) [p1, p2, p3, p4, p5, p6]
+varsInExpr (Angle a b c) = concatMap (\p -> ["x"++p, "y"++p]) [a, b, c]
 varsInExpr (Determinant rows) = concatMap (concatMap varsInExpr) rows
 varsInExpr (Sum _ lo hi body) = varsInExpr lo ++ varsInExpr hi ++ varsInExpr body
 varsInExpr _ = []

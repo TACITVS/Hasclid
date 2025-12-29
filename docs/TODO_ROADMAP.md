@@ -10,9 +10,9 @@ The goal is to move beyond "True/False" verdicts for existential queries and act
 ## Milestone 2: Transcendental / Interval Solver
 Implement rigorous checking for non-algebraic inequalities (e.g., `sin(x) < x`) using interval arithmetic.
 
-- [ ] **Create Interval Arithmetic Module**: `src/Interval.hs` for computing bounds of `Expr`.
-- [ ] **Implement Interval Solver**: `src/Solvers/Interval.hs` that attempts to separate `lhs` and `rhs` intervals.
-- [ ] **Wire into Router**: Use this as a fallback or parallel strategy for non-polynomial goals.
+- [x] **Create Interval Arithmetic Module**: `src/Interval.hs` for computing bounds of `Expr`.
+- [x] **Implement Interval Solver**: `src/Solvers/Interval.hs` that attempts to separate `lhs` and `rhs` intervals.
+- [x] **Wire into Router**: Use this as a fallback or parallel strategy for non-polynomial goals.
 
 ## Milestone 3: Parallelism
 Execute solvers concurrently to get results faster.

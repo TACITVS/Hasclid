@@ -25,6 +25,7 @@ module Preprocessing
 
 import Expr
 import Geometry.Barycentric (applyBarycentric)
+import Geometry.Angle (eliminateAngles)
 import Geometry.WLOG (detectPoints)
 import Data.List (nub, find)
 import Data.Maybe (mapMaybe, isJust)
@@ -120,11 +121,15 @@ preprocessGeometry subs theory goal =
     goalD = if M.null dist2Subs
             then goal
             else applySubstitutionsFormulaNoExpand dist2Subs goal
+    
+    -- Eliminate Angles
+    (theoryA, goalA) = eliminateAngles theoryD goalD
+
     log1 = if M.null dist2Subs
            then []
            else ["Expanded " ++ show (M.size dist2Subs) ++ " distance definitions"]
 
-    (theoryB, goalB, logBary) = applyBarycentricIfInside subs theoryD goalD
+    (theoryB, goalB, logBary) = applyBarycentricIfInside subs theoryA goalA
     (theoryNN, logNN) = addDist2NonnegConstraints theoryB goalB
   in (theoryNN, goalB, log1 ++ logBary ++ logNN)
 

@@ -5,6 +5,8 @@ import Core.Problem
 import Core.Solver
 import Core.Types
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import Control.Concurrent (forkIO, newEmptyMVar, newMVar, putMVar, takeMVar, tryPutMVar, MVar)
+import Control.Monad (forM_, void)
 
 -- | Existential wrapper for any Solver
 data AnySolver = forall s. Solver s => AnySolver s
@@ -27,7 +29,7 @@ runSolver solver problem = do
   let duration = realToFrac (diffUTCTime end start)
   return $ result { resultTime = duration }
 
--- | Strategy: Try solvers in order until one yields a definitive result (Proved/Disproved)
+-- | Strategy: Try solvers in order until one yields a definitive result
 proveSequential :: [AnySolver] -> Problem -> IO ProofOutcome
 proveSequential [] _ =
   return $ ProofOutcome
@@ -40,3 +42,25 @@ proveSequential (s:ss) problem = do
     Proved -> return $ ProofOutcome (name s) res
     Disproved _ -> return $ ProofOutcome (name s) res
     Failed _ -> proveSequential ss problem
+
+-- | Strategy: Run solvers in parallel and take the first definitive result
+proveParallel :: [AnySolver] -> Problem -> IO ProofOutcome
+proveParallel [] _ = proveSequential [] undefined -- Fallback for empty
+proveParallel solvers problem = do
+  resultVar <- newEmptyMVar
+  doneVar <- newMVar (0 :: Int)
+  let n = length solvers
+  
+  forM_ solvers $ \s -> forkIO $ do
+    res <- runSolver s problem
+    case resultStatus res of
+      Proved -> void $ tryPutMVar resultVar (ProofOutcome (name s) res)
+      Disproved _ -> void $ tryPutMVar resultVar (ProofOutcome (name s) res)
+      Failed _ -> do
+        count <- takeMVar doneVar
+        let newCount = count + 1
+        if newCount == n
+          then putMVar resultVar (ProofOutcome "None" res) -- Return last failure
+          else putMVar doneVar newCount
+
+  takeMVar resultVar
