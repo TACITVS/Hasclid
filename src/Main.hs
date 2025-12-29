@@ -8,6 +8,7 @@ module Main
 
 import Expr (Formula(Eq, Ge, Gt, Le, Lt, And), Expr(..), Poly, prettyExpr, prettyFormula, prettyPoly, prettyPolyNice, simplifyExpr, Theory, polyZero, toUnivariate, polyFromConst)
 import AreaMethod (Construction, ConstructStep(..), GeoExpr(..), proveArea, exprToGeoExpr, reduceArea, geoToExpr, checkConstruction)
+import Locus (locusEquation, formatLocus)
 import Parser (parseFormulaPrefix, parseFormulaWithRest, parseFormulaWithMacros, parseFormulaWithRestAndMacros, SExpr(..), parseSExpr, tokenizePrefix, MacroMap)
 import IntSolver (IntSolveOptions(..))
 import Lagrange (solve4Squares)
@@ -610,6 +611,18 @@ handleCommand state stateWithHist newHist input = do
           let (isValid, msg) = checkConstruction steps
           pure (stateWithHist, (if isValid then "✅ VALID: " else "❌ INVALID: ") ++ msg)
 
+    (":locus":pt:rest) -> do
+      let formulaStr = unwords rest
+      if null rest 
+      then pure (stateWithHist, "Usage: :locus Point Formula (e.g. :locus P (= (dist2 P A) 1))")
+      else case parseFormulaWithMacros (macros state) (intVars state) formulaStr of
+             Right f -> do
+                -- Locus of P subject to f and existing theory
+                let fullTheory = [f] ++ theory state ++ lemmas state
+                    eqs = locusEquation (pointSubs state) fullTheory pt
+                pure (stateWithHist, formatLocus eqs)
+             Left err -> pure (stateWithHist, formatError err)
+
     (":help":_) -> pure (stateWithHist, unlines
       ["Commands:",
        "  :reset                  Reset theory (clear assumptions)",
@@ -646,6 +659,7 @@ handleCommand state stateWithHist newHist input = do
        "  :wu (= lhs rhs)         Wu's method",
        "  :auto (= lhs rhs)       Automatic solver",
        "  :synthesize (formula)   Find a witness for the formula",
+       "  :locus P (formula)      Find algebraic equation for locus of P",
        "  :solve <file>           Solve each formula in file",
        "  :load <file>            Load and execute commands from file",
        "  :history                Show session history",

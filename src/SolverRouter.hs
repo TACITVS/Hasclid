@@ -338,9 +338,18 @@ determineStrategy :: ProblemProfile -> [String] -> SolverOptions -> Formula -> [
 determineStrategy profile pts opts goal
   | problemType profile == Geometric =
       if isInequality goal
-      then [AnySolver (LocalSOSSolver pts opts), AnySolver (LocalCADSolver opts)]
+      then 
+        let safeSolvers = [AnySolver LocalIntervalSolver, AnySolver LocalMetricSolver]
+            sosSolver = [AnySolver (LocalSOSSolver pts opts) | estimatedComplexity profile <= High]
+            -- Only use CAD if complexity is manageable to avoid OOM
+            cadSolver = [AnySolver (LocalCADSolver opts) | estimatedComplexity profile <= Medium]
+        in safeSolvers ++ sosSolver ++ cadSolver
       else [AnySolver LocalGeoSolver, AnySolver LocalAreaSolver, AnySolver SW.WuSolver, AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts))]
-  | isInequality goal = [AnySolver (LocalSOSSolver pts opts), AnySolver (LocalCADSolver opts)]
+  | isInequality goal = 
+      let safeSolvers = [AnySolver LocalIntervalSolver]
+          sosSolver = [AnySolver (LocalSOSSolver pts opts) | estimatedComplexity profile <= High]
+          cadSolver = [AnySolver (LocalCADSolver opts) | estimatedComplexity profile <= Medium]
+      in safeSolvers ++ sosSolver ++ cadSolver
   | otherwise = [AnySolver (SG.GroebnerSolver (intOptions opts) (proofMode opts)), AnySolver SW.WuSolver]
 
 mapResultToAuto :: ProofOutcome -> ProblemProfile -> Formula -> M.Map String Expr -> [String] -> AutoSolveResult
@@ -948,13 +957,9 @@ isCyclicPatternGeneral vars crossTerms =
 -- | Find the cyclic ordering of variables from cross terms
 findCyclicOrder :: [String] -> [(String, String, Rational)] -> Maybe [String]
 findCyclicOrder [] _ = Just []
-findCyclicOrder vars crossTerms =
+findCyclicOrder vars@(start:_) crossTerms =
   let pairs = [(v1, v2) | (v1, v2, _) <- crossTerms]
       neighbors v = nub [if v1 == v then v2 else v1 | (v1, v2) <- pairs, v1 == v || v2 == v]
-      -- Start from first variable and follow the chain
-      start = case vars of
-                (s:_) -> s
-                [] -> "" -- Should be caught by pattern match above
       
       followChain prev current visited
         | length visited == length vars = Just (reverse visited)

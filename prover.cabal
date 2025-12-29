@@ -32,7 +32,11 @@ executable prover-int
         Solvers.Wu
         Solvers.Groebner
         Solvers.Algebraic
+        Solvers.Interval
+        Solvers.Metric
+        Interval
         AreaMethod
+        Locus
         BuchbergerOpt
         CAD
         CADLift
@@ -41,6 +45,10 @@ executable prover-int
         Error
         Expr
         GeoSolver
+        Geometry.Angle
+        Geometry.Barycentric
+        Geometry.WLOG
+        Heuristics
         IntSolver
         Lagrange
         Modular
@@ -48,33 +56,30 @@ executable prover-int
         Polynomial
         PolynomialFactor
         Positivity
+        Positivity.FacialReduction
+        Positivity.GeneralizedSturm
+        Positivity.Numerical
+        Positivity.SDP
+        Positivity.SOS
+        Positivity.SOSTypes
+        Positivity.Sampling
+        Positivity.SymmetricSOS
         Preprocessing
-        ProofMode
-        ProofExplanation
         ProblemAnalyzer
+        ProofExplanation
+        ProofMode
         Prover
         RationalElim
+        ReplSupport
         SolverRouter
         SqrtElim
         Sturm
         TermOrder
         Timeout
         Validation
-        ReplSupport
+        Wu
         F4Lite
         F5
-        Wu
-        Geometry.WLOG
-        Geometry.Barycentric
-        Heuristics
-        Positivity.SOS
-        Positivity.Numerical
-        Positivity.SDP
-        Positivity.SOSTypes
-        Positivity.FacialReduction
-        Positivity.SymmetricSOS
-        Positivity.GeneralizedSturm
-        Positivity.Sampling
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7,
@@ -99,7 +104,11 @@ test-suite prover-test
         Core.Orchestrator
         Solvers.Groebner
         Solvers.Wu
+        Solvers.Interval
+        Solvers.Metric
+        Interval
         AreaMethod
+        Locus
         BuchbergerOpt
         CAD
         CADLift
@@ -133,6 +142,7 @@ test-suite prover-test
         Wu
         Geometry.WLOG
         Geometry.Barycentric
+        Geometry.Angle
         Heuristics
         Positivity.SOS
         Positivity.Numerical
@@ -146,6 +156,8 @@ test-suite prover-test
         IntegrationSpec
         PropertySpec
         ProofExplanationSpec
+        IntervalSpec
+        IntervalSolverSpec
     build-depends:
         base >= 4.16 && < 5,
         containers ^>=0.6.7,
