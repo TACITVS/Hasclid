@@ -18,6 +18,13 @@ dist-newstyle/
 cabal.project.local
 .claude/settings.local.json
 
+# Local cabal home (CABAL_DIR pointed at the repo at some point, so the
+# package store, build logs and compiled libraries were committed: ~43 MB of
+# .a archives, Windows .exe binaries and per-package logs. Untracked in the
+# commit that added this line; the files remain on disk but are no longer
+# part of the repository.)
+.cabal/
+
 # Local helper scripts
 push_refactor.bat
 
